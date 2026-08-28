@@ -1,0 +1,236 @@
+﻿#pragma once
+
+#pragma execution_character_set("utf-8")
+
+#include "Resource.h"
+
+#include <windows.h>
+#include <windowsx.h>
+#include <commctrl.h>
+#include <commdlg.h>
+#include <shlobj.h>
+#include <shellapi.h>
+#include <wininet.h>
+
+#include <string>
+#include <vector>
+#include <map>
+#include <set>
+#include <unordered_map>
+#include <atomic>
+#include <fstream>
+#include <sstream>
+#include <filesystem>
+#include <thread>
+#include <mutex>
+#include <chrono>
+#include <regex>
+#include <algorithm>
+#include <cstdlib>
+#include <ctime>
+#include <cctype>
+#include <functional>
+
+#include "json.hpp"
+
+namespace fs = std::filesystem;
+using json = nlohmann::json;
+
+// ------------------------------------------------------------------
+// 字符编码工具函数（内部 UTF-8，界面/系统 API UTF-16）
+// ------------------------------------------------------------------
+inline std::wstring utf8_to_wstring(const std::string& utf8)
+{
+    if (utf8.empty()) return L"";
+    int len = MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), -1, nullptr, 0);
+    if (len <= 0) return L"";
+    std::wstring wstr(len, 0);
+    MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), -1, &wstr[0], len);
+    wstr.resize(wstr.size() - 1); // 去掉结尾 \0
+    return wstr;
+}
+
+inline std::string wstring_to_utf8(const std::wstring& wstr)
+{
+    if (wstr.empty()) return "";
+    int len = WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), -1, nullptr, 0, nullptr, nullptr);
+    if (len <= 0) return "";
+    std::string utf8(len, 0);
+    WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), -1, &utf8[0], len, nullptr, nullptr);
+    utf8.resize(utf8.size() - 1);
+    return utf8;
+}
+
+// 过滤非法 UTF-8 字节
+inline std::string clean_utf8(const std::string& input)
+{
+    std::string out;
+    out.reserve(input.size());
+    size_t i = 0;
+    const size_t n = input.size();
+    while (i < n) {
+        unsigned char c = (unsigned char)input[i];
+        size_t extra = 0;
+        if (c < 0x80) { extra = 0; }
+        else if ((c & 0xE0) == 0xC0) { extra = 1; }
+        else if ((c & 0xF0) == 0xE0) { extra = 2; }
+        else if ((c & 0xF8) == 0xF0) { extra = 3; }
+        else { i++; continue; } // 非法头字节
+        if (i + extra >= n) break;
+        bool ok = true;
+        for (size_t k = 1; k <= extra; ++k) {
+            unsigned char cc = (unsigned char)input[i + k];
+            if ((cc & 0xC0) != 0x80) { ok = false; break; }
+        }
+        if (!ok) { i++; continue; }
+        out.append(input, i, extra + 1);
+        i += extra + 1;
+    }
+    return out;
+}
+
+// ------------------------------------------------------------------
+// 配置结构体
+// ------------------------------------------------------------------
+struct AppConfig {
+    std::string penumbraDir;          // Penumbra 父目录
+    std::string translationDir;       // 翻译目录
+    std::string dictionaryDir;        // 词典目录（也存放 config.json）
+    bool swapWordOrder = false;       // 词序调换
+    bool autoBackup = true;           // 自动备份
+    bool pureChinese = false;         // 纯中文模式
+    std::vector<std::string> blacklist; // 黑名单
+    std::vector<std::string> wikiCategories; // Wiki 导出选中的分类 prefix
+};
+
+// ------------------------------------------------------------------
+// 全局配置与状态
+// ------------------------------------------------------------------
+extern AppConfig g_cfg;
+extern HWND g_hMainWnd;
+extern HWND g_hLogEdit;           // RichEdit / Edit 日志控件
+extern std::atomic<bool> g_busy;  // 是否正在执行耗时任务
+
+// ------------------------------------------------------------------
+// 工具函数
+// ------------------------------------------------------------------
+inline std::string now_timestamp()
+{
+    auto now = std::chrono::system_clock::now();
+    auto tt = std::chrono::system_clock::to_time_t(now);
+    std::tm t;
+    localtime_s(&t, &tt);
+    char buf[64];
+    strftime(buf, sizeof(buf), "%Y-%m-%d_%H-%M-%S", &t);
+    return buf;
+}
+
+inline std::string now_timestamp_human()
+{
+    auto now = std::chrono::system_clock::now();
+    auto tt = std::chrono::system_clock::to_time_t(now);
+    std::tm t;
+    localtime_s(&t, &tt);
+    char buf[64];
+    strftime(buf, sizeof(buf), "%Y年%m月%d日 %H-%M-%S", &t);
+    return buf;
+}
+
+// 读取文件（二进制）。使用宽字符路径重载，避免 ANSI 代码页转换失败导致丢文件
+inline bool read_binary_file(const fs::path& path, std::string& out)
+{
+    try {
+        std::ifstream in(path.c_str(), std::ios::binary);
+        if (!in) return false;
+        std::ostringstream ss;
+        ss << in.rdbuf();
+        out = ss.str();
+        return true;
+    }
+    catch (...) { return false; }
+}
+
+// 写入文件（二进制）。使用宽字符路径重载，避免 ANSI 代码页转换失败
+inline bool write_binary_file(const fs::path& path, const std::string& data)
+{
+    try {
+        std::ofstream out(path.c_str(), std::ios::binary);
+        if (!out) return false;
+        out.write(data.data(), (std::streamsize)data.size());
+        return true;
+    }
+    catch (...) { return false; }
+}
+
+// 是否包含中文字符
+inline bool contains_chinese(const std::string& s)
+{
+    for (size_t i = 0; i < s.size(); ++i) {
+        unsigned char c = (unsigned char)s[i];
+        if ((c & 0xF0) == 0xE0) { // 3 字节 UTF-8，CJK 基本区 U+4E00-U+9FFF
+            if (i + 2 < s.size()) {
+                unsigned char b0 = (unsigned char)s[i];
+                unsigned char b1 = (unsigned char)s[i + 1];
+                unsigned char b2 = (unsigned char)s[i + 2];
+                if ((b0 & 0xF0) == 0xE0 && (b1 & 0xC0) == 0x80 && (b2 & 0xC0) == 0x80) {
+                    int code = ((b0 & 0x0F) << 12) | ((b1 & 0x3F) << 6) | (b2 & 0x3F);
+                    if (code >= 0x4E00 && code <= 0x9FFF) return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+
+// 从已翻译文本中还原英文原文。
+// 支持 "中文（英文）" 与 "英文（中文）" 两种格式；无法解析时返回空串。
+// 注意：全角括号 "（" "）" 在 UTF-8 中各占 3 字节。
+inline std::string extract_english_from_translated(const std::string& v)
+{
+    auto open = v.find("（");
+    auto close = v.rfind("）");
+    if (open == std::string::npos || close == std::string::npos || close <= open + 3) return "";
+    std::string a = v.substr(0, open);
+    std::string b = v.substr(open + 3, close - open - 3);
+    bool aZh = contains_chinese(a);
+    bool bZh = contains_chinese(b);
+    if (!aZh && bZh) return a;  // 英文（中文）
+    if (aZh && !bZh) return b;  // 中文（英文）
+    return "";
+}
+
+// 判断文本是否命中黑名单（子串匹配，忽略大小写）
+inline bool is_blacklisted(const std::string& text, const std::vector<std::string>& blacklist)
+{
+    if (text.empty() || blacklist.empty()) return false;
+    std::string lower = text;
+    std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+    for (const auto& b : blacklist) {
+        if (b.empty()) continue;
+        std::string bl = b;
+        std::transform(bl.begin(), bl.end(), bl.begin(), ::tolower);
+        if (lower.find(bl) != std::string::npos) return true;
+    }
+    return false;
+}
+
+// URL 编码（UTF-8 字节）
+inline std::string url_encode(const std::string& s)
+{
+    std::ostringstream out;
+    for (unsigned char c : s) {
+        if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~')
+            out << c;
+        else
+            out << '%' << std::uppercase << std::hex << (int)c << std::nouppercase;
+    }
+    return out.str();
+}
+
+// 判断文件是否匹配 group_*.json
+inline bool is_group_json(const std::wstring& filename)
+{
+    return filename.rfind(L"group_", 0) == 0 &&
+           filename.size() > 5 &&
+           filename.substr(filename.size() - 5) == L".json";
+}

@@ -1,0 +1,83 @@
+//{{NO_DEPENDENCIES}}
+// Microsoft Visual C++ 生成的包含文件。
+// 使用者 FFXIV_MOD选项汉化工具.rc
+
+#define IDS_APP_TITLE			103
+
+#define IDR_MAINFRAME			128
+#define IDD_FFXIVMOD_DIALOG	102
+#define IDD_ABOUTBOX			103
+#define IDM_ABOUT				104
+#define IDM_EXIT				105
+#define IDI_FFXIVMOD			107
+#define IDI_SMALL				108
+#define IDC_FFXIVMOD			109
+#define IDC_MYICON				2
+
+// ---- 恢复备份对话框 ----
+#define IDD_RESTORE_DIALOG		1200
+#define IDC_RESTORE_LEFTLIST	1201
+#define IDC_RESTORE_RIGHTLIST	1202
+#define IDC_RESTORE_BTN			1203
+#define IDC_RESTORE_CLOSE		1204
+
+// ---- 黑名单对话框 ----
+#define IDD_BLACKLIST_DIALOG	1210
+#define IDC_BLACKLIST_EDIT		1211
+#define IDC_BLACKLIST_OK		1212
+#define IDC_BLACKLIST_CANCEL	1213
+
+// ---- 导入翻译对话框 ----
+#define IDD_IMPORT_TRANS_DIALOG	1230
+#define IDC_IMPORT_LIST			1231
+#define IDC_IMPORT_AUTOFILL		1232
+#define IDC_IMPORT_OK			1233
+#define IDC_IMPORT_CANCEL		1234
+
+// ---- Wiki 分类选择对话框 ----
+#define IDD_WIKI_CATS_DIALOG	1220
+#define IDC_WIKI_CATS_LIST		1221
+#define IDC_WIKI_CATS_ALL		1222
+#define IDC_WIKI_CATS_NONE		1223
+#define IDC_WIKI_CATS_OK		1224
+#define IDC_WIKI_CATS_CANCEL	1225
+
+// ---- 主窗口控件 ----
+#define IDC_EDIT_PENUMBRA		1300
+#define IDC_BTN_BROWSE_PENUMBRA	1301
+#define IDC_EDIT_TRANSLATION	1302
+#define IDC_BTN_BROWSE_TRANS	1303
+#define IDC_EDIT_DICTIONARY		1304
+#define IDC_BTN_BROWSE_DICT		1305
+#define IDC_CHK_SWAP			1306
+#define IDC_CHK_BACKUP			1307
+#define IDC_RADIO_PURE_CN		1308
+#define IDC_RADIO_CN_EN			1309
+#define IDC_BTN_EXTRACT			1310
+#define IDC_BTN_IMPORT			1311
+#define IDC_BTN_APPLY			1312
+#define IDC_BTN_RESTORE			1313
+#define IDC_BTN_BLACKLIST		1314
+#define IDC_BTN_WIKI			1315
+#define IDC_LOG_EDIT			1316
+#define IDC_BTN_CANCEL			1317
+#define IDC_BTN_OPEN_PENUMBRA	1320
+#define IDC_BTN_OPEN_TRANS		1321
+#define IDC_BTN_OPEN_DICT		1322
+#define IDC_PROGRESS			1330
+
+#ifndef IDC_STATIC
+#define IDC_STATIC				-1
+#endif
+// 新对象的下一组默认值
+//
+#ifdef APSTUDIO_INVOKED
+#ifndef APSTUDIO_READONLY_SYMBOLS
+
+#define _APS_NO_MFC					130
+#define _APS_NEXT_RESOURCE_VALUE	1300
+#define _APS_NEXT_COMMAND_VALUE		32771
+#define _APS_NEXT_CONTROL_VALUE		1000
+#define _APS_NEXT_SYMED_VALUE		110
+#endif
+#endif

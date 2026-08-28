@@ -1,0 +1,20 @@
+# Visual Studio
+.vs/
+*.user
+*.suo
+
+# 编译产物 / 中间目录
+x64/
+FFXIV_MOD选项汉化工具/
+*.obj
+*.pdb
+*.ilk
+*.tlog
+
+# 发布包
+release/
+*.zip
+
+# 系统文件
+Thumbs.db
+Desktop.ini
