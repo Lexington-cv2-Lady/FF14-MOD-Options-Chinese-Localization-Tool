@@ -23,6 +23,7 @@ HFONT g_hFont = nullptr;        // 主界面自定义字体（随字体大小重
 std::atomic<bool> g_busy{ false };
 std::atomic<bool> g_cancel{ false };
 std::mutex g_logMutex;
+std::vector<std::wstring> g_logBuffer; // 日志缓冲：改字号后重放，恢复各行的标签颜色
 std::string g_workerName;
 std::vector<std::string> g_wikiPrefixes; // Wiki 导出当前选中的分类
 fs::path g_importFile;   // 导入翻译：选定的文件
@@ -119,10 +120,9 @@ static COLORREF PickLogColor(const std::wstring& text)
     return RGB(0, 0, 0); // 默认黑色
 }
 
-void AppendLogText(const std::wstring& text)
+// 追加一行并按其标签上色（调用方需已持有 g_logMutex）
+static void AppendLogLineLocked(const std::wstring& text)
 {
-    if (!g_hLogEdit) return;
-    std::lock_guard<std::mutex> lock(g_logMutex);
     int len = GetWindowTextLengthW(g_hLogEdit);
     SendMessageW(g_hLogEdit, EM_SETSEL, len, len);
     SendMessageW(g_hLogEdit, EM_REPLACESEL, FALSE, (LPARAM)text.c_str());
@@ -137,8 +137,30 @@ void AppendLogText(const std::wstring& text)
     cf.dwEffects = 0;
     SendMessageW(g_hLogEdit, EM_SETCHARFORMAT, SCF_SELECTION, (LPARAM)&cf);
     SendMessageW(g_hLogEdit, EM_SETSEL, -1, 0);
+}
 
+void AppendLogText(const std::wstring& text)
+{
+    if (!g_hLogEdit) return;
+    std::lock_guard<std::mutex> lock(g_logMutex);
+    g_logBuffer.push_back(text);
+    // 限制缓冲大小，避免长期运行内存无限增长（重放时只保留最近部分）
+    if (g_logBuffer.size() > 10000)
+        g_logBuffer.erase(g_logBuffer.begin(), g_logBuffer.begin() + (g_logBuffer.size() - 5000));
+    AppendLogLineLocked(text);
     // 强制滚到最底部（覆盖用户手动上滚）
+    SendMessageW(g_hLogEdit, WM_VSCROLL, SB_BOTTOM, 0);
+    SendMessageW(g_hLogEdit, EM_SCROLLCARET, 0, 0);
+}
+
+// 修改字号后重绘日志：清空并按缓冲重放，恢复各行的标签颜色
+void RepaintLogView()
+{
+    if (!g_hLogEdit) return;
+    std::lock_guard<std::mutex> lock(g_logMutex);
+    SendMessageW(g_hLogEdit, WM_SETTEXT, 0, (LPARAM)L"");
+    for (const auto& line : g_logBuffer)
+        AppendLogLineLocked(line);
     SendMessageW(g_hLogEdit, WM_VSCROLL, SB_BOTTOM, 0);
     SendMessageW(g_hLogEdit, EM_SCROLLCARET, 0, 0);
 }
@@ -2455,6 +2477,8 @@ void ApplyFontToDialog(HWND hDlg)
             cf.bCharSet = DEFAULT_CHARSET;
             wcscpy_s(cf.szFaceName, L"MS Shell Dlg");
             SendMessageW(child, EM_SETCHARFORMAT, SCF_ALL, (LPARAM)&cf);
+            // SCF_ALL 会把已有文本的颜色重置为默认黑色，重放日志缓冲以恢复各行的标签颜色
+            RepaintLogView();
         }
         child = GetWindow(child, GW_HWNDNEXT);
     }

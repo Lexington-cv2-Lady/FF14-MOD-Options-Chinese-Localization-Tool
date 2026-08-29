@@ -69,6 +69,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build_release.ps1 -Zip
 
 ## 更新日志
 
+### v2.1.4
+
+- 修正：修改字体大小后，日志区文字颜色被重置为默认黑色的问题（日志加入内存缓冲，改字号后按行重放恢复标签颜色）
+
 ### v2.1
 
 - 新增「模型名 / API 地址」下拉选择，内置 DeepSeek 与智谱 GLM 预设
