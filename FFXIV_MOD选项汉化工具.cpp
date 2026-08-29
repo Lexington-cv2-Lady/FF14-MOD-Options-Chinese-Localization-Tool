@@ -2591,9 +2591,40 @@ static bool ParseAIJson(const std::string& content, json& out)
     return false;
 }
 
+// 判断 term 是否以词边界（空格/连字符/下划线/字符串首尾）整体出现在 text 中
+static bool termInText(const std::string& text, const std::string& term)
+{
+    if (term.empty() || text.empty()) return false;
+    if (text == term) return true;
+    size_t p = 0;
+    while ((p = text.find(term, p)) != std::string::npos) {
+        bool lb = (p == 0) || (text[p - 1] == ' ' || text[p - 1] == '-' || text[p - 1] == '_');
+        size_t ep = p + term.size();
+        bool rb = (ep == text.size()) || (text[ep] == ' ' || text[ep] == '-' || text[ep] == '_');
+        if (lb && rb) return true;
+        p += term.size();
+    }
+    return false;
+}
+
+// 从 AI 译文（「中文（英文）」/ 纯中文 / 其他）提取中文部分，作为会话术语保存
+static std::string extractChineseTerm(const std::string& trans)
+{
+    if (trans.empty() || !contains_chinese(trans)) return "";
+    size_t lp = trans.find_first_of("（(");
+    if (lp != std::string::npos) {
+        std::string zh = trans.substr(0, lp);
+        while (!zh.empty() && (zh.back() == ' ' || zh.back() == '\t')) zh.pop_back();
+        if (!zh.empty() && contains_chinese(zh)) return zh;
+    }
+    return trans;
+}
+
 // 调用一次 AI 翻译一批词条，返回 条目 id -> 译文 的映射
+// glossary：会话内已确定的术语对照（英文 -> 固定中文译名），注入 prompt 保证同词同译
 static bool AITranslateBatch(const std::vector<std::pair<std::string, std::string>>& items,
-                             std::map<std::string, std::string>& outMap, std::string& errMsg)
+                             std::map<std::string, std::string>& outMap, std::string& errMsg,
+                             const std::vector<std::pair<std::string, std::string>>& glossary)
 {
     if (items.empty()) return true;
     if (g_cfg.aiModel.empty()) { errMsg = "未填写模型名（AI 翻译设置）"; return false; }
@@ -2611,6 +2642,12 @@ static bool AITranslateBatch(const std::vector<std::pair<std::string, std::strin
         "8. 原文拼写错误（如 devine caress、care ii）按正确词义理解翻译，括号内英文保留原文拼写。\n"
         "9. 遇到不确定含义的词汇，根据上下文推断其通用含义进行翻译，译文仍按第 2 条格式保留「中文（英文）」，括号内为原文英文。\n"
         "10. 只输出一个 JSON 对象：键为条目 id（字符串），值为译文。不要输出任何其他内容。";
+    if (!glossary.empty()) {
+        sysMsg +=
+            "\n11. 术语一致性：以下为本次翻译已确定的固定术语对照（英文 → 中文）。"
+            "待翻译文本中出现这些英文词/短语时，必须原样套用固定中文译名，禁止另译或换说法：\n";
+        for (const auto& g : glossary) sysMsg += "    " + g.first + " → " + g.second + "\n";
+    }
     json arr = json::array();
     for (auto& it : items) arr.push_back({ {"id", it.first}, {"text", it.second} });
     std::string userMsg = "请翻译以下 FFXIV 模组文本条目，输出 JSON 对象：\n" + arr.dump();
@@ -2707,6 +2744,9 @@ static bool AITranslateFile(const fs::path& inFile)
     LogThread("待翻译条目：" + std::to_string(pending.size())
         + " 条（其中 " + std::to_string(alreadyFilled) + " 条已有翻译跳过）");
 
+    // 会话内术语记忆：英文原文 -> 固定中文译名（来自词典预填 + AI 已翻条目），保证同词同译
+    std::unordered_map<std::string, std::string> sessionTerms;
+
     // 唯一词典预填：词典中已翻译的 key 直接填充，不再浪费 AI 额度
     int dictFilled = 0;
     if (!g_cfg.dictionaryDir.empty()) {
@@ -2724,8 +2764,11 @@ static bool AITranslateFile(const fs::path& inFile)
                             if (dict.contains(it.sec) && dict[it.sec].is_object()
                                 && dict[it.sec].contains(it.key) && dict[it.sec][it.key].is_string()
                                 && !dict[it.sec][it.key].get<std::string>().empty()) {
-                                tj[it.sec][it.key] = dict[it.sec][it.key].get<std::string>();
+                                std::string zv = dict[it.sec][it.key].get<std::string>();
+                                tj[it.sec][it.key] = zv;
                                 dictFilled++; hit = true;
+                                std::string zh = extractChineseTerm(zv);
+                                if (!zh.empty() && zh != it.english) sessionTerms[it.english] = zh;
                             }
                             if (!hit) rest.push_back(it);
                         }
@@ -2746,6 +2789,7 @@ static bool AITranslateFile(const fs::path& inFile)
                     if (!tr.empty() && tr != it.english) {
                         tj[it.sec][it.key] = tr;
                         dictFilled++;
+                        sessionTerms[it.english] = tr;
                     }
                     else rest.push_back(it);
                 }
@@ -2792,6 +2836,18 @@ static bool AITranslateFile(const fs::path& inFile)
             for (size_t k = 0; k < n; ++k)
                 items.emplace_back(std::to_string(i + k), list[i + k].english);
 
+            // 会话术语：把与本批文本相关的已确定译法注入 prompt，保证同词同译
+            std::vector<std::pair<std::string, std::string>> glossary;
+            if (!sessionTerms.empty()) {
+                for (const auto& kv : sessionTerms) {
+                    bool relevant = false;
+                    for (size_t k = 0; k < n && !relevant; ++k)
+                        if (termInText(list[i + k].english, kv.first)) relevant = true;
+                    if (relevant) glossary.push_back(kv);
+                    if (glossary.size() >= 60) break; // 防止 prompt 过长
+                }
+            }
+
             std::string err;
             std::map<std::string, std::string> got;
             bool okBatch = false;
@@ -2799,7 +2855,7 @@ static bool AITranslateFile(const fs::path& inFile)
             for (int retry = 0; retry < 3 && !okBatch; ++retry) {
                 if (retry > 0) { retried = true; LogThread("[提示] 批次 " + std::to_string(i / batch + 1) + " 重试第 " + std::to_string(retry) + " 次..."); Sleep(2000); }
                 got.clear();
-                if (AITranslateBatch(items, got, err)) okBatch = true;
+                if (AITranslateBatch(items, got, err, glossary)) okBatch = true;
                 else LogThread("[错误] 批次 " + std::to_string(i / batch + 1) + " 失败: " + err);
             }
             if (okBatch) {
@@ -2810,6 +2866,10 @@ static bool AITranslateFile(const fs::path& inFile)
                     if (f != got.end()) {
                         tj[list[i + k].sec][list[i + k].key] = f->second;
                         okCount++;
+                        // 记录会话术语：同词后续批次强制统一译法
+                        std::string zh = extractChineseTerm(f->second);
+                        if (!zh.empty() && zh != list[i + k].english)
+                            sessionTerms[list[i + k].english] = zh;
                     }
                     else missed.push_back(list[i + k]);
                 }
