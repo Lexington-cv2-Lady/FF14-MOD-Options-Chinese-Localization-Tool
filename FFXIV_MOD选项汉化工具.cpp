@@ -120,6 +120,22 @@ static COLORREF PickLogColor(const std::wstring& text)
     return RGB(0, 0, 0); // 默认黑色
 }
 
+// 把日志缓冲完整写入 exe 同级目录的「日志.json」（自动导出，JSON 数组格式；
+// 调用方需已持有 g_logMutex；每次新增日志后全量重写，保证内容始终最新）
+static void FlushLogToJsonFile()
+{
+    if (g_logBuffer.empty()) return;
+    try {
+        json j = json::array();
+        for (const auto& line : g_logBuffer) {
+            std::string s = wstring_to_utf8(line);
+            while (!s.empty() && (s.back() == '\r' || s.back() == '\n')) s.pop_back();
+            j.push_back(s);
+        }
+        write_binary_file(GetExeDir() / L"日志.json", j.dump(2));
+    } catch (...) {}
+}
+
 // 追加一行并按其标签上色（调用方需已持有 g_logMutex）
 static void AppendLogLineLocked(const std::wstring& text)
 {
@@ -148,6 +164,7 @@ void AppendLogText(const std::wstring& text)
     if (g_logBuffer.size() > 10000)
         g_logBuffer.erase(g_logBuffer.begin(), g_logBuffer.begin() + (g_logBuffer.size() - 5000));
     AppendLogLineLocked(text);
+    FlushLogToJsonFile();
     // 强制滚到最底部（覆盖用户手动上滚）
     SendMessageW(g_hLogEdit, WM_VSCROLL, SB_BOTTOM, 0);
     SendMessageW(g_hLogEdit, EM_SCROLLCARET, 0, 0);
@@ -2751,7 +2768,8 @@ static void LoadCustomSaves()
         Log("[提示] 已把「自定义AI存档.json」迁移并入用户配置 config.user.json（" + std::to_string(migrated) + " 条；旧文件保留可自行删除）");
     }
 
-    // 把 customSaves 并入当前 Key / 预设
+    // 把 customSaves 并入当前 Key（预设列表不动：内置预设只来自 config.default.json，
+    // 自定义记录单独存于 customSaves，由「配置列表」统一展示，避免污染预设）
     size_t used = 0;
     for (const auto& e : g_cfg.customSaves) {
         // Key：同名覆盖，否则（key 非空）追加
@@ -2762,13 +2780,6 @@ static void LoadCustomSaves()
                 if (e.name.empty() && k.key == e.key) { updated = true; break; }
             }
             if (!updated) g_cfg.aiKeys.push_back({ e.name, e.key });
-        }
-        // 预设：model+baseUrl 组合去重（忽略大小写），不同则追加
-        if (!e.model.empty() || !e.baseUrl.empty()) {
-            bool dup = false;
-            for (const auto& p : g_cfg.aiPresets)
-                if (NormForDup(p.model) == NormForDup(e.model) && NormForDup(p.baseUrl) == NormForDup(e.baseUrl)) { dup = true; break; }
-            if (!dup) g_cfg.aiPresets.push_back({ e.name, e.model, e.baseUrl, e.note });
         }
         ++used;
     }
@@ -2814,10 +2825,6 @@ static void SaveCustomSaves(HWND hDlg)
                 if (k.name == name || k.key == key) { k.name = name; k.key = key; kdup = true; break; }
             if (!kdup) g_cfg.aiKeys.push_back({ name, key });
         }
-        bool pdup = false;
-        for (const auto& p : g_cfg.aiPresets)
-            if (NormForDup(p.model) == NormForDup(model) && NormForDup(p.baseUrl) == NormForDup(baseUrl)) { pdup = true; break; }
-        if (!pdup) g_cfg.aiPresets.push_back({ name, model, baseUrl, note });
         g_cfg.aiKeyName = name;
         g_cfg.aiApiKey = key;
         // 刷新下拉并回填当前输入
@@ -2827,7 +2834,7 @@ static void SaveCustomSaves(HWND hDlg)
         SetEditText(hDlg, IDC_AI_KEY, utf8_to_wstring(key));
         SetEditText(hDlg, IDC_AI_MODEL, utf8_to_wstring(model));
         SetEditText(hDlg, IDC_AI_BASEURL, utf8_to_wstring(baseUrl));
-        Log("[完成] 已保存自定义 AI 记录「" + name + "」到用户配置（config.user.json）");
+        Log("[完成] 已保存自定义 AI 记录「" + name + "」到用户配置（config.user.json），可在「配置列表」中查看或删除");
     } else {
         MessageBoxW(hDlg, L"写入用户配置文件失败，请检查程序目录是否有写权限。", L"提示", MB_OK | MB_ICONWARNING);
     }
@@ -2936,7 +2943,7 @@ static void BuildAISelectList(HWND hList)
         for (const auto& s : g_cfg.customSaves) {
             if (AISameEntry(s, p) && !s.key.empty()) {
                 item.key = s.key;
-                item.note = s.note.empty() ? std::string("内置预设+自定义 Key") : s.note;
+                item.note = "来自：" + (s.name.empty() ? p.name : s.name);
                 item.fromCustom = true;
                 break;
             }
@@ -2997,18 +3004,43 @@ static INT_PTR CALLBACK SelectAICfgDlgProc(HWND hDlg, UINT message, WPARAM wPara
     }
     case WM_NOTIFY: {
         NMHDR* nm = (NMHDR*)lParam;
-        if (nm->idFrom == IDC_AI_SELECT_LIST && nm->code == LVN_ITEMCHANGED) {
-            NMLISTVIEW* nmlv = (NMLISTVIEW*)lParam;
-            bool changed = (nmlv->uChanged & LVIF_STATE) &&
-                ((nmlv->uNewState & LVIS_STATEIMAGEMASK) != (nmlv->uOldState & LVIS_STATEIMAGEMASK));
-            if (changed) {
-                // 单选：勾选某项时自动取消其它项
-                if (ListView_GetCheckState(nm->hwndFrom, nmlv->iItem)) {
-                    for (int i = 0; i < ListView_GetItemCount(nm->hwndFrom); ++i)
-                        if (i != nmlv->iItem) ListView_SetCheckState(nm->hwndFrom, i, FALSE);
-                    g_aiSelResult = nmlv->iItem;
-                } else if (g_aiSelResult == nmlv->iItem) {
-                    g_aiSelResult = -1;
+        if (nm->idFrom == IDC_AI_SELECT_LIST) {
+            if (nm->code == NM_CLICK) {
+                // 点击行 = 选中并自动勾选；再次点击已勾选的行 = 取消勾选
+                NMITEMACTIVATE* nmia = (NMITEMACTIVATE*)lParam;
+                int idx = nmia->iItem;
+                if (idx < 0 || idx >= (int)g_aiSelItems.size()) break;
+                HWND hList = nm->hwndFrom;
+                // 点在复选框区域（最左侧约 20px）时交给 ListView 默认处理，避免双重切换
+                if (nmia->ptAction.x < 20) break;
+                bool checked = ListView_GetCheckState(hList, idx) != FALSE;
+                bool selected = (ListView_GetItemState(hList, idx, LVIS_SELECTED) & LVIS_SELECTED) != 0;
+                if (selected && checked) {
+                    // 再点一次：取消勾选并取消选中
+                    ListView_SetCheckState(hList, idx, FALSE);
+                    ListView_SetItemState(hList, idx, 0, LVIS_SELECTED);
+                } else {
+                    // 选中并勾选（单选互斥：取消其它行勾选）
+                    ListView_SetItemState(hList, idx, LVIS_SELECTED, LVIS_SELECTED);
+                    for (int i = 0; i < ListView_GetItemCount(hList); ++i)
+                        if (i != idx) ListView_SetCheckState(hList, i, FALSE);
+                    ListView_SetCheckState(hList, idx, TRUE);
+                }
+                return TRUE;
+            }
+            if (nm->code == LVN_ITEMCHANGED) {
+                NMLISTVIEW* nmlv = (NMLISTVIEW*)lParam;
+                bool changed = (nmlv->uChanged & LVIF_STATE) &&
+                    ((nmlv->uNewState & LVIS_STATEIMAGEMASK) != (nmlv->uOldState & LVIS_STATEIMAGEMASK));
+                if (changed) {
+                    // 单选：勾选某项时自动取消其它项
+                    if (ListView_GetCheckState(nm->hwndFrom, nmlv->iItem)) {
+                        for (int i = 0; i < ListView_GetItemCount(nm->hwndFrom); ++i)
+                            if (i != nmlv->iItem) ListView_SetCheckState(nm->hwndFrom, i, FALSE);
+                        g_aiSelResult = nmlv->iItem;
+                    } else if (g_aiSelResult == nmlv->iItem) {
+                        g_aiSelResult = -1;
+                    }
                 }
             }
         }
@@ -3143,9 +3175,13 @@ INT_PTR CALLBACK RestoreDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM l
             if ((nmlv->uChanged & LVIF_STATE)
                 && ((nmlv->uNewState & LVIS_SELECTED) != (nmlv->uOldState & LVIS_SELECTED))) {
                 HWND left = GetDlgItem(hDlg, IDC_RESTORE_LEFTLIST);
-                // 高亮选中（点击 / Ctrl+A 全选）时自动同步勾选复选框，让「勾选」与「选中/全选」等效
-                if (nmlv->uNewState & LVIS_SELECTED)
+                // 高亮选中（点击 / Ctrl+A 全选）时自动同步勾选复选框，让「勾选」与「选中/全选」等效；
+                // 取消选中时同步取消勾选
+                if (nmlv->uNewState & LVIS_SELECTED) {
                     ListView_SetCheckState(left, nmlv->iItem, TRUE);
+                } else if (nmlv->uOldState & LVIS_SELECTED) {
+                    ListView_SetCheckState(left, nmlv->iItem, FALSE);
+                }
                 HWND right = GetDlgItem(hDlg, IDC_RESTORE_RIGHTLIST);
                 int sel = ListView_GetNextItem(left, -1, LVNI_SELECTED);
                 SendMessageW(right, LB_RESETCONTENT, 0, 0);

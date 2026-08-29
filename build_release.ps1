@@ -52,6 +52,14 @@ if (Test-Path $cfgDefault) {
     Write-Host "[WARN] config.default.json not found in project root; zip will not ship default config."
 }
 
+# Step 2c: ensure an empty 日志.json template ships in the zip (the app auto-creates/overwrites it on every run)
+$logName = -join [char[]](0x65E5, 0x5FD7, 0x2E, 0x6A, 0x73, 0x6F, 0x6E)  # 日志.json
+$logTpl = Join-Path $pub $logName
+if (-not (Test-Path $logTpl)) {
+    Set-Content -Path $logTpl -Value '[]' -Encoding UTF8
+    Write-Host "==> Created empty $logName template in release folder."
+}
+
 # Step 3 (optional): zip the release folder content, only with -Zip
 if ($Zip) {
     # Resolve current version from README changelog (first "### vX.Y.Z" heading)
