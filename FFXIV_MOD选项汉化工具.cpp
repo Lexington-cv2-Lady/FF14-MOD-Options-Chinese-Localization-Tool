@@ -1801,7 +1801,7 @@ void WikiImportThread()
         while (!done) {
             // 用户点击中断按钮：提前结束，但仍保存已抓取结果
             if (g_cancel.load()) {
-                LogThread("[提示] 用户中断，提前结束抓取");
+                LogThread("[提示] 检测到中断请求，提前结束抓取");
                 done = true;
                 break;
             }
@@ -1908,14 +1908,15 @@ void WikiImportThread()
         long long wSecs = (long long)(wikiTotalMs / 1000);
         std::string wTime = std::to_string(wSecs / 60) + "分" + std::to_string(wSecs % 60) + "秒";
         if (g_cancel.load()) {
-            LogThread("[提示] 用户中断，已保存已抓取结果：共处理 " + std::to_string(pages) + " 页，新增术语 " + std::to_string(added)
-                + "，总用时 " + wTime);
+            LogThread("[提示] Wiki 导出已中断：共处理 " + std::to_string(pages) + " 页，新增术语 " + std::to_string(added)
+                + " 条，命中已有 " + std::to_string(hitExisting) + " 条（跳过），总用时 " + wTime + "，已保存当前结果");
         }
         else {
             LogThread("[完成] Wiki 导出结束：共处理 " + std::to_string(pages) + " 页，新增术语 " + std::to_string(added)
-                + "，总用时 " + wTime + "，已增量并入 wiki_术语对照and个人填充.json");
+                + " 条，命中已有 " + std::to_string(hitExisting) + " 条（跳过），总用时 " + wTime
+                + "，结果已并入 wiki_术语对照and个人填充.json");
         }
-        LogThread("提示：Wiki 词条已直接并入唯一词典；想改已翻译的词条，请直接编辑 wiki_术语对照and个人填充.json");
+        LogThread("[提示] 词典文件：wiki_术语对照and个人填充.json —— 如需修改词条请直接编辑该文件");
     }
     catch (const std::exception& e) {
         LogThread("[错误] Wiki 导出异常：" + std::string(e.what()));
