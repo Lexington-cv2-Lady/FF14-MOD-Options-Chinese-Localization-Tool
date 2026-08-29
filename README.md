@@ -1,0 +1,76 @@
+# FFXIV MOD 选项汉化工具
+
+一款面向《最终幻想 14》（FFXIV）MOD 作者的选项汉化辅助工具。自动提取 MOD 内的英文选项文本，调用 AI 批量翻译，并结合官方术语对照词典辅助人工校正，最终把汉化结果写回 MOD。
+
+## 功能特性
+
+- **一键提取**：扫描 MOD 目录，提取选项/配置文本中的英文条目
+- **AI 批量翻译**：支持配置 API Key，批量翻译提取出的文本（可中断、可续跑）
+- **官方术语对照**：内置 `wiki_术语对照` + `汉化总词典` 双层词典，优先保证游戏术语与官方翻译一致
+- **Wiki 分类导出**：30+ 分类可选（物品、技能、状态、任务、NPC、怪物、坐骑、宠物、副本、配方……），从官方 Wiki 术语表导出对照词条
+- **词序调换**：可切换为 `中文（英文）` 显示，方便对照检查
+- **单词黑名单**：自定义不参与翻译/保留原样的词条
+- **导入翻译补全**：导入已有翻译文件时，可先用词典自动补全空白项
+- **词典目录迁移**：旧版 config 自动检测迁移，升级无痛
+- **窗口等比缩放 + 联动字体**：拉伸窗口时所有控件与字体按比例缩放
+
+## 技术栈
+
+- 纯 Win32 API（C++），无第三方 UI 框架
+- Visual Studio 2022（工具集 v145），Unicode 字符集
+- 内部统一 UTF-8，JSON 使用 [nlohmann/json](https://github.com/nlohmann/json)（`json.hpp` 已内嵌，无外部依赖）
+- 支持 Win32 / x64，Debug / Release
+
+## 编译方法
+
+环境要求：**Visual Studio 2022**（含「使用 C++ 的桌面开发」工作负载）。
+
+方式一（推荐，命令行一键构建）：
+
+```bat
+build_release.bat
+```
+
+将调用 `build_release.ps1`，执行 MSBuild Release x64 编译，并把 exe 复制到 `release\` 目录。
+
+如需同时打包 zip：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\build_release.ps1 -Zip
+```
+
+方式二（IDE）：
+
+用 Visual Studio 2022 打开 `FFXIV_MOD选项汉化工具.slnx`，选择 `Release | x64`，直接生成即可。
+
+> 注意：`build_release.ps1` 中 MSBuild 路径可按本机安装位置调整，找不到时会自动回退到系统 `PATH` 中的 `msbuild`。
+
+## 使用说明
+
+1. **首次运行**：启动后选择一次「词典目录」（存放术语对照词典的文件夹），程序会在 exe 所在目录自动生成 `config.json` 保存设置。
+2. **配置 AI**：在设置中填入 API Key、选择翻译模型等（设置会保存在 `config.json`，请勿将配置文件公开分享）。
+3. **提取**：选择要汉化的 MOD 目录 → 点「1. 提取」，程序扫描并列出全部英文选项文本。
+4. **翻译**：点「2. 翻译」调用 AI 批量翻译；翻译结果可逐条人工校正（对照词典辅助）。
+5. **应用**：确认无误后点「3. 应用翻译」，把汉化文本写回 MOD。
+
+## 目录结构
+
+```
+├─ FFXIV_MOD选项汉化工具.cpp/.h/.rc    # 主程序源码与资源
+├─ json.hpp                           # nlohmann/json（内嵌，无需联网）
+├─ build_release.bat / build_release.ps1  # 一键构建打包脚本
+└─ README.md                          # 本说明
+```
+
+编译产物（`x64\`、`release\`）与运行配置（`config.json`）均被 `.gitignore` 忽略，不会进入仓库。
+
+## 安全说明
+
+- `config.json`（含 AI API Key）保存在**程序运行目录**，已被 `.gitignore` 排除，不会提交到仓库。
+- 请勿把个人 API Key、词典数据等敏感文件上传到公开仓库。
+
+## 免责声明
+
+- 本项目为学习交流用途，不隶属于 SQUARE ENIX 或任何官方组织。
+- 《最终幻想 14》及其相关素材版权归 SQUARE ENIX 所有。
+- 术语对照词典内容源自社区维护，仅供参考。
