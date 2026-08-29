@@ -83,6 +83,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build_release.ps1 -Zip
 
 - 调整：点「保存」写入的自定义 AI 记录并入用户配置 `config.user.json` 的 `customSaves` 字段，不再单独生成「自定义AI存档.json」
 - 兼容：启动时若程序目录残留旧版「自定义AI存档.json」，自动迁移并入 `customSaves` 后写回用户配置（旧文件保留，可自行删除）
+- 内部：清理死代码（`extract_terms_from_wikitext`、未使用的 Resource.h 宏、冗余 include），精简构建产物
 
 ### v2.2.2
 
