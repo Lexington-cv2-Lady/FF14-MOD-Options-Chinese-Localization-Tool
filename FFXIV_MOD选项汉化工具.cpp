@@ -178,6 +178,14 @@ void SetProgress(int cur, int max)
 }
 
 // ------------------------------------------------------------------
+// AI 默认预设（首次运行时写入 config.json；之后以 config.json 为准，用户可自由编辑增删）
+// ------------------------------------------------------------------
+static const std::vector<AIPreset> g_defaultAIPresets = {
+    { "DeepSeek", "deepseek-v4-flash", "https://api.deepseek.com" },
+    { "智谱 GLM", "glm-4.7-flash", "https://open.bigmodel.cn/api/paas/v4" },
+};
+
+// ------------------------------------------------------------------
 // 配置加载 / 保存（config.json 保存在程序 exe 所在目录，跟随程序走）
 // ------------------------------------------------------------------
 fs::path GetExeDir()
@@ -204,6 +212,13 @@ bool SaveConfig()
         j["aiModel"] = g_cfg.aiModel;
         j["aiBaseUrl"] = g_cfg.aiBaseUrl;
         j["aiBatchSize"] = g_cfg.aiBatchSize;
+        {
+            json pa = json::array();
+            for (const auto& p : g_cfg.aiPresets)
+                pa.push_back({ {"name", p.name}, {"model", p.model}, {"baseUrl", p.baseUrl} });
+            j["aiPresets"] = pa;
+        }
+        j["aiPreset"] = g_cfg.aiPreset;
         j["fontSize"] = g_cfg.fontSize;
         j["autoFontSize"] = g_cfg.autoFontSize;
         j["winX"] = g_cfg.winX;
@@ -243,6 +258,18 @@ bool LoadConfigFrom(const fs::path& cfgPath)
         g_cfg.aiApiKey = j.value("aiApiKey", "");
         g_cfg.aiModel = j.value("aiModel", "deepseek-v4-flash");
         g_cfg.aiBaseUrl = j.value("aiBaseUrl", "https://api.deepseek.com");
+        g_cfg.aiPresets.clear();
+        if (j.contains("aiPresets") && j["aiPresets"].is_array()) {
+            for (const auto& it : j["aiPresets"]) {
+                AIPreset p;
+                p.name = it.value("name", "");
+                p.model = it.value("model", "");
+                p.baseUrl = it.value("baseUrl", "");
+                if (!p.name.empty()) g_cfg.aiPresets.push_back(p);
+            }
+        }
+        if (g_cfg.aiPresets.empty()) g_cfg.aiPresets = g_defaultAIPresets;
+        g_cfg.aiPreset = j.value("aiPreset", "");
         g_cfg.aiBatchSize = j.value("aiBatchSize", 40);
         g_cfg.fontSize = j.value("fontSize", 11);
         g_cfg.autoFontSize = j.value("autoFontSize", true);
@@ -2440,6 +2467,36 @@ std::wstring GetEditText(HWND hDlg, int id)
     return buf;
 }
 
+// 按模型名匹配预设下标，找不到返回 -1
+static int FindPresetByModel(const std::string& m)
+{
+    for (size_t i = 0; i < g_cfg.aiPresets.size(); ++i)
+        if (g_cfg.aiPresets[i].model == m) return (int)i;
+    return -1;
+}
+
+// 按 API 地址匹配预设下标，找不到返回 -1
+static int FindPresetByBaseUrl(const std::string& u)
+{
+    for (size_t i = 0; i < g_cfg.aiPresets.size(); ++i)
+        if (g_cfg.aiPresets[i].baseUrl == u) return (int)i;
+    return -1;
+}
+
+// 把预设列表填入「模型名」「API 地址」两个下拉框
+static void FillAIPresetCombos(HWND hDlg)
+{
+    HWND hModel = GetDlgItem(hDlg, IDC_AI_MODEL);
+    HWND hBase = GetDlgItem(hDlg, IDC_AI_BASEURL);
+    if (!hModel || !hBase) return;
+    SendMessageW(hModel, CB_RESETCONTENT, 0, 0);
+    SendMessageW(hBase, CB_RESETCONTENT, 0, 0);
+    for (const auto& p : g_cfg.aiPresets) {
+        SendMessageW(hModel, CB_ADDSTRING, 0, (LPARAM)utf8_to_wstring(p.model).c_str());
+        SendMessageW(hBase, CB_ADDSTRING, 0, (LPARAM)utf8_to_wstring(p.baseUrl).c_str());
+    }
+}
+
 void RefreshConfigUI()
 {
     if (!g_hMainWnd) return;
@@ -2452,6 +2509,7 @@ void RefreshConfigUI()
     CheckRadioButton(g_hMainWnd, IDC_RADIO_PURE_CN, IDC_RADIO_CN_EN, g_cfg.pureChinese ? IDC_RADIO_PURE_CN : IDC_RADIO_CN_EN);
     // AI 翻译设置
     SetEditText(g_hMainWnd, IDC_AI_KEY, utf8_to_wstring(g_cfg.aiApiKey));
+    FillAIPresetCombos(g_hMainWnd);
     SetEditText(g_hMainWnd, IDC_AI_MODEL,
         utf8_to_wstring(g_cfg.aiModel.empty() ? "deepseek-v4-flash" : g_cfg.aiModel));
     SetEditText(g_hMainWnd, IDC_AI_BASEURL,
@@ -3110,15 +3168,46 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
             if (wmEvent == EN_CHANGE) g_cfg.aiApiKey = wstring_to_utf8(GetEditText(hDlg, IDC_AI_KEY));
             break;
         case IDC_AI_MODEL:
-            if (wmEvent == EN_CHANGE) {
+            // 下拉选中：联动填充该预设对应的 API 地址
+            if (wmEvent == CBN_SELCHANGE) {
+                g_cfg.aiModel = wstring_to_utf8(GetEditText(hDlg, IDC_AI_MODEL));
+                int idx = FindPresetByModel(g_cfg.aiModel);
+                if (idx >= 0) {
+                    const AIPreset& p = g_cfg.aiPresets[idx];
+                    g_cfg.aiPreset = p.name;
+                    g_cfg.aiBaseUrl = p.baseUrl;
+                    SetEditText(hDlg, IDC_AI_BASEURL, utf8_to_wstring(p.baseUrl));
+                    Log("已选择预设：" + p.name + "（模型 " + p.model + "，地址 " + p.baseUrl + "）");
+                    SaveConfig();
+                }
+            }
+            // 手动输入：匹配得上就记住预设名，否则记为自定义
+            else if (wmEvent == CBN_EDITCHANGE) {
                 g_cfg.aiModel = wstring_to_utf8(GetEditText(hDlg, IDC_AI_MODEL));
                 if (g_cfg.aiModel.empty()) g_cfg.aiModel = "deepseek-v4-flash";
+                int idx = FindPresetByModel(g_cfg.aiModel);
+                g_cfg.aiPreset = (idx >= 0) ? g_cfg.aiPresets[idx].name : "";
             }
             break;
         case IDC_AI_BASEURL:
-            if (wmEvent == EN_CHANGE) {
+            // 下拉选中：联动填充该预设对应的模型名
+            if (wmEvent == CBN_SELCHANGE) {
+                g_cfg.aiBaseUrl = wstring_to_utf8(GetEditText(hDlg, IDC_AI_BASEURL));
+                int idx = FindPresetByBaseUrl(g_cfg.aiBaseUrl);
+                if (idx >= 0) {
+                    const AIPreset& p = g_cfg.aiPresets[idx];
+                    g_cfg.aiPreset = p.name;
+                    g_cfg.aiModel = p.model;
+                    SetEditText(hDlg, IDC_AI_MODEL, utf8_to_wstring(p.model));
+                    Log("已选择预设：" + p.name + "（模型 " + p.model + "，地址 " + p.baseUrl + "）");
+                    SaveConfig();
+                }
+            }
+            else if (wmEvent == CBN_EDITCHANGE) {
                 g_cfg.aiBaseUrl = wstring_to_utf8(GetEditText(hDlg, IDC_AI_BASEURL));
                 if (g_cfg.aiBaseUrl.empty()) g_cfg.aiBaseUrl = "https://api.deepseek.com";
+                int idx = FindPresetByBaseUrl(g_cfg.aiBaseUrl);
+                g_cfg.aiPreset = (idx >= 0) ? g_cfg.aiPresets[idx].name : "";
             }
             break;
         case IDC_AI_BATCH: {

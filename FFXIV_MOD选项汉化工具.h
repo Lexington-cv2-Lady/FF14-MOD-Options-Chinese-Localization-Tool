@@ -90,6 +90,15 @@ inline std::string clean_utf8(const std::string& input)
 }
 
 // ------------------------------------------------------------------
+// AI 服务商预设（下拉选择用；完整列表存 config.json，可自由增删）
+// ------------------------------------------------------------------
+struct AIPreset {
+    std::string name;     // 显示名，如 "DeepSeek"
+    std::string model;    // 模型名，如 "deepseek-v4-flash"
+    std::string baseUrl;  // API Base URL，如 "https://api.deepseek.com"
+};
+
+// ------------------------------------------------------------------
 // 配置结构体
 // ------------------------------------------------------------------
 struct AppConfig {
@@ -104,6 +113,8 @@ struct AppConfig {
     std::string aiApiKey;      // AI 翻译 API Key（DeepSeek 等，OpenAI 兼容）
     std::string aiModel;       // AI 模型名（默认 deepseek-v4-flash）
     std::string aiBaseUrl;     // API Base URL（默认 https://api.deepseek.com）
+    std::vector<AIPreset> aiPresets; // AI 下拉预设列表（存 config.json，可手动增删）
+    std::string aiPreset;      // 当前选中的预设名（空 = 自定义输入）
     int aiBatchSize = 40;      // AI 每批翻译的词条数
     int fontSize = 11;         // 主界面字体大小（点，默认 11）
     bool autoFontSize = true;  // 窗口缩放时是否自动调整字体大小
