@@ -22,6 +22,7 @@
 #define IDC_RESTORE_RIGHTLIST	1202
 #define IDC_RESTORE_BTN			1203
 #define IDC_RESTORE_CLOSE		1204
+#define IDC_RESTORE_ALL			1205
 
 // ---- Blacklist dialog ----
 #define IDD_BLACKLIST_DIALOG	1210

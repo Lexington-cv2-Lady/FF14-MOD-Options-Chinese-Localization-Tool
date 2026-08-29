@@ -959,6 +959,49 @@ bool ApplyTranslation()
             return false;
         };
 
+        // 辅助：去除首尾空白
+        auto trimStr = [&](const std::string& s) -> std::string {
+            size_t a = s.find_first_not_of(" \t");
+            if (a == std::string::npos) return std::string();
+            size_t b = s.find_last_not_of(" \t");
+            return s.substr(a, b - a + 1);
+        };
+
+        // 辅助：解析 "英文/中文" 或 "中文/英文" 斜杠双语格式
+        auto parseSlashPair = [&](const std::string& s, std::string& zh, std::string& en) -> bool {
+            auto slash = s.find('/');
+            if (slash == std::string::npos || slash == 0 || slash + 1 >= s.size()) return false;
+            std::string a = trimStr(s.substr(0, slash));
+            std::string b = trimStr(s.substr(slash + 1));
+            if (a.empty() || b.empty()) return false;
+            bool aZh = contains_chinese(a);
+            bool bZh = contains_chinese(b);
+            if (aZh && !bZh) { zh = a; en = b; return true; }       // 中文/英文
+            if (!aZh && bZh) { en = a; zh = b; return true; }       // 英文/中文
+            return false;
+        };
+
+        // 辅助：从双语串中提取 zh/en 之前的前缀装饰（如 ■ ├ └ ─），用于斜杠格式时保留
+        auto extractPrefix = [&](const std::string& original, const std::string& zh, const std::string& en) -> std::string {
+            auto p1 = original.find(en);
+            auto p2 = original.find(zh);
+            size_t start = std::string::npos;
+            if (p1 != std::string::npos && p2 != std::string::npos) start = (p1 < p2) ? p1 : p2;
+            else if (p1 != std::string::npos) start = p1;
+            else if (p2 != std::string::npos) start = p2;
+            if (start == std::string::npos) return std::string();
+            return original.substr(0, start);
+        };
+
+        // 辅助：按当前设置组合 中文/英文（纯中文 / 中文（英文） / 英文（中文））
+        auto combineZhEn = [&](const std::string& prefix, const std::string& zh, const std::string& en) -> std::string {
+            std::string z = trimStr(zh);
+            std::string e = trimStr(en);
+            if (g_cfg.pureChinese) return prefix + z;
+            if (g_cfg.swapWordOrder) return prefix + z + "（" + e + "）";
+            return prefix + e + "（" + z + "）";
+        };
+
         // 辅助：拼接翻译
         auto makeTranslation = [&](const std::string& original, const std::string& trans) -> std::string {
             if (trans.empty()) return original; // 没查到保留原文
@@ -966,9 +1009,7 @@ bool ApplyTranslation()
                 // 纯中文：优先取括号外的中文；括号外是英文则取括号内中文
                 std::string zh, dummy;
                 if (parseParenPair(trans, zh, dummy)) {
-                    size_t s = zh.find_first_not_of(" \t");
-                    size_t e = zh.find_last_not_of(" \t");
-                    if (s != std::string::npos && e != std::string::npos) zh = zh.substr(s, e - s + 1);
+                    zh = trimStr(zh);
                     if (!zh.empty()) return zh;
                 }
                 return trans;
@@ -977,13 +1018,12 @@ bool ApplyTranslation()
                 std::string zh, en;
                 if (parseParenPair(trans, zh, en)) {
                     // 已有括号格式：按当前设置重新组合，词序调换即时生效
-                    if (g_cfg.swapWordOrder) return zh + "（" + en + "）";
-                    else return en + "（" + zh + "）";
+                    return combineZhEn("", zh, en);
                 }
                 else if (contains_chinese(trans)) {
                     // trans 是纯中文
-                    if (g_cfg.swapWordOrder) return trans + "（" + original + "）";
-                    else return original + "（" + trans + "）";
+                    if (g_cfg.swapWordOrder) return trimStr(trans) + "（" + original + "）";
+                    else return original + "（" + trimStr(trans) + "）";
                 }
                 else {
                     // trans 是纯英文/异常：兜底
@@ -992,8 +1032,19 @@ bool ApplyTranslation()
             }
         };
 
+        // 应用翻译到单个字符串：
+        // - 已是中文：识别双语格式（括号 / 斜杠）按当前设置重新规范化，实现
+        //   ① 斜杠"英文/中文"转"中文（英文）对照/纯中文"；② 纯中文可覆盖之前应用的对照格式
+        // - 纯英文：优先查格式转换词典，回退到唯一词典 + 拼接规则
         auto applyString = [&](const std::string& original, const std::string& dictTrans) -> std::string {
-            if (contains_chinese(original)) return original; // 已是中文不动
+            if (contains_chinese(original)) {
+                std::string zh, en;
+                if (parseParenPair(original, zh, en))          // 中文（英文）/ 英文（中文）
+                    return combineZhEn("", zh, en);
+                if (parseSlashPair(original, zh, en))          // 英文/中文 斜杠双语
+                    return combineZhEn(extractPrefix(original, zh, en), zh, en);
+                return original;                               // 已是纯中文或其他，不动
+            }
             // 1. 优先查格式转换词典：把"英文"或"英文 / 中文"直接转成标准"中文（英文）"
             auto fit = formatMap.find(original);
             if (fit != formatMap.end()) return fit->second;
@@ -2631,6 +2682,13 @@ INT_PTR CALLBACK RestoreDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM l
             EndDialog(hDlg, IDCANCEL);
             return TRUE;
         }
+        if (id == IDC_RESTORE_ALL) {
+            // 全选：勾选左侧所有模组文件夹
+            HWND left = GetDlgItem(hDlg, IDC_RESTORE_LEFTLIST);
+            int count = ListView_GetItemCount(left);
+            for (int i = 0; i < count; ++i) ListView_SetCheckState(left, i, TRUE);
+            return TRUE;
+        }
         if (id == IDC_RESTORE_BTN) {
             HWND left = GetDlgItem(hDlg, IDC_RESTORE_LEFTLIST);
 
@@ -2704,15 +2762,25 @@ INT_PTR CALLBACK RestoreDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM l
 }
 
 // ------------------------------------------------------------------
-// 单词黑名单.json（翻译目录）读写
+// 单词黑名单.json（词典目录）读写
 // ------------------------------------------------------------------
-// 从翻译目录下的 单词黑名单.json 读取黑名单词（每行一个，或用逗号间隔），合并 defaults 后返回
+// 从词典目录下的 单词黑名单.json 读取黑名单词（每行一个，或用逗号间隔），合并 defaults 后返回
+// 兼容旧版：词典目录没有该文件时，回退读取翻译目录下的旧文件
 std::vector<std::string> LoadBlacklistFile(const std::vector<std::string>& defaults)
 {
     std::vector<std::string> words = defaults;
-    if (g_cfg.translationDir.empty()) return words;
-    fs::path p = fs::u8path(g_cfg.translationDir) / fs::u8path("单词黑名单.json");
+    std::string base = g_cfg.dictionaryDir.empty() ? g_cfg.translationDir : g_cfg.dictionaryDir;
+    if (base.empty()) return words;
+    fs::path p = fs::u8path(base) / fs::u8path("单词黑名单.json");
     std::error_code ec;
+    if (!fs::exists(p, ec) || ec) {
+        // 兼容旧版：词典目录没有时回退到翻译目录
+        if (!g_cfg.translationDir.empty() && g_cfg.translationDir != g_cfg.dictionaryDir) {
+            fs::path old = fs::u8path(g_cfg.translationDir) / fs::u8path("单词黑名单.json");
+            std::error_code oec;
+            if (fs::exists(old, oec) && !oec) p = old;
+        }
+    }
     if (!fs::exists(p, ec) || ec) return words;
     std::string d;
     if (!read_binary_file(p, d)) return words;
@@ -2731,18 +2799,19 @@ std::vector<std::string> LoadBlacklistFile(const std::vector<std::string>& defau
     return words;
 }
 
-// 保存黑名单到翻译目录下的 单词黑名单.json
+// 保存黑名单到词典目录下的 单词黑名单.json
 void SaveBlacklistFile(const std::vector<std::string>& words)
 {
-    if (g_cfg.translationDir.empty()) return;
-    fs::path p = fs::u8path(g_cfg.translationDir) / fs::u8path("单词黑名单.json");
+    std::string base = g_cfg.dictionaryDir.empty() ? g_cfg.translationDir : g_cfg.dictionaryDir;
+    if (base.empty()) return;
+    fs::path p = fs::u8path(base) / fs::u8path("单词黑名单.json");
     std::string out;
     for (size_t i = 0; i < words.size(); ++i) {
         if (i) out += "\r\n";
         out += words[i];
     }
     if (write_binary_file(p, out))
-        Log("已写入 单词黑名单.json（" + std::to_string(words.size()) + " 个词）");
+        Log("已写入 单词黑名单.json（" + std::to_string(words.size()) + " 个词，位于词典目录）");
 }
 
 // ------------------------------------------------------------------
@@ -2790,7 +2859,7 @@ INT_PTR CALLBACK BlacklistDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM
             SaveBlacklistFile(words);
             SaveConfig();
             EndDialog(hDlg, IDOK);
-            Log("已保存 " + std::to_string(words.size()) + " 个黑名单词（写入 单词黑名单.json）");
+            Log("已保存 " + std::to_string(words.size()) + " 个黑名单词（写入词典目录 单词黑名单.json）");
             return TRUE;
         }
         if (id == IDC_BLACKLIST_CANCEL || id == IDCANCEL) {
