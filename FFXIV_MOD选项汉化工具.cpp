@@ -232,6 +232,13 @@ bool SaveConfig()
         j["blacklist"] = g_cfg.blacklist;
         j["wikiCategories"] = g_cfg.wikiCategories;
         j["aiApiKey"] = g_cfg.aiApiKey;
+        j["aiKeyName"] = g_cfg.aiKeyName;
+        {
+            json ka = json::array();
+            for (const auto& k : g_cfg.aiKeys)
+                ka.push_back({ {"name", k.name}, {"key", k.key} });
+            j["aiKeys"] = ka;
+        }
         j["aiModel"] = g_cfg.aiModel;
         j["aiBaseUrl"] = g_cfg.aiBaseUrl;
         j["aiBatchSize"] = g_cfg.aiBatchSize;
@@ -279,8 +286,34 @@ bool LoadConfigFrom(const fs::path& cfgPath)
         if (j.contains("blacklist")) g_cfg.blacklist = j["blacklist"].get<std::vector<std::string>>();
         if (j.contains("wikiCategories")) g_cfg.wikiCategories = j["wikiCategories"].get<std::vector<std::string>>();
         g_cfg.aiApiKey = j.value("aiApiKey", "");
-        g_cfg.aiModel = j.value("aiModel", "deepseek-v4-flash");
-        g_cfg.aiBaseUrl = j.value("aiBaseUrl", "https://api.deepseek.com");
+        g_cfg.aiKeyName = j.value("aiKeyName", "");
+        g_cfg.aiKeys.clear();
+        if (j.contains("aiKeys") && j["aiKeys"].is_array()) {
+            for (const auto& it : j["aiKeys"]) {
+                AIKeyEntry e;
+                e.name = it.value("name", "");
+                e.key = it.value("key", "");
+                if (!e.name.empty() && !e.key.empty()) g_cfg.aiKeys.push_back(e);
+            }
+        }
+        // 兼容旧版：只有单个 aiApiKey 时补成一条「默认 Key」
+        if (g_cfg.aiKeys.empty() && !g_cfg.aiApiKey.empty()) {
+            g_cfg.aiKeys.push_back({ "默认 Key", g_cfg.aiApiKey });
+            if (g_cfg.aiKeyName.empty()) g_cfg.aiKeyName = "默认 Key";
+        }
+        // 同步当前选中 Key
+        if (!g_cfg.aiKeys.empty()) {
+            bool found = false;
+            for (const auto& e : g_cfg.aiKeys) {
+                if (e.name == g_cfg.aiKeyName) { g_cfg.aiApiKey = e.key; found = true; break; }
+            }
+            if (!found) {
+                g_cfg.aiKeyName = g_cfg.aiKeys[0].name;
+                g_cfg.aiApiKey = g_cfg.aiKeys[0].key;
+            }
+        }
+        g_cfg.aiModel = j.value("aiModel", "");
+        g_cfg.aiBaseUrl = j.value("aiBaseUrl", "");
         g_cfg.aiPresets.clear();
         if (j.contains("aiPresets") && j["aiPresets"].is_array()) {
             for (const auto& it : j["aiPresets"]) {
@@ -2209,6 +2242,8 @@ static bool AITranslateBatch(const std::vector<std::pair<std::string, std::strin
                              std::map<std::string, std::string>& outMap, std::string& errMsg)
 {
     if (items.empty()) return true;
+    if (g_cfg.aiModel.empty()) { errMsg = "未填写模型名（AI 翻译设置）"; return false; }
+    if (g_cfg.aiBaseUrl.empty()) { errMsg = "未填写 API 地址（AI 翻译设置）"; return false; }
     std::string sysMsg =
         "你是《最终幻想14》(FFXIV) 模组本地化的专业译者，把英文模组文本翻译成简体中文。\n"
         "硬性要求：\n"
@@ -2222,7 +2257,7 @@ static bool AITranslateBatch(const std::vector<std::pair<std::string, std::strin
     std::string userMsg = "请翻译以下 FFXIV 模组文本条目，输出 JSON 对象：\n" + arr.dump();
 
     json req;
-    req["model"] = g_cfg.aiModel.empty() ? "deepseek-v4-flash" : g_cfg.aiModel;
+    req["model"] = g_cfg.aiModel;
     req["messages"] = json::array();
     req["messages"].push_back({ {"role","system"}, {"content", sysMsg} });
     req["messages"].push_back({ {"role","user"}, {"content", userMsg} });
@@ -2231,7 +2266,7 @@ static bool AITranslateBatch(const std::vector<std::pair<std::string, std::strin
     req["max_tokens"] = 8192; // 推理模型（如 glm-4.7）思维链会占大量 token，防止 content 被截断/为空
     std::string body = req.dump();
 
-    std::string url = g_cfg.aiBaseUrl.empty() ? "https://api.deepseek.com" : g_cfg.aiBaseUrl;
+    std::string url = g_cfg.aiBaseUrl;
     while (!url.empty() && url.back() == '/') url.pop_back();
     if (url.find("/chat/completions") == std::string::npos) url += "/chat/completions";
 
@@ -2446,8 +2481,8 @@ static void RunAITestThread()
         std::string model = wstring_to_utf8(GetEditText(g_hMainWnd, IDC_AI_MODEL));
         std::string base = wstring_to_utf8(GetEditText(g_hMainWnd, IDC_AI_BASEURL));
         if (key.empty()) { Log("[错误] 未填写 API Key，请先在『AI 翻译设置』中填写。"); g_busy = false; PostMessageW(g_hMainWnd, WM_APP_DONE, 0, 0); return; }
-        if (model.empty()) { Log("[错误] 未填写模型名。"); g_busy = false; PostMessageW(g_hMainWnd, WM_APP_DONE, 0, 0); return; }
-        if (base.empty()) base = "https://api.deepseek.com";
+        if (model.empty()) { Log("[错误] 未填写模型名，请先在『AI 翻译设置』中填写。"); g_busy = false; PostMessageW(g_hMainWnd, WM_APP_DONE, 0, 0); return; }
+        if (base.empty()) { Log("[错误] 未填写 API 地址，请先在『AI 翻译设置』中填写。"); g_busy = false; PostMessageW(g_hMainWnd, WM_APP_DONE, 0, 0); return; }
 
         json req;
         req["model"] = model;
@@ -2645,6 +2680,43 @@ static void FillAIPresetCombos(HWND hDlg)
     }
 }
 
+// 把已保存的 Key 列表填入「API Key」下拉框（项文本 = 备注（Key 前 10 位…））
+static void FillAIKeyCombo(HWND hDlg)
+{
+    HWND hKey = GetDlgItem(hDlg, IDC_AI_KEY);
+    if (!hKey) return;
+    SendMessageW(hKey, CB_RESETCONTENT, 0, 0);
+    int sel = -1;
+    for (size_t i = 0; i < g_cfg.aiKeys.size(); ++i) {
+        std::wstring label = utf8_to_wstring(g_cfg.aiKeys[i].name);
+        std::wstring k = utf8_to_wstring(g_cfg.aiKeys[i].key);
+        if (k.size() > 10) k = k.substr(0, 10) + L"…";
+        label += L"（" + k + L"）";
+        int idx = (int)SendMessageW(hKey, CB_ADDSTRING, 0, (LPARAM)label.c_str());
+        SendMessageW(hKey, CB_SETITEMDATA, idx, (LPARAM)i);
+        if (g_cfg.aiKeyName == g_cfg.aiKeys[i].name) sel = idx;
+    }
+    if (sel >= 0) SendMessageW(hKey, CB_SETCURSEL, sel, 0);
+    // 编辑框显示完整 Key（与下拉项文本不同）
+    SetEditText(hDlg, IDC_AI_KEY, utf8_to_wstring(g_cfg.aiApiKey));
+}
+
+// 切换 API Key 输入框的密码掩码（Key 现在是下拉框内的编辑框，需运行时设置样式）
+static void ApplyKeyPasswordStyle(HWND hDlg)
+{
+    HWND hCombo = GetDlgItem(hDlg, IDC_AI_KEY);
+    if (!hCombo) return;
+    COMBOBOXINFO cbi = {};
+    cbi.cbSize = sizeof(cbi);
+    SendMessageW(hCombo, CB_GETCOMBOBOXINFO, 0, (LPARAM)&cbi);
+    HWND he = cbi.hwndItem;
+    if (!he) return;
+    LONG_PTR st = GetWindowLongPtrW(he, GWL_STYLE);
+    if (g_keyVisible) st &= ~ES_PASSWORD; else st |= ES_PASSWORD;
+    SetWindowLongPtrW(he, GWL_STYLE, st);
+    InvalidateRect(he, nullptr, TRUE);
+}
+
 void RefreshConfigUI()
 {
     if (!g_hMainWnd) return;
@@ -2656,12 +2728,12 @@ void RefreshConfigUI()
     CheckDlgButton(g_hMainWnd, IDC_CHK_AUTO_FONT, g_cfg.autoFontSize ? BST_CHECKED : BST_UNCHECKED);
     CheckRadioButton(g_hMainWnd, IDC_RADIO_PURE_CN, IDC_RADIO_CN_EN, g_cfg.pureChinese ? IDC_RADIO_PURE_CN : IDC_RADIO_CN_EN);
     // AI 翻译设置
-    SetEditText(g_hMainWnd, IDC_AI_KEY, utf8_to_wstring(g_cfg.aiApiKey));
+    FillAIKeyCombo(g_hMainWnd);
+    SetEditText(g_hMainWnd, IDC_AI_KEY_NAME, utf8_to_wstring(g_cfg.aiKeyName));
+    ApplyKeyPasswordStyle(g_hMainWnd);
     FillAIPresetCombos(g_hMainWnd);
-    SetEditText(g_hMainWnd, IDC_AI_MODEL,
-        utf8_to_wstring(g_cfg.aiModel.empty() ? "deepseek-v4-flash" : g_cfg.aiModel));
-    SetEditText(g_hMainWnd, IDC_AI_BASEURL,
-        utf8_to_wstring(g_cfg.aiBaseUrl.empty() ? "https://api.deepseek.com" : g_cfg.aiBaseUrl));
+    SetEditText(g_hMainWnd, IDC_AI_MODEL, utf8_to_wstring(g_cfg.aiModel));
+    SetEditText(g_hMainWnd, IDC_AI_BASEURL, utf8_to_wstring(g_cfg.aiBaseUrl));
     SetEditText(g_hMainWnd, IDC_AI_BATCH, std::to_wstring(g_cfg.aiBatchSize));
     SetEditText(g_hMainWnd, IDC_EDIT_FONT_SIZE, std::to_wstring(g_cfg.fontSize));
     SetDlgItemTextW(g_hMainWnd, IDC_BTN_SHOW_KEY, g_keyVisible ? L"隐藏" : L"显示");
@@ -3359,8 +3431,49 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
             break;
         // AI 翻译设置同步到配置
         case IDC_AI_KEY:
-            if (wmEvent == EN_CHANGE) g_cfg.aiApiKey = wstring_to_utf8(GetEditText(hDlg, IDC_AI_KEY));
+            if (wmEvent == CBN_SELCHANGE) {
+                HWND hKey = GetDlgItem(hDlg, IDC_AI_KEY);
+                int sel = (int)SendMessageW(hKey, CB_GETCURSEL, 0, 0);
+                if (sel >= 0) {
+                    size_t idx = (size_t)SendMessageW(hKey, CB_GETITEMDATA, sel, 0);
+                    if (idx < g_cfg.aiKeys.size()) {
+                        g_cfg.aiKeyName = g_cfg.aiKeys[idx].name;
+                        g_cfg.aiApiKey = g_cfg.aiKeys[idx].key;
+                        SetEditText(hDlg, IDC_AI_KEY, utf8_to_wstring(g_cfg.aiApiKey)); // 编辑框显示完整 Key
+                        SetEditText(hDlg, IDC_AI_KEY_NAME, utf8_to_wstring(g_cfg.aiKeyName));
+                        SaveConfig();
+                    }
+                }
+            } else if (wmEvent == CBN_EDITCHANGE) {
+                // 手动输入/修改：作为当前 Key 使用（保存为条目需点「保存Key」）
+                g_cfg.aiApiKey = wstring_to_utf8(GetEditText(hDlg, IDC_AI_KEY));
+            }
             break;
+        case IDC_AI_KEY_NAME:
+            if (wmEvent == EN_CHANGE)
+                g_cfg.aiKeyName = wstring_to_utf8(GetEditText(hDlg, IDC_AI_KEY_NAME));
+            break;
+        case IDC_BTN_SAVE_KEY: {
+            std::string name = wstring_to_utf8(GetEditText(hDlg, IDC_AI_KEY_NAME));
+            std::string key = wstring_to_utf8(GetEditText(hDlg, IDC_AI_KEY));
+            if (key.empty()) {
+                MessageBoxW(hDlg, L"API Key 不能为空，请先粘贴 Key。", L"提示", MB_OK | MB_ICONINFORMATION);
+                break;
+            }
+            if (name.empty()) name = "Key " + std::to_string((int)g_cfg.aiKeys.size() + 1);
+            bool updated = false;
+            for (auto& e : g_cfg.aiKeys) {
+                if (e.name == name) { e.key = key; updated = true; }
+            }
+            if (!updated) g_cfg.aiKeys.push_back({ name, key });
+            g_cfg.aiKeyName = name;
+            g_cfg.aiApiKey = key;
+            SaveConfig();
+            FillAIKeyCombo(hDlg);
+            SetEditText(hDlg, IDC_AI_KEY_NAME, utf8_to_wstring(name));
+            Log("[完成] 已保存 API Key：" + name);
+            break;
+        }
         case IDC_AI_MODEL:
             // 模型名与 API 地址完全独立：选择/输入模型名只更新模型名，不联动地址
             if (wmEvent == CBN_SELCHANGE || wmEvent == CBN_EDITCHANGE) {
@@ -3384,10 +3497,8 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
         }
         case IDC_BTN_SHOW_KEY: {
             g_keyVisible = !g_keyVisible;
-            HWND he = GetDlgItem(hDlg, IDC_AI_KEY);
-            SendMessageW(he, EM_SETPASSWORDCHAR, g_keyVisible ? 0 : (WPARAM)L'*', 0);
+            ApplyKeyPasswordStyle(hDlg);
             SetDlgItemTextW(hDlg, IDC_BTN_SHOW_KEY, g_keyVisible ? L"隐藏" : L"显示");
-            InvalidateRect(he, nullptr, TRUE);
             break;
         }
         case IDC_CHK_SWAP:

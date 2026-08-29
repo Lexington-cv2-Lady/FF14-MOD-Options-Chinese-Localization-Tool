@@ -98,6 +98,12 @@ struct AIPreset {
     std::string baseUrl;  // API Base URL，如 "https://api.deepseek.com"
 };
 
+// AI API Key 条目（下拉选择用；列表存 config.json，可自由增删）
+struct AIKeyEntry {
+    std::string name;     // 备注名，如 "我的主 key"
+    std::string key;      // API Key 值
+};
+
 // ------------------------------------------------------------------
 // 配置结构体
 // ------------------------------------------------------------------
@@ -110,9 +116,11 @@ struct AppConfig {
     bool pureChinese = false;         // 纯中文模式
     std::vector<std::string> blacklist; // 黑名单
     std::vector<std::string> wikiCategories; // Wiki 导出选中的分类 prefix
-    std::string aiApiKey;      // AI 翻译 API Key（DeepSeek 等，OpenAI 兼容）
-    std::string aiModel;       // AI 模型名（默认 deepseek-v4-flash）
-    std::string aiBaseUrl;     // API Base URL（默认 https://api.deepseek.com）
+    std::string aiApiKey;      // AI 翻译 API Key（当前选中项，OpenAI 兼容）
+    std::string aiKeyName;     // 当前选中 Key 的备注名（空 = 自定义输入未保存）
+    std::vector<AIKeyEntry> aiKeys; // 已保存的 Key 列表（备注 + Key，可手动增删）
+    std::string aiModel;       // AI 模型名（空 = 未设置）
+    std::string aiBaseUrl;     // API Base URL（空 = 未设置）
     std::vector<AIPreset> aiPresets; // AI 下拉预设列表（存 config.json，可手动增删）
     std::string aiPreset;      // 当前选中的预设名（空 = 自定义输入）
     int aiBatchSize = 40;      // AI 每批翻译的词条数
