@@ -1,0 +1,38 @@
+{
+  "aiApiKey": "",
+  "aiBaseUrl": "",
+  "aiBatchSize": 40,
+  "aiKeyName": "",
+  "aiKeys": [],
+  "aiModel": "",
+  "aiPreset": "",
+  "aiPresets": [
+    {
+      "name": "DeepSeek",
+      "model": "deepseek-v4-flash",
+      "baseUrl": "https://api.deepseek.com",
+      "note": "DeepSeek 官方 API"
+    },
+    {
+      "name": "智谱 GLM",
+      "model": "glm-4.7-flash",
+      "baseUrl": "https://open.bigmodel.cn/api/paas/v4",
+      "note": "智谱 AI 开放平台（OpenAI 兼容）"
+    }
+  ],
+  "autoBackup": true,
+  "autoFontSize": true,
+  "blacklist": [],
+  "customSaves": [],
+  "dictionaryDir": "",
+  "fontSize": 11,
+  "penumbraDir": "",
+  "pureChinese": false,
+  "swapWordOrder": false,
+  "translationDir": "",
+  "wikiCategories": [],
+  "winH": 0,
+  "winW": 0,
+  "winX": -1,
+  "winY": -1
+}

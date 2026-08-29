@@ -16,8 +16,8 @@ release/
 *.zip
 
 # 运行配置（含 API Key，勿提交）
+# config.default.json 为默认配置（不含用户数据），随 zip 打包需提交，故不在此忽略
 config.json
-config.default.json
 config.user.json
 自定义AI存档.json
 

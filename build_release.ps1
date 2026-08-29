@@ -43,6 +43,15 @@ if (-not (Test-Path $pub)) { New-Item -ItemType Directory -Path $pub | Out-Null 
 Copy-Item $relExe.FullName (Join-Path $pub $relExe.Name) -Force
 Write-Host "==> Copied exe to release folder."
 
+# Step 2b: copy default config into release (zip ships with config.default.json)
+$cfgDefault = Join-Path $root 'config.default.json'
+if (Test-Path $cfgDefault) {
+    Copy-Item $cfgDefault (Join-Path $pub 'config.default.json') -Force
+    Write-Host "==> Copied config.default.json to release folder."
+} else {
+    Write-Host "[WARN] config.default.json not found in project root; zip will not ship default config."
+}
+
 # Step 3 (optional): zip the release folder content, only with -Zip
 if ($Zip) {
     # Resolve current version from README changelog (first "### vX.Y.Z" heading)
