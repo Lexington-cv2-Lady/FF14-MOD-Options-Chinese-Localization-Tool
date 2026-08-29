@@ -2943,7 +2943,10 @@ static void BuildAISelectList(HWND hList)
         for (const auto& s : g_cfg.customSaves) {
             if (AISameEntry(s, p) && !s.key.empty()) {
                 item.key = s.key;
-                item.note = "来自：" + (s.name.empty() ? p.name : s.name);
+                item.name = s.name.empty() ? p.name : s.name;
+                item.note = (item.name == p.name)
+                            ? std::string("自定义")
+                            : ("源自：" + p.name);
                 item.fromCustom = true;
                 break;
             }
