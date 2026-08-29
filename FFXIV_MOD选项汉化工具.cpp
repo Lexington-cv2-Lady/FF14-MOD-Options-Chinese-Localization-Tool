@@ -2151,13 +2151,19 @@ void WikiImportThread()
             + " 页、含英文名 " + std::to_string(cntEn) + " 页、中文+英文都齐全 " + std::to_string(cntBoth)
             + " 页；本次新增术语 " + std::to_string(added) + " 条，命中已有词条 " + std::to_string(hitExisting) + " 条（跳过）");
         if (!hitList.empty()) {
-            std::string detail = "[提示] 命中已有的词条：";
-            size_t show = std::min<size_t>(hitList.size(), 20);
+            // 去重后展示：同一词条会在多个数据页/数据集重复命中，避免刷屏
+            std::vector<std::string> uniq;
+            std::set<std::string> seen;
+            for (auto& t : hitList)
+                if (seen.insert(t).second) uniq.push_back(t);
+            std::string detail = "[提示] 命中已有的词条（去重后 " + std::to_string(uniq.size())
+                + " 个，原始命中 " + std::to_string(hitExisting) + " 次）：";
+            size_t show = std::min<size_t>(uniq.size(), 20);
             for (size_t i = 0; i < show; ++i) {
                 if (i) detail += "、";
-                detail += hitList[i];
+                detail += uniq[i];
             }
-            if (hitList.size() > show) detail += " 等共 " + std::to_string(hitList.size()) + " 条";
+            if (uniq.size() > show) detail += " 等";
             LogThread(detail);
             PrependLogToFile(utf8_to_wstring(detail + "\r\n")); // 置顶到日志.json 文件最前
         }
