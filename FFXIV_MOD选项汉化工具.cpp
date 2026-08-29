@@ -121,6 +121,17 @@ static COLORREF PickLogColor(const std::wstring& text)
     return RGB(0, 0, 0); // 默认黑色
 }
 
+// 当前时间戳前缀，如 [2026-08-29 15:30:45]
+static std::wstring NowTimestamp()
+{
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    wchar_t buf[40];
+    swprintf_s(buf, L"[%04d-%02d-%02d %02d:%02d:%02d] ",
+        st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
+    return std::wstring(buf);
+}
+
 // 把日志缓冲完整写入 exe 同级目录的「日志.json」（自动导出，JSON 数组格式；
 // 调用方需已持有 g_logMutex；每次新增日志后全量重写，保证内容始终最新）
 // 置顶区（g_logTopBuffer）始终写在文件最前面。
@@ -148,7 +159,7 @@ static void FlushLogToJsonFile()
 static void PrependLogToFile(const std::wstring& text)
 {
     std::lock_guard<std::mutex> lock(g_logMutex);
-    g_logTopBuffer.push_back(text);
+    g_logTopBuffer.push_back(NowTimestamp() + text);
     // 限制置顶区大小，只保留最近的若干条
     if (g_logTopBuffer.size() > 50)
         g_logTopBuffer.erase(g_logTopBuffer.begin());
@@ -178,11 +189,12 @@ void AppendLogText(const std::wstring& text)
 {
     if (!g_hLogEdit) return;
     std::lock_guard<std::mutex> lock(g_logMutex);
-    g_logBuffer.push_back(text);
+    std::wstring ts = NowTimestamp();
+    g_logBuffer.push_back(ts + text);
     // 限制缓冲大小，避免长期运行内存无限增长（重放时只保留最近部分）
     if (g_logBuffer.size() > 10000)
         g_logBuffer.erase(g_logBuffer.begin(), g_logBuffer.begin() + (g_logBuffer.size() - 5000));
-    AppendLogLineLocked(text);
+    AppendLogLineLocked(ts + text);
     FlushLogToJsonFile();
     // 强制滚到最底部（覆盖用户手动上滚）
     SendMessageW(g_hLogEdit, WM_VSCROLL, SB_BOTTOM, 0);
@@ -2355,11 +2367,27 @@ static bool HttpPostJson(const std::string& url, const std::string& apiKey,
     return true;
 }
 
-// 从 AI 回复文本中解析出 JSON 对象（容忍 ```json 代码块、前后说明文字）
+// 严格解析一个字符串为 JSON 对象
+static bool tryParseRaw(const std::string& s, json& out)
+{
+    try { out = json::parse(s); return out.is_object(); } catch (...) { return false; }
+}
+
+// 从 AI 回复文本中解析出 JSON 对象（容忍 ```json 代码块、前后说明文字、尾逗号）
 static bool ParseAIJson(const std::string& content, json& out)
 {
     auto tryParse = [&](const std::string& s) -> bool {
-        try { out = json::parse(s); return out.is_object(); } catch (...) { return false; }
+        if (tryParseRaw(s, out)) return true;
+        // 修复 AI 常见错误：多余的尾逗号（",}" / ",]"），再试一次
+        std::string t = s;
+        for (int pass = 0; pass < 4; ++pass) {
+            bool changed = false;
+            size_t pos;
+            while ((pos = t.find(",}")) != std::string::npos) { t.replace(pos, 2, 1, '}'); changed = true; }
+            while ((pos = t.find(",]")) != std::string::npos) { t.replace(pos, 2, 1, ']'); changed = true; }
+            if (!changed) break;
+        }
+        return tryParseRaw(t, out);
     };
     if (tryParse(content)) return true;
     auto f1 = content.find("```");
@@ -2427,10 +2455,17 @@ static bool AITranslateBatch(const std::vector<std::pair<std::string, std::strin
         errMsg = "响应缺少 choices/message/content: " + respBody.substr(0, 500);
         return false;
     }
-    std::string content = resp["choices"][0]["message"]["content"].get<std::string>();
+    const auto& aiMsg = resp["choices"][0]["message"];
+    std::string content = aiMsg["content"].get<std::string>();
+    // 推理模型（如 glm thinking 模式）可能把答案放进 reasoning_content 而 content 为空
+    if (content.empty() && aiMsg.contains("reasoning_content") && aiMsg["reasoning_content"].is_string())
+        content = aiMsg["reasoning_content"].get<std::string>();
     json result;
     if (!ParseAIJson(content, result)) {
-        errMsg = "AI 未返回有效 JSON: " + content.substr(0, 300);
+        std::string hint = content.empty()
+            ? "（返回内容为空，模型可能处于思考模式）"
+            : "（长度 " + std::to_string(content.size()) + "）";
+        errMsg = "AI 未返回有效 JSON" + hint + ": " + content.substr(0, 500);
         return false;
     }
     for (auto& it : items) {
