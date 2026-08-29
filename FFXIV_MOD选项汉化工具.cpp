@@ -22,6 +22,7 @@ std::atomic<bool> g_busy{ false };
 std::atomic<bool> g_cancel{ false };
 std::mutex g_logMutex;
 std::vector<std::wstring> g_logBuffer; // 日志缓冲：改字号后重放，恢复各行的标签颜色
+std::vector<std::wstring> g_logTopBuffer; // 日志置顶区：写入日志.json 时始终置于文件最前（如命中词条汇总）
 std::string g_workerName;
 std::vector<std::string> g_wikiPrefixes; // Wiki 导出当前选中的分类
 fs::path g_importFile;   // 导入翻译：选定的文件
@@ -122,11 +123,17 @@ static COLORREF PickLogColor(const std::wstring& text)
 
 // 把日志缓冲完整写入 exe 同级目录的「日志.json」（自动导出，JSON 数组格式；
 // 调用方需已持有 g_logMutex；每次新增日志后全量重写，保证内容始终最新）
+// 置顶区（g_logTopBuffer）始终写在文件最前面。
 static void FlushLogToJsonFile()
 {
-    if (g_logBuffer.empty()) return;
+    if (g_logTopBuffer.empty() && g_logBuffer.empty()) return;
     try {
         json j = json::array();
+        for (const auto& line : g_logTopBuffer) {
+            std::string s = wstring_to_utf8(line);
+            while (!s.empty() && (s.back() == '\r' || s.back() == '\n')) s.pop_back();
+            j.push_back(s);
+        }
         for (const auto& line : g_logBuffer) {
             std::string s = wstring_to_utf8(line);
             while (!s.empty() && (s.back() == '\r' || s.back() == '\n')) s.pop_back();
@@ -134,6 +141,18 @@ static void FlushLogToJsonFile()
         }
         write_binary_file(GetExeDir() / L"日志.json", j.dump(2));
     } catch (...) {}
+}
+
+// 把一条日志置顶写入「日志.json」：位于文件最前面，之后的普通日志仍排在其后。
+// 界面日志面板不显示（普通 LogThread 输出照常显示在面板里）。
+static void PrependLogToFile(const std::wstring& text)
+{
+    std::lock_guard<std::mutex> lock(g_logMutex);
+    g_logTopBuffer.push_back(text);
+    // 限制置顶区大小，只保留最近的若干条
+    if (g_logTopBuffer.size() > 50)
+        g_logTopBuffer.erase(g_logTopBuffer.begin());
+    FlushLogToJsonFile();
 }
 
 // 追加一行并按其标签上色（调用方需已持有 g_logMutex）
@@ -2140,6 +2159,7 @@ void WikiImportThread()
             }
             if (hitList.size() > show) detail += " 等共 " + std::to_string(hitList.size()) + " 条";
             LogThread(detail);
+            PrependLogToFile(utf8_to_wstring(detail + "\r\n")); // 置顶到日志.json 文件最前
         }
         uint64_t wikiTotalMs = GetTickCount64() - wikiStartMs;
         long long wSecs = (long long)(wikiTotalMs / 1000);
