@@ -20,6 +20,7 @@ HWND g_hLogEdit = nullptr;
 HFONT g_hFont = nullptr;        // 主界面自定义字体（随字体大小重建）
 std::atomic<bool> g_busy{ false };
 std::atomic<bool> g_cancel{ false };
+volatile HINTERNET g_hActiveReq = nullptr; // 当前活动 HTTP 请求句柄（取消时立即打断，无需等超时）
 std::mutex g_logMutex;
 std::vector<std::wstring> g_logBuffer; // 日志缓冲：改字号后重放，恢复各行的标签颜色
 std::vector<std::wstring> g_logTopBuffer; // 日志置顶区：写入日志.json 时始终置于文件最前（如命中词条汇总）
@@ -646,11 +647,13 @@ bool ExtractEnglish()
     json out;
     out["翻译规则"] = {
         {"1. 翻译范围", "无论是 _descriptions（描述）还是 _options（选项），都必须翻译，一视同仁。"},
-        {"2. 格式要求", "短名称（选项/组名）统一为\"中文（英文）\"格式，如\"治疗（Cure）\"，括号一律用全角；长描述（Description）直接翻译成通顺的中文句子，不套括号，也不得保留英文原文。"},
-        {"3. 去重规则", "仅当括号内的英文与括号外的中文内容完全一致（即意思完全相同）时，才可去掉括号，只保留中文。若中英文意思不同（如版本区分），则必须保留括号及英文。"},
-        {"4. 翻译指令", "对于任何英文短语，即使带有连字符（如 Connectors - Face），也应将其视为一个整体进行翻译，而不是保留原文。带「└─」「├─」等层级装饰符的名字忽略装饰符整体翻译，括号内只放最简英文，禁止嵌套重复。绝对禁止输出\"英文 / 中文\"或\"英文换行中文\"这类双语拼接。如果遇到无法确认的词汇，请根据上下文推断其通用含义进行翻译。"},
-        {"5. 文件命名", "翻译完成后，将文件名中的\"_未翻译\"改为\"_已翻译\"。"},
-        {"6. 交付方式", "每次修改后，请直接提供完整的 JSON 文件内容。"},
+        {"2. 格式要求", "短名称（选项/组名）统一为\"中文（英文）\"格式，如\"治疗（Cure）\"，括号一律用全角（）且括号内必须原样保留英文原文，禁止翻译或改写括号内的英文；长描述（Description）直接翻译成通顺的中文句子，不套括号，也不得保留英文原文。"},
+        {"3. 禁止半翻译", "每条文本必须整体完整翻译，绝对禁止输出\"中文 + 残留英文\"的混合半成品（例如\"隐遁 short boots\"、\"Medium 钻石 Patch\"均为错误）。遇到无法确认的词汇，按上下文推断其通用含义并翻译，不许跳过或保留英文。"},
+        {"4. 保留规则", "短名称（选项/组名）的括号及括号内英文必须保留，不得省略；例如 None 必须译为 无（None），禁止只输出 无。"},
+        {"5. 专有名词", "人名、品牌名、作者名等专有名词（如 Yiggle、Lavabod、YAB）可原样保留在译文中，作为专名的一部分，不强求翻译。"},
+        {"6. 翻译指令", "对于任何英文短语，即使带有连字符（如 Connectors - Face），也应将其视为一个整体进行翻译，而不是保留原文。带「└─」「├─」等层级装饰符的名字忽略装饰符整体翻译，括号内只放最简英文，禁止嵌套重复。绝对禁止输出\"英文 / 中文\"或\"英文换行中文\"这类双语拼接。"},
+        {"7. 文件命名", "翻译完成后，将文件名中的\"_未翻译\"改为\"_已翻译\"。"},
+        {"8. 交付方式", "每次修改后，请直接提供完整的 JSON 文件内容。"},
         {"说明", "将英文翻译为中文。请保持 JSON 结构，仅填写 _options 和 _descriptions 的翻译。"},
         {"格式提示", "短名称按 中文（英文） 格式填写，例如 发型1（Hairstyle 1）；长描述直接填中文句子，不要保留英文，也不要输出\"英文 / 中文\"拼接。"}
     };
@@ -1343,7 +1346,12 @@ bool ApplyTranslation()
                     return combineZhEn("", zh, en);
                 }
                 else if (contains_chinese(trans)) {
-                    // trans 是纯中文
+                    // trans 是纯中文：拼括号
+                    if (contains_english_letter(trans)) {
+                        // 中英混合（旧数据半翻译 / 含英文专名）：不再拼括号，
+                        // 避免生成 "XXX(残留)（原文）" 垃圾格式
+                        return trimStr(trans);
+                    }
                     if (g_cfg.swapWordOrder) return trimStr(trans) + "（" + original + "）";
                     else return original + "（" + trimStr(trans) + "）";
                 }
@@ -1772,6 +1780,34 @@ static std::string TranslateText(const std::string& orig,
     return replaced ? result : "";
 }
 
+// 判断字符串中是否残留多个英文单词（>=2 个 ASCII 字母段）。
+// 用于识别"部分替换后仍有英文句子"的半翻译（如 "Required for 硌狮族 models."），
+// 单英文专名（如词典译名里的 "Lavabod"）不算残留。
+static bool hasEnglishWordResidue(const std::string& s)
+{
+    int words = 0;
+    bool inWord = false;
+    for (char c : s) {
+        bool isLetter = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+        if (isLetter) { if (!inWord) { inWord = true; ++words; } }
+        else inWord = false;
+    }
+    return words >= 2;
+}
+
+// 词典预填写入的展示格式：Opt/Name 拼成"中文（英文）"（按词序设置），
+// Desc 描述保持纯中文（与 applyString 的 isDesc 规则一致）。
+static std::string dictFillDisplay(const std::string& fullKey, const std::string& zh, const std::string& english)
+{
+    if (g_cfg.pureChinese) return zh;
+    if (fullKey.find("||Desc||") != std::string::npos) return zh;
+    size_t a = zh.find_first_not_of(" \t\r\n");
+    size_t b = zh.find_last_not_of(" \t\r\n");
+    std::string z = (a == std::string::npos) ? zh : zh.substr(a, b - a + 1);
+    if (g_cfg.swapWordOrder) return z + "（" + english + "）";
+    return english + "（" + z + "）";
+}
+
 // 用词典补全 JSON 中空白项。返回补全条数；missed=仍未命中；already=已有翻译被保留数
 static int AutoFillJsonWithDict(json& tj,
     const std::unordered_map<std::string, std::string>& termMap,
@@ -1789,7 +1825,8 @@ static int AutoFillJsonWithDict(json& tj,
             auto kp = key.rfind("||");
             std::string orig = (kp == std::string::npos) ? key : key.substr(kp + 2);
             std::string tr = TranslateText(orig, termMap, maxTermLen);
-            if (!tr.empty() && tr != orig) { it.value() = tr; filled++; }
+            // 有英文句子残留（如 "Required for 硌狮族 models."）视为未完成，留给后续处理
+            if (!tr.empty() && tr != orig && !hasEnglishWordResidue(tr)) { it.value() = dictFillDisplay(key, tr, orig); filled++; }
             else missed++;
         }
     }
@@ -2511,8 +2548,9 @@ static bool HttpPostJson(const std::string& url, const std::string& apiKey,
         InternetCloseHandle(hConn); InternetCloseHandle(hNet);
         return false;
     }
+    g_hActiveReq = hReq; // 登记活动请求句柄，供取消按钮立即打断
 
-    DWORD timeout = 180000; // 3 分钟超时
+    DWORD timeout = 180000; // 3 分钟超时（取消时会被立即打断，不必等满）
     InternetSetOptionW(hReq, INTERNET_OPTION_RECEIVE_TIMEOUT, &timeout, sizeof(timeout));
     InternetSetOptionW(hReq, INTERNET_OPTION_SEND_TIMEOUT, &timeout, sizeof(timeout));
 
@@ -2520,7 +2558,9 @@ static bool HttpPostJson(const std::string& url, const std::string& apiKey,
         (LPVOID)body.data(), (DWORD)body.size());
     if (!ok) {
         errMsg = "网络请求失败: " + std::to_string(GetLastError());
-        InternetCloseHandle(hReq); InternetCloseHandle(hConn); InternetCloseHandle(hNet);
+        g_hActiveReq = nullptr;
+        if (!g_cancel) InternetCloseHandle(hReq); // 被取消时该句柄已由取消线程关闭
+        InternetCloseHandle(hConn); InternetCloseHandle(hNet);
         return false;
     }
 
@@ -2531,7 +2571,9 @@ static bool HttpPostJson(const std::string& url, const std::string& apiKey,
             char ebuf[4096]; DWORD rd = 0; std::string resp;
             while (InternetReadFile(hReq, ebuf, sizeof(ebuf), &rd) && rd > 0) resp.append(ebuf, rd);
             errMsg = "HTTP " + std::to_string(status) + (resp.empty() ? "" : ": " + resp);
-            InternetCloseHandle(hReq); InternetCloseHandle(hConn); InternetCloseHandle(hNet);
+            g_hActiveReq = nullptr;
+            if (!g_cancel) InternetCloseHandle(hReq);
+            InternetCloseHandle(hConn); InternetCloseHandle(hNet);
             return false;
         }
     }
@@ -2541,10 +2583,13 @@ static bool HttpPostJson(const std::string& url, const std::string& apiKey,
         resp.append(buf, rd);
         if (resp.size() > 64 * 1024 * 1024) {
             errMsg = "响应过大";
-            InternetCloseHandle(hReq); InternetCloseHandle(hConn); InternetCloseHandle(hNet);
+            g_hActiveReq = nullptr;
+            if (!g_cancel) InternetCloseHandle(hReq);
+            InternetCloseHandle(hConn); InternetCloseHandle(hNet);
             return false;
         }
     }
+    g_hActiveReq = nullptr;
     outBody = resp;
     InternetCloseHandle(hReq); InternetCloseHandle(hConn); InternetCloseHandle(hNet);
     return true;
@@ -2620,6 +2665,19 @@ static std::string extractChineseTerm(const std::string& trans)
     return trans;
 }
 
+// 安全序列化：strict dump 遇到非法 UTF-8 会抛 type_error.316，这里用 replace 模式兜底，
+// 把非法字节替换为 U+FFFD，避免异常导致 AI 翻译线程崩溃。
+static std::string safeDump(const json& j, int indent = -1)
+{
+    try {
+        return j.dump(indent);
+    }
+    catch (...) {
+        try { return j.dump(indent, ' ', false, json::error_handler_t::replace); }
+        catch (...) { return "{}"; }
+    }
+}
+
 // 调用一次 AI 翻译一批词条，返回 条目 id -> 译文 的映射
 // glossary：会话内已确定的术语对照（英文 -> 固定中文译名），注入 prompt 保证同词同译
 static bool AITranslateBatch(const std::vector<std::pair<std::string, std::string>>& items,
@@ -2633,24 +2691,26 @@ static bool AITranslateBatch(const std::vector<std::pair<std::string, std::strin
         "你是《最终幻想14》(FFXIV) 模组本地化的专业译者，把英文模组文本翻译成简体中文。\n"
         "硬性要求：\n"
         "1. 翻译范围：_descriptions（描述）与 _options（选项）一视同仁，都必须翻译。\n"
-        "2. 短名称（选项名/组名）格式统一为「中文（英文）」，例如 治疗（Cure）；括号一律用全角（），括号内英文为原名的本体英文（最简形式），不得省略。\n"
+        "2. 短名称（选项名/组名）格式统一为「中文（英文）」，例如 治疗（Cure）；括号一律用全角（），括号内英文为原名的本体英文（最简形式），必须原样保留、禁止翻译括号内的英文，也不得省略。\n"
         "3. 长描述（Description）直接翻译成自然通顺的中文句子，不使用括号格式，也不得保留英文原文；仅当描述本身是单个术语或短语时才用「中文（英文）」。\n"
-        "4. 禁止双语拼接：绝对禁止输出「英文 / 中文」或「英文 换行 中文」这类把原文与译文并排的文本。\n"
-        "5. 禁止嵌套与重复：原名形如「└─ animation (cure&haelan(pvp) / 治疗&治愈(pvp))」时，忽略「└─」「├─」等层级装饰符，把整串名字作为一个整体翻译成一对「中文（英文）」；括号内只放一个最简英文，禁止输出「中文（半截原文）（另半截原文）」或重复原名。示例：应输出 角色动作（Animation），而不是 角色动作 (Cure&Haelan(PVP) / 治疗&治愈(PVP))（└─ Animation）。\n"
-        "6. 去重：仅当括号内英文与括号外中文意思完全相同时，才可去掉括号只保留中文；若中英文意思不同（如版本区分），必须保留括号及英文。\n"
-        "7. 形如「XXX - YYY」的英文（如 Connectors - Face）是普通选项名，应视为整体翻译，不得保留原文。\n"
-        "8. 原文拼写错误（如 devine caress、care ii）按正确词义理解翻译，括号内英文保留原文拼写。\n"
-        "9. 遇到不确定含义的词汇，根据上下文推断其通用含义进行翻译，译文仍按第 2 条格式保留「中文（英文）」，括号内为原文英文。\n"
-        "10. 只输出一个 JSON 对象：键为条目 id（字符串），值为译文。不要输出任何其他内容。";
+        "4. 禁止半翻译：每条文本必须整体完整翻译，绝对禁止输出「中文 + 残留英文」的混合半成品（如「隐遁 short boots」「Medium 钻石 Patch」均为错误）；不确定的词按上下文推断通用含义翻译，不许跳过。\n"
+        "5. 禁止双语拼接：绝对禁止输出「英文 / 中文」或「英文 换行 中文」这类把原文与译文并排的文本。\n"
+        "6. 禁止嵌套与重复：原名形如「└─ animation (cure&haelan(pvp) / 治疗&治愈(pvp))」时，忽略「└─」「├─」等层级装饰符，把整串名字作为一个整体翻译成一对「中文（英文）」；括号内只放一个最简英文，禁止输出「中文（半截原文）（另半截原文）」或重复原名。示例：应输出 角色动作（Animation），而不是 角色动作 (Cure&Haelan(PVP) / 治疗&治愈(PVP))（└─ Animation）。\n"
+        "7. 强制保留括号：短名称（选项名/组名）必须严格使用「中文（英文）」格式，括号内原样保留英文原文，不得省略；例如 None 必须译为 无（None），禁止只输出 无。\n"
+        "8. 形如「XXX - YYY」的英文（如 Connectors - Face）是普通选项名，应视为整体翻译，不得保留原文。\n"
+        "9. 原文拼写错误（如 devine caress、care ii）按正确词义理解翻译，括号内英文保留原文拼写。\n"
+        "10. 专有名词：人名、品牌名、作者名（如 Yiggle、Lavabod、YAB）可原样保留在译文中，作为专名的一部分，不强求翻译。\n"
+        "11. 遇到不确定含义的词汇，根据上下文推断其通用含义进行翻译，译文仍按第 2 条格式保留「中文（英文）」，括号内为原文英文。\n"
+        "12. 只输出一个 JSON 对象：键为条目 id（字符串），值为译文。不要输出任何其他内容。";
     if (!glossary.empty()) {
         sysMsg +=
-            "\n11. 术语一致性：以下为本次翻译已确定的固定术语对照（英文 → 中文）。"
+            "\n13. 术语一致性：以下为本次翻译已确定的固定术语对照（英文 → 中文）。"
             "待翻译文本中出现这些英文词/短语时，必须原样套用固定中文译名，禁止另译或换说法：\n";
         for (const auto& g : glossary) sysMsg += "    " + g.first + " → " + g.second + "\n";
     }
     json arr = json::array();
     for (auto& it : items) arr.push_back({ {"id", it.first}, {"text", it.second} });
-    std::string userMsg = "请翻译以下 FFXIV 模组文本条目，输出 JSON 对象：\n" + arr.dump();
+    std::string userMsg = "请翻译以下 FFXIV 模组文本条目，输出 JSON 对象：\n" + safeDump(arr);
 
     json req;
     req["model"] = g_cfg.aiModel;
@@ -2659,8 +2719,8 @@ static bool AITranslateBatch(const std::vector<std::pair<std::string, std::strin
     req["messages"].push_back({ {"role","user"}, {"content", userMsg} });
     req["stream"] = false;
     req["temperature"] = 0.3;
-    req["max_tokens"] = 8192; // 推理模型（如 glm-4.7）思维链会占大量 token，防止 content 被截断/为空
-    std::string body = req.dump();
+    req["max_tokens"] = 16384; // 推理模型（如 glm-4.7）思维链会占大量 token，给 JSON 输出留足空间
+    std::string body = safeDump(req);
 
     std::string url = g_cfg.aiBaseUrl;
     while (!url.empty() && url.back() == '/') url.pop_back();
@@ -2765,7 +2825,7 @@ static bool AITranslateFile(const fs::path& inFile)
                                 && dict[it.sec].contains(it.key) && dict[it.sec][it.key].is_string()
                                 && !dict[it.sec][it.key].get<std::string>().empty()) {
                                 std::string zv = dict[it.sec][it.key].get<std::string>();
-                                tj[it.sec][it.key] = zv;
+                                tj[it.sec][it.key] = dictFillDisplay(it.key, zv, it.english);
                                 dictFilled++; hit = true;
                                 std::string zh = extractChineseTerm(zv);
                                 if (!zh.empty() && zh != it.english) sessionTerms[it.english] = zh;
@@ -2786,8 +2846,9 @@ static bool AITranslateFile(const fs::path& inFile)
                 std::vector<Item> rest;
                 for (auto& it : pending) {
                     std::string tr = TranslateText(it.english, termMap, maxTermLen);
-                    if (!tr.empty() && tr != it.english) {
-                        tj[it.sec][it.key] = tr;
+                    // 有英文句子残留（半翻译）时不给 AI 省额度，继续交给 AI 补全整句
+                    if (!tr.empty() && tr != it.english && !hasEnglishWordResidue(tr)) {
+                        tj[it.sec][it.key] = dictFillDisplay(it.key, tr, it.english);
                         dictFilled++;
                         sessionTerms[it.english] = tr;
                     }
@@ -2853,6 +2914,7 @@ static bool AITranslateFile(const fs::path& inFile)
             bool okBatch = false;
             bool retried = false;
             for (int retry = 0; retry < 3 && !okBatch; ++retry) {
+                if (g_cancel) break; // 用户已中断：不再重试
                 if (retry > 0) { retried = true; LogThread("[提示] 批次 " + std::to_string(i / batch + 1) + " 重试第 " + std::to_string(retry) + " 次..."); Sleep(2000); }
                 got.clear();
                 if (AITranslateBatch(items, got, err, glossary)) okBatch = true;
@@ -2906,7 +2968,7 @@ static bool AITranslateFile(const fs::path& inFile)
         }
         if (!failJ.empty()) {
             fs::path failPath = fs::u8path(g_cfg.translationDir) / fs::u8path("翻译失败.json");
-            if (write_binary_file(failPath, failJ.dump(2)))
+            if (write_binary_file(failPath, safeDump(failJ, 2)))
                 LogThread("[提示] 已生成/更新 翻译失败.json（" + std::to_string(missed.size())
                     + " 条待重试，下次点 AI 翻译将优先处理）");
         }
@@ -2971,7 +3033,7 @@ static bool AITranslateFile(const fs::path& inFile)
             LogThread(msg);
         }
     }
-    if (write_binary_file(outFile, tj.dump(2))) {
+    if (write_binary_file(outFile, safeDump(tj, 2))) {
         LogThread("[提示] 已写入 " + wstring_to_utf8(outFile.filename().wstring()));
         return true;
     }
@@ -4665,6 +4727,9 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
                 g_cancel = true;
                 Log("[提示] 已请求中断当前操作...");
                 EnableWindow(GetDlgItem(hDlg, IDC_BTN_CANCEL), FALSE);
+                // 立即打断正在进行的网络请求（若有），不必等它超时或返回
+                HINTERNET hReq = g_hActiveReq;
+                if (hReq) { InternetCloseHandle(hReq); g_hActiveReq = nullptr; }
             }
             break;
         }

@@ -70,14 +70,34 @@ inline std::string clean_utf8(const std::string& input)
     while (i < n) {
         unsigned char c = (unsigned char)input[i];
         size_t extra = 0;
-        if (c < 0x80) { extra = 0; }
-        else if ((c & 0xE0) == 0xC0) { extra = 1; }
-        else if ((c & 0xF0) == 0xE0) { extra = 2; }
-        else if ((c & 0xF8) == 0xF0) { extra = 3; }
-        else { i++; continue; } // 非法头字节
+        unsigned char lo = 0x80, hi = 0xBF; // 第二个续字节的合法范围
+        if (c < 0x80) {
+            out += (char)c;
+            i++;
+            continue;
+        }
+        else if (c >= 0xC2 && c <= 0xDF) {
+            extra = 1;
+        }
+        else if (c >= 0xE0 && c <= 0xEF) {
+            extra = 2;
+            lo = (c == 0xE0) ? 0xA0 : (c == 0xED) ? 0x80 : 0x80;
+            hi = (c == 0xED) ? 0x9F : 0xBF;
+        }
+        else if (c >= 0xF0 && c <= 0xF4) {
+            extra = 3;
+            lo = (c == 0xF0) ? 0x90 : (c == 0xF4) ? 0x80 : 0x80;
+            hi = (c == 0xF4) ? 0x8F : 0xBF;
+        }
+        else {
+            i++;
+            continue;
+        }
         if (i + extra >= n) break;
+        unsigned char c1 = (unsigned char)input[i + 1];
+        if (c1 < lo || c1 > hi) { i++; continue; }
         bool ok = true;
-        for (size_t k = 1; k <= extra; ++k) {
+        for (size_t k = 2; k <= extra; ++k) {
             unsigned char cc = (unsigned char)input[i + k];
             if ((cc & 0xC0) != 0x80) { ok = false; break; }
         }

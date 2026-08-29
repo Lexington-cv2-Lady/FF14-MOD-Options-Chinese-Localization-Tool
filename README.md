@@ -81,6 +81,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build_release.ps1 -Zip
 
 ## 更新日志
 
+### v2.2.5
+
+- 修复：AI 返回的 UTF-8 若含过编码、代理区等"伪合法"序列，会被程序解析但 dump 时触发 json.exception.type_error.316 导致翻译线程崩溃。现严格化 `clean_utf8` 校验，并给所有 JSON 写盘/发请求的 `dump()` 加 replace 兜底，避免崩溃
+- 修复：AI 翻译规则第 7 条由"仅当中英文意思完全相同时才可去括号"改为"强制保留括号"，避免把 `None` 等译成不带括号的中文
+- 调整：AI 请求 `max_tokens` 由 8192 提高到 16384，给推理模型（大肥鱼 deepseek-v4-flash 等）的思维链与 JSON 输出留更多空间，降低长批次因 token 占满而失败的概率
+
 ### v2.2.4
 
 - 新增：操作区新增「检查翻译」按钮——扫描 MOD 内所有 group_*.json，报告仍为英文（未翻译）的组名/描述/选项条目；日志输出统计与残留 MOD 汇总，详细残留清单写入翻译目录的「_翻译检查报告.json」，方便快速核对哪些 MOD 还没翻完
