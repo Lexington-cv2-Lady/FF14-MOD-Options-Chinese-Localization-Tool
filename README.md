@@ -79,6 +79,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build_release.ps1 -Zip
 
 ## 更新日志
 
+### v2.2.1
+
+- 调整：API Key、模型名、API 地址的保存统一为 1 个「保存」按钮，一次把当前组合存为一条自定义记录
+- 新增：点「保存」后写入程序根目录的「自定义AI存档.json」，不再改写 config.json（config 里的内置/手动预设保持不被覆盖）
+- 调整：启动时自动读取「自定义AI存档.json」，用户自定义的 Key/模型/地址优先并入下拉列表（同名 Key 用存档值覆盖），存档不存在时正常使用 config 里的内置预设
+- 移除：模型名、API 地址右侧原来的独立「保存」按钮
+
 ### v2.2.0
 
 - 修复：`config.json` 中 `aiPresets` 缺失或被清空时，程序自动恢复内置默认预设（DeepSeek / 智谱 GLM）并写回文件，模型名/API 地址下拉框不再出现"没预设"的情况

@@ -98,6 +98,8 @@ void OpenExplorer(HWND parent, const std::wstring& path);
 std::vector<fs::path> ScanGroupFiles(const fs::path& root);
 bool ExtractEnglish();
 bool ApplyTranslation();
+static void FillAIPresetCombos(HWND hDlg);
+static void FillAIKeyCombo(HWND hDlg);
 bool ImportTranslations(const fs::path& inFile, bool autoFill);
 std::vector<std::string> LoadBlacklistFile(const std::vector<std::string>& defaults);
 void SaveBlacklistFile(const std::vector<std::string>& words);
@@ -2739,6 +2741,122 @@ static std::string NextPresetName()
     }
 }
 
+// 程序根目录下的自定义存档文件（用户点「保存」写入；config.json 只保留内置/手动预设，不再被保存按钮改写）
+static fs::path CustomSavePath()
+{
+    return GetExeDir() / L"自定义AI存档.json";
+}
+
+// 启动时读取「自定义AI存档.json」（数组：[{name,key,model,baseUrl,note}, …]），
+// 把用户自定义的 Key/模型/地址合并进当前配置（用户自定义优先：同名 Key 用存档值覆盖）
+static void LoadCustomSaves()
+{
+    fs::path spath = CustomSavePath();
+    std::string data;
+    if (!read_binary_file(spath, data) || data.empty()) return;
+    try {
+        json j = json::parse(data, nullptr, true, true);
+        if (!j.is_array()) return;
+        size_t used = 0;
+        for (const auto& it : j) {
+            if (!it.is_object()) continue;
+            std::string name = it.value("name", "");
+            std::string key = it.value("key", "");
+            std::string model = it.value("model", "");
+            std::string baseUrl = it.value("baseUrl", "");
+            std::string note = it.value("note", "");
+            // Key：同名覆盖，否则（key 非空）追加
+            if (!key.empty()) {
+                bool updated = false;
+                for (auto& k : g_cfg.aiKeys) {
+                    if (!name.empty() && k.name == name) { k.key = key; updated = true; break; }
+                    if (name.empty() && k.key == key) { updated = true; break; }
+                }
+                if (!updated) g_cfg.aiKeys.push_back({ name, key });
+            }
+            // 预设：model+baseUrl 组合去重（忽略大小写），不同则追加
+            if (!model.empty() || !baseUrl.empty()) {
+                bool dup = false;
+                for (const auto& p : g_cfg.aiPresets)
+                    if (NormForDup(p.model) == NormForDup(model) && NormForDup(p.baseUrl) == NormForDup(baseUrl)) { dup = true; break; }
+                if (!dup) g_cfg.aiPresets.push_back({ name, model, baseUrl, note });
+            }
+            ++used;
+        }
+        // 当前选择的 Key 若在存档/列表中，以最新值为准
+        if (!g_cfg.aiKeyName.empty())
+            for (const auto& k : g_cfg.aiKeys)
+                if (k.name == g_cfg.aiKeyName) { g_cfg.aiApiKey = k.key; break; }
+        Log("[完成] 已读取自定义存档（" + std::to_string(used) + " 条）：" + wstring_to_utf8(spath.wstring()));
+    }
+    catch (...) { Log("[提示] 自定义存档解析失败，已忽略：" + wstring_to_utf8(spath.wstring())); }
+}
+
+// 把当前 Key + 模型名 + API 地址（+ 备注名）统一保存为一条自定义记录到程序根目录的存档文件。
+// 只写存档文件，不写 config.json（config 保持内置/手动预设不被覆盖）
+static void SaveCustomSaves(HWND hDlg)
+{
+    std::string name = wstring_to_utf8(GetEditText(hDlg, IDC_AI_KEY_NAME));
+    std::string key = wstring_to_utf8(GetEditText(hDlg, IDC_AI_KEY));
+    std::string model = wstring_to_utf8(GetEditText(hDlg, IDC_AI_MODEL));
+    std::string baseUrl = wstring_to_utf8(GetEditText(hDlg, IDC_AI_BASEURL));
+    if (name.empty() && key.empty() && model.empty() && baseUrl.empty()) {
+        MessageBoxW(hDlg, L"Key、模型名、API 地址均为空，没有可保存的内容。", L"提示", MB_OK | MB_ICONINFORMATION);
+        return;
+    }
+    if (name.empty()) name = NextPresetName();
+    const std::string note = "自定义";
+
+    fs::path spath = CustomSavePath();
+    json j = json::array();
+    std::string data;
+    if (read_binary_file(spath, data) && !data.empty()) {
+        try {
+            json t = json::parse(data, nullptr, true, true);
+            if (t.is_array()) j = t;
+        } catch (...) {}
+    }
+    bool updated = false;
+    for (auto& it : j) {
+        if (!it.is_object()) continue;
+        if (!name.empty() && it.value("name", "") == name) {
+            it["name"] = name; it["key"] = key; it["model"] = model; it["baseUrl"] = baseUrl; it["note"] = note;
+            updated = true;
+            break;
+        }
+    }
+    if (!updated) {
+        json obj;
+        obj["name"] = name; obj["key"] = key; obj["model"] = model; obj["baseUrl"] = baseUrl; obj["note"] = note;
+        j.push_back(obj);
+    }
+    if (write_binary_file(spath, j.dump(2))) {
+        // 同步内存（下次启动读取存档时同样生效）
+        if (!key.empty()) {
+            bool kdup = false;
+            for (auto& k : g_cfg.aiKeys)
+                if (k.name == name || k.key == key) { k.name = name; k.key = key; kdup = true; break; }
+            if (!kdup) g_cfg.aiKeys.push_back({ name, key });
+        }
+        bool pdup = false;
+        for (const auto& p : g_cfg.aiPresets)
+            if (NormForDup(p.model) == NormForDup(model) && NormForDup(p.baseUrl) == NormForDup(baseUrl)) { pdup = true; break; }
+        if (!pdup) g_cfg.aiPresets.push_back({ name, model, baseUrl, note });
+        g_cfg.aiKeyName = name;
+        g_cfg.aiApiKey = key;
+        // 刷新下拉并回填当前输入
+        FillAIKeyCombo(hDlg);
+        FillAIPresetCombos(hDlg);
+        SetEditText(hDlg, IDC_AI_KEY_NAME, utf8_to_wstring(name));
+        SetEditText(hDlg, IDC_AI_KEY, utf8_to_wstring(key));
+        SetEditText(hDlg, IDC_AI_MODEL, utf8_to_wstring(model));
+        SetEditText(hDlg, IDC_AI_BASEURL, utf8_to_wstring(baseUrl));
+        Log("[完成] 已保存到自定义存档：" + wstring_to_utf8(spath.wstring()));
+    } else {
+        MessageBoxW(hDlg, L"写入存档文件失败，请检查程序目录是否有写权限。", L"提示", MB_OK | MB_ICONWARNING);
+    }
+}
+
 // 把预设列表填入「模型名」「API 地址」两个下拉框
 static void FillAIPresetCombos(HWND hDlg)
 {
@@ -3324,6 +3442,7 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
         if (prog) SendMessageW(prog, PBM_SETRANGE32, 0, 100);
         EnableWindow(GetDlgItem(hDlg, IDC_BTN_CANCEL), FALSE);
         LoadConfig();
+        LoadCustomSaves(); // 读取程序根目录的「自定义AI存档.json」，用户自定义的 Key/模型/地址优先并入
 
         // 记录 .rc 设计尺寸对应的客户区像素，作为等比缩放基准（必须在 SetWindowPos 之前）
         RECT rc0;
@@ -3576,87 +3695,10 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
                 AutoFitEditWidth(hDlg, IDC_AI_KEY_NAME, 60, 121); // 备注框宽度随内容自适应（60~121 DLU）
             }
             break;
-        case IDC_BTN_SAVE_KEY: {
-            std::string name = wstring_to_utf8(GetEditText(hDlg, IDC_AI_KEY_NAME));
-            std::string key = wstring_to_utf8(GetEditText(hDlg, IDC_AI_KEY));
-            if (key.empty()) {
-                MessageBoxW(hDlg, L"API Key 不能为空，请先粘贴 Key。", L"提示", MB_OK | MB_ICONINFORMATION);
-                break;
-            }
-            if (name.empty()) name = "Key " + std::to_string((int)g_cfg.aiKeys.size() + 1);
-            bool updated = false;
-            for (auto& e : g_cfg.aiKeys) {
-                if (e.name == name) { e.key = key; updated = true; }
-            }
-            if (!updated) g_cfg.aiKeys.push_back({ name, key });
-            g_cfg.aiKeyName = name;
-            g_cfg.aiApiKey = key;
-            SaveConfig();
-            FillAIKeyCombo(hDlg);
-            SetEditText(hDlg, IDC_AI_KEY_NAME, utf8_to_wstring(name));
-            Log("[完成] 已保存 API Key：" + name);
+        case IDC_BTN_SAVE_KEY:
+            // 统一保存：Key + 模型名 + API 地址（+ 备注名）一起存为一条自定义记录到程序根目录的「自定义AI存档.json」
+            if (wmEvent == BN_CLICKED) SaveCustomSaves(hDlg);
             break;
-        }
-        case IDC_BTN_SAVE_MODEL: {
-            std::string v = wstring_to_utf8(GetEditText(hDlg, IDC_AI_MODEL));
-            if (v.empty()) {
-                MessageBoxW(hDlg, L"模型名为空，请先输入要保存的模型名。", L"提示", MB_OK | MB_ICONINFORMATION);
-                break;
-            }
-            std::string nv = NormForDup(v);
-            bool dup = false;
-            for (const auto& p : g_cfg.aiPresets)
-                if (!p.model.empty() && NormForDup(p.model) == nv) {
-                    MessageBoxW(hDlg, (L"该模型名已在预设「" + utf8_to_wstring(p.name) + L"」中，无需重复保存。").c_str(),
-                                L"提示", MB_OK | MB_ICONINFORMATION);
-                    dup = true;
-                    break;
-                }
-            if (dup) break;
-            std::string pname = NextPresetName();
-            std::string curBase = wstring_to_utf8(GetEditText(hDlg, IDC_AI_BASEURL));
-            g_cfg.aiPresets.push_back({ pname, v, curBase, "" });
-            SaveConfig();
-            FillAIPresetCombos(hDlg);
-            for (size_t i = 0; i < g_cfg.aiPresets.size(); ++i)
-                if (g_cfg.aiPresets[i].name == pname) {
-                    SendMessageW(GetDlgItem(hDlg, IDC_AI_MODEL), CB_SETCURSEL, i, 0);
-                    SetEditText(hDlg, IDC_AI_MODEL, utf8_to_wstring(v)); // 编辑框回填纯模型名
-                    break;
-                }
-            Log("[完成] 已保存模型名预设「" + pname + "」：" + v);
-            break;
-        }
-        case IDC_BTN_SAVE_BASEURL: {
-            std::string v = wstring_to_utf8(GetEditText(hDlg, IDC_AI_BASEURL));
-            if (v.empty()) {
-                MessageBoxW(hDlg, L"API 地址为空，请先输入要保存的地址。", L"提示", MB_OK | MB_ICONINFORMATION);
-                break;
-            }
-            std::string nv = NormForDup(v);
-            bool dup = false;
-            for (const auto& p : g_cfg.aiPresets)
-                if (!p.baseUrl.empty() && NormForDup(p.baseUrl) == nv) {
-                    MessageBoxW(hDlg, (L"该 API 地址已在预设「" + utf8_to_wstring(p.name) + L"」中，无需重复保存。").c_str(),
-                                L"提示", MB_OK | MB_ICONINFORMATION);
-                    dup = true;
-                    break;
-                }
-            if (dup) break;
-            std::string pname = NextPresetName();
-            std::string curModel = wstring_to_utf8(GetEditText(hDlg, IDC_AI_MODEL));
-            g_cfg.aiPresets.push_back({ pname, curModel, v, "" });
-            SaveConfig();
-            FillAIPresetCombos(hDlg);
-            for (size_t i = 0; i < g_cfg.aiPresets.size(); ++i)
-                if (g_cfg.aiPresets[i].name == pname) {
-                    SendMessageW(GetDlgItem(hDlg, IDC_AI_BASEURL), CB_SETCURSEL, i, 0);
-                    SetEditText(hDlg, IDC_AI_BASEURL, utf8_to_wstring(v)); // 编辑框回填纯地址
-                    break;
-                }
-            Log("[完成] 已保存 API 地址预设「" + pname + "」：" + v);
-            break;
-        }
         case IDC_AI_MODEL:
             // 模型名与 API 地址完全独立：选择/输入模型名只更新模型名，不联动地址
             if (wmEvent == CBN_SELCHANGE) {
