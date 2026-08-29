@@ -2908,9 +2908,67 @@ struct AICfgItem {
     std::string model;
     std::string baseUrl;
     std::string note;
+    bool fromCustom = false;  // true = 来自用户自定义存档（可删除）；false = 内置预设
 };
 static std::vector<AICfgItem> g_aiSelItems;
 static int g_aiSelResult = -1;
+
+// 判断自定义记录与内置预设是否可视为同一条（同名 或 同一 API 地址）
+static bool AISameEntry(const AISaveEntry& s, const AIPreset& p)
+{
+    bool nameMatch = !s.name.empty() && !p.name.empty() && s.name == p.name;
+    bool urlMatch  = !s.baseUrl.empty() && !p.baseUrl.empty() && s.baseUrl == p.baseUrl;
+    return nameMatch || urlMatch;
+}
+
+// 构建/重建「AI 配置列表」：内置预设 + 用户自定义。
+// 若内置预设存在同名/同地址且带 Key 的自定义记录，则合并成一行（带 Key，可删除），
+// 避免出现两条「智谱」、勾选无 Key 行导致 Key 不切换的问题。
+static void BuildAISelectList(HWND hList)
+{
+    g_aiSelItems.clear();
+    for (const auto& p : g_cfg.aiPresets) {
+        AICfgItem item{ p.name, "", p.model, p.baseUrl,
+                        p.note.empty() ? std::string("内置预设") : p.note, false };
+        for (const auto& s : g_cfg.customSaves) {
+            if (AISameEntry(s, p) && !s.key.empty()) {
+                item.key = s.key;
+                item.note = s.note.empty() ? std::string("内置预设+自定义 Key") : s.note;
+                item.fromCustom = true;
+                break;
+            }
+        }
+        g_aiSelItems.push_back(std::move(item));
+    }
+    // 未被合并进预设的自定义记录，单独追加显示
+    for (const auto& e : g_cfg.customSaves) {
+        bool merged = false;
+        for (const auto& p : g_cfg.aiPresets)
+            if (AISameEntry(e, p) && !e.key.empty()) { merged = true; break; }
+        if (merged) continue;
+        g_aiSelItems.push_back({ e.name, e.key, e.model, e.baseUrl,
+                                 e.note.empty() ? std::string("自定义") : e.note, true });
+    }
+
+    ListView_DeleteAllItems(hList);
+    for (size_t i = 0; i < g_aiSelItems.size(); ++i) {
+        const auto& it = g_aiSelItems[i];
+        std::wstring wName = utf8_to_wstring(it.name);
+        std::wstring wKey = it.key.empty() ? L"（沿用当前）" : utf8_to_wstring(it.key);
+        std::wstring wModel = utf8_to_wstring(it.model);
+        std::wstring wBase = utf8_to_wstring(it.baseUrl);
+        std::wstring wNote = utf8_to_wstring(it.note);
+        LVITEMW item = {};
+        item.mask = LVIF_TEXT;
+        item.iItem = (int)i;
+        item.pszText = (LPWSTR)wName.c_str();
+        int idx = (int)ListView_InsertItem(hList, &item);
+        ListView_SetItemText(hList, idx, 1, (LPWSTR)wKey.c_str());
+        ListView_SetItemText(hList, idx, 2, (LPWSTR)wModel.c_str());
+        ListView_SetItemText(hList, idx, 3, (LPWSTR)wBase.c_str());
+        ListView_SetItemText(hList, idx, 4, (LPWSTR)wNote.c_str());
+    }
+}
 
 static INT_PTR CALLBACK SelectAICfgDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
 {
@@ -2931,30 +2989,7 @@ static INT_PTR CALLBACK SelectAICfgDlgProc(HWND hDlg, UINT message, WPARAM wPara
             col.cx = c.w;
             ListView_InsertColumn(hList, 9999, &col);
         }
-        // 数据：内置预设（无 Key）+ 用户自定义保存（带 Key）
-        g_aiSelItems.clear();
-        for (const auto& p : g_cfg.aiPresets)
-            g_aiSelItems.push_back({ p.name, "", p.model, p.baseUrl, p.note.empty() ? std::string("内置预设") : p.note });
-        for (const auto& e : g_cfg.customSaves)
-            g_aiSelItems.push_back({ e.name, e.key, e.model, e.baseUrl, e.note.empty() ? std::string("自定义") : e.note });
-
-        for (size_t i = 0; i < g_aiSelItems.size(); ++i) {
-            const auto& it = g_aiSelItems[i];
-            std::wstring wName = utf8_to_wstring(it.name);
-            std::wstring wKey = it.key.empty() ? L"（沿用当前）" : utf8_to_wstring(it.key);
-            std::wstring wModel = utf8_to_wstring(it.model);
-            std::wstring wBase = utf8_to_wstring(it.baseUrl);
-            std::wstring wNote = utf8_to_wstring(it.note);
-            LVITEMW item = {};
-            item.mask = LVIF_TEXT;
-            item.iItem = (int)i;
-            item.pszText = (LPWSTR)wName.c_str();
-            int idx = (int)ListView_InsertItem(hList, &item);
-            ListView_SetItemText(hList, idx, 1, (LPWSTR)wKey.c_str());
-            ListView_SetItemText(hList, idx, 2, (LPWSTR)wModel.c_str());
-            ListView_SetItemText(hList, idx, 3, (LPWSTR)wBase.c_str());
-            ListView_SetItemText(hList, idx, 4, (LPWSTR)wNote.c_str());
-        }
+        BuildAISelectList(hList);
         return TRUE;
     }
     case WM_NOTIFY: {
@@ -2987,6 +3022,48 @@ static INT_PTR CALLBACK SelectAICfgDlgProc(HWND hDlg, UINT message, WPARAM wPara
             return TRUE;
         }
         if (id == IDCANCEL || id == IDC_AI_SELECT_CANCEL) { EndDialog(hDlg, IDCANCEL); return TRUE; }
+        if (id == IDC_AI_SELECT_DEL) {
+            // 删除选中的自定义配置（内置预设不可删）
+            HWND hList = GetDlgItem(hDlg, IDC_AI_SELECT_LIST);
+            int sel = ListView_GetNextItem(hList, -1, LVNI_SELECTED);
+            if (sel < 0 || sel >= (int)g_aiSelItems.size()) {
+                MessageBoxW(hDlg, L"请先点击选中一条配置，再点「删除选中」。", L"提示", MB_OK | MB_ICONINFORMATION);
+                return TRUE;
+            }
+            const auto& it = g_aiSelItems[sel];
+            if (!it.fromCustom) {
+                MessageBoxW(hDlg, L"这是内置预设，不能删除。\n如需调整请编辑程序目录下的 config.default.json（aiPresets）。", L"提示", MB_OK | MB_ICONINFORMATION);
+                return TRUE;
+            }
+            if (MessageBoxW(hDlg, (L"确定删除自定义配置「" + utf8_to_wstring(it.name) + L"」吗？").c_str(),
+                            L"确认删除", MB_YESNO | MB_ICONQUESTION) != IDYES)
+                return TRUE;
+            bool removed = false;
+            for (size_t i = 0; i < g_cfg.customSaves.size(); ++i) {
+                if (g_cfg.customSaves[i].name == it.name) {
+                    g_cfg.customSaves.erase(g_cfg.customSaves.begin() + i);
+                    removed = true;
+                    break;
+                }
+            }
+            if (!removed) { // 备用：按模型名 + 地址匹配
+                for (size_t i = 0; i < g_cfg.customSaves.size(); ++i) {
+                    const auto& s = g_cfg.customSaves[i];
+                    if (s.model == it.model && s.baseUrl == it.baseUrl && !s.model.empty()) {
+                        g_cfg.customSaves.erase(g_cfg.customSaves.begin() + i);
+                        removed = true;
+                        break;
+                    }
+                }
+            }
+            if (removed) SaveConfig();
+            // 若删掉的是当前正在套用的记录，清掉引用名（Key 值保留，不打断使用）
+            if (g_cfg.aiKeyName == it.name) g_cfg.aiKeyName.clear();
+            g_aiSelResult = -1;
+            BuildAISelectList(hList);
+            Log("[完成] 已删除自定义配置「" + it.name + "」");
+            return TRUE;
+        }
         break;
     }
     }
@@ -3738,12 +3815,26 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
                 g_cfg.aiBaseUrl = wstring_to_utf8(GetEditText(hDlg, IDC_AI_BASEURL));
             break;
         case IDC_BTN_AI_SELECT: {
-            // 打开配置选择窗口：勾选内置预设 / 自定义记录后整套套用
+            // 打开配置列表窗口：勾选内置预设 / 自定义记录后整套套用
             if (wmEvent != BN_CLICKED || g_busy) break;
             if (DialogBoxW(hInst, MAKEINTRESOURCEW(IDD_AI_SELECT_DIALOG), hDlg, SelectAICfgDlgProc) == IDOK) {
                 if (g_aiSelResult >= 0 && g_aiSelResult < (int)g_aiSelItems.size()) {
                     const auto& it = g_aiSelItems[g_aiSelResult];
-                    if (!it.key.empty()) { g_cfg.aiApiKey = it.key; g_cfg.aiKeyName = it.name; }
+                    std::string usedKey = it.key, usedName = it.name;
+                    // 内置预设可能不带 Key：按同名 / 同地址自动匹配用户自定义存档里的 Key
+                    // （避免选了「智谱 GLM」但 API Key 仍是大肥鱼的问题）
+                    if (usedKey.empty()) {
+                        for (const auto& s : g_cfg.customSaves) {
+                            bool nameMatch = !s.name.empty() && s.name == it.name;
+                            bool urlMatch  = !s.baseUrl.empty() && !it.baseUrl.empty() && s.baseUrl == it.baseUrl;
+                            if ((nameMatch || urlMatch) && !s.key.empty()) {
+                                usedKey = s.key;
+                                usedName = s.name;
+                                break;
+                            }
+                        }
+                    }
+                    if (!usedKey.empty()) { g_cfg.aiApiKey = usedKey; g_cfg.aiKeyName = usedName; }
                     if (!it.model.empty()) g_cfg.aiModel = it.model;
                     if (!it.baseUrl.empty()) g_cfg.aiBaseUrl = it.baseUrl;
                     RefreshConfigUI();
