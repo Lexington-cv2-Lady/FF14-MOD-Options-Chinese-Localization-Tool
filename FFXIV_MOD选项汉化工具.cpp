@@ -2523,6 +2523,8 @@ static void RunAITestThread()
         std::string content;
         try { content = resp["choices"][0]["message"]["content"].get<std::string>(); }
         catch (...) { content = "(非文本回复)"; }
+        // 测试通过说明当前界面配置可用：立即写入 config.json，避免手动输入的地址/模型重启后丢失
+        SaveConfig();
         Log("[成功] AI 连接测试通过！模型 " + model + " 回复：" + content + "（耗时 " + std::to_string(ms) + " ms）");
         g_busy = false;
         PostMessageW(g_hMainWnd, WM_APP_DONE, 0, 0);
@@ -2664,6 +2666,38 @@ std::wstring GetEditText(HWND hDlg, int id)
     wchar_t buf[4096] = {};
     GetDlgItemTextW(hDlg, id, buf, 4096);
     return buf;
+}
+
+// 从界面控件同步 AI 设置到 g_cfg（界面即真值），避免 UI 与配置不同步
+static void SyncAISettingsFromUI(HWND hDlg)
+{
+    g_cfg.aiApiKey = wstring_to_utf8(GetEditText(hDlg, IDC_AI_KEY));
+    g_cfg.aiKeyName = wstring_to_utf8(GetEditText(hDlg, IDC_AI_KEY_NAME));
+    g_cfg.aiModel = wstring_to_utf8(GetEditText(hDlg, IDC_AI_MODEL));
+    g_cfg.aiBaseUrl = wstring_to_utf8(GetEditText(hDlg, IDC_AI_BASEURL));
+}
+
+// 检查模型名与 API 地址是否属于同一个预设（忽略大小写）；不匹配时返回警告文本
+static std::string CheckAIMatch()
+{
+    if (g_cfg.aiModel.empty() || g_cfg.aiBaseUrl.empty()) return "";
+    const AIPreset* m = nullptr;
+    const AIPreset* b = nullptr;
+    auto lower = [](std::string s) {
+        std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+        return s;
+    };
+    std::string cm = lower(g_cfg.aiModel);
+    std::string cb = lower(g_cfg.aiBaseUrl);
+    for (const auto& p : g_cfg.aiPresets) {
+        if (lower(p.model) == cm) m = &p;
+        if (lower(p.baseUrl) == cb) b = &p;
+    }
+    if (m && b && m->name != b->name)
+        return "模型名「" + g_cfg.aiModel + "」属于预设「" + m->name +
+               "」，但 API 地址「" + g_cfg.aiBaseUrl + "」属于预设「" + b->name +
+               "」，两者不匹配，可能认证失败（401），请核对";
+    return "";
 }
 
 // 把预设列表填入「模型名」「API 地址」两个下拉框
@@ -3641,8 +3675,8 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
         }
         case IDC_BTN_AI_TEST: {
             if (g_busy) break;
-            std::string testKey = wstring_to_utf8(GetEditText(hDlg, IDC_AI_KEY));
-            if (testKey.empty()) {
+            SyncAISettingsFromUI(hDlg); // 界面即真值，先同步再测试
+            if (g_cfg.aiApiKey.empty()) {
                 MessageBoxW(hDlg, L"尚未配置 AI API Key，请在上方『AI 翻译设置』中填写。", L"提示", MB_OK | MB_ICONINFORMATION);
                 break;
             }
@@ -3664,10 +3698,13 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
         }
         case IDC_BTN_AI_TRANSLATE: {
             if (g_busy) break;
+            SyncAISettingsFromUI(hDlg); // 界面即真值，先同步再翻译
             if (g_cfg.aiApiKey.empty()) {
                 MessageBoxW(hDlg, L"尚未配置 AI API Key，请在上方『AI 翻译设置』中填写。", L"提示", MB_OK | MB_ICONINFORMATION);
                 break;
             }
+            std::string aiWarn = CheckAIMatch();
+            if (!aiWarn.empty()) Log("[提示] " + aiWarn);
             SaveConfig();
             g_busy = true;
             g_cancel = false;
