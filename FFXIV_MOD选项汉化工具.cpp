@@ -2245,7 +2245,8 @@ static bool AITranslateBatch(const std::vector<std::pair<std::string, std::strin
         "2. 仅当括号内的英文与括号外的中文完全同义时，才可以省略括号只保留中文。\n"
         "3. 纯数字、百分比（如75%）、版本号、MOD 专有名词（如 Yiggle、Rue、Bibo、EXQB、YAB）直接保留原文，不翻译。\n"
         "4. 无法确定译名的专有名词保留英文，不要强行机翻。\n"
-        "5. 只输出一个 JSON 对象：键为条目 id（字符串），值为译文。不要输出任何其他内容。";
+        "5. 形如「XXX - YYY」的英文文本（例如 Connectors - Face、Lights - Body、Hats - Off）是普通选项名，不是文件名、路径或专有名词，必须翻译，不要套用第 3、4 条保留原文。\n"
+        "6. 只输出一个 JSON 对象：键为条目 id（字符串），值为译文。不要输出任何其他内容。";
     json arr = json::array();
     for (auto& it : items) arr.push_back({ {"id", it.first}, {"text", it.second} });
     std::string userMsg = "请翻译以下 FFXIV 模组文本条目，输出 JSON 对象：\n" + arr.dump();
