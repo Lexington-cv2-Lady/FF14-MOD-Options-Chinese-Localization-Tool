@@ -9,6 +9,7 @@
 #include <shellapi.h>
 #include <functional>
 #include <richedit.h>
+#include <cctype>
 
 // 自定义消息：工作线程通知主线程追加日志 / 更新进度 / 结束
 #define WM_APP_LOG       (WM_APP + 1)
@@ -944,40 +945,48 @@ bool ApplyTranslation()
         std::string relKey = SafeRelativePath(file, penRoot);
         bool changed = false;
 
+        // 辅助：从 "中文（英文）" 或 "英文（中文）" 中解析出中文/英文部分
+        auto parseParenPair = [&](const std::string& s, std::string& zh, std::string& en) -> bool {
+            auto open = s.find("（");
+            auto close = s.rfind("）");
+            if (open == std::string::npos || close == std::string::npos || close <= open + 3) return false;
+            std::string a = s.substr(0, open);
+            std::string b = s.substr(open + 3, close - open - 3);
+            bool aZh = contains_chinese(a);
+            bool bZh = contains_chinese(b);
+            if (aZh && !bZh) { zh = a; en = b; return true; }       // 中文（英文）
+            if (!aZh && bZh) { en = a; zh = b; return true; }       // 英文（中文）
+            return false;
+        };
+
         // 辅助：拼接翻译
         auto makeTranslation = [&](const std::string& original, const std::string& trans) -> std::string {
             if (trans.empty()) return original; // 没查到保留原文
             if (g_cfg.pureChinese) {
-                // 纯中文：去掉括号后缀
-                std::string t = trans;
-                auto open = t.find("（");
-                if (open != std::string::npos) {
-                    auto close = t.find("）", open);
-                    if (close != std::string::npos) {
-                        // 去掉 "（原文）"
-                        t = t.substr(0, open);
-                    }
+                // 纯中文：优先取括号外的中文；括号外是英文则取括号内中文
+                std::string zh, dummy;
+                if (parseParenPair(trans, zh, dummy)) {
+                    size_t s = zh.find_first_not_of(" \t");
+                    size_t e = zh.find_last_not_of(" \t");
+                    if (s != std::string::npos && e != std::string::npos) zh = zh.substr(s, e - s + 1);
+                    if (!zh.empty()) return zh;
                 }
-                if (t.empty()) t = trans;
-                return t;
+                return trans;
             }
             else {
-                // 对照格式
-                if (g_cfg.swapWordOrder) {
-                    // 中文（英文）在前：翻译（原文）
-                    return trans;
+                std::string zh, en;
+                if (parseParenPair(trans, zh, en)) {
+                    // 已有括号格式：按当前设置重新组合，词序调换即时生效
+                    if (g_cfg.swapWordOrder) return zh + "（" + en + "）";
+                    else return en + "（" + zh + "）";
+                }
+                else if (contains_chinese(trans)) {
+                    // trans 是纯中文
+                    if (g_cfg.swapWordOrder) return trans + "（" + original + "）";
+                    else return original + "（" + trans + "）";
                 }
                 else {
-                    // 英文（中文）：原文（翻译）
-                    // 从 trans 中提取括号内中文
-                    auto open = trans.find("（");
-                    auto close = trans.rfind("）");
-                    if (open != std::string::npos && close != std::string::npos && close > open + 3) {
-                        std::string zh = trans.substr(0, open);           // 括号前中文
-                        // "（" 为 3 字节，必须跳过 3 字节，否则会带上乱码前缀
-                        std::string eng = trans.substr(open + 3, close - open - 3); // 括号内英文
-                        return eng + "（" + zh + "）";
-                    }
+                    // trans 是纯英文/异常：兜底
                     return original + "（" + trans + "）";
                 }
             }
@@ -1256,6 +1265,11 @@ static bool LoadTermMap(std::unordered_map<std::string, std::string>& termMap, s
                         std::string en = it.key(), zh = it.value().get<std::string>();
                         if (en.empty() || zh.empty() || en == zh) continue;
                         termMap[en] = zh;
+                        // 同时存入小写 key：选项文本中常出现小写/首字母小写，避免大小写不一致导致漏翻
+                        std::string enLower;
+                        enLower.reserve(en.size());
+                        for (unsigned char c : en) enLower += static_cast<char>(std::tolower(c));
+                        if (enLower != en) termMap[enLower] = zh;
                         if (en.size() > maxTermLen) maxTermLen = en.size();
                     }
                 }
@@ -1737,6 +1751,7 @@ static void add_race_terms(json& result, int& added, int* hitSkip = nullptr)
         { "Miqo'te", "猫魅族" },
         { "Roegadyn", "鲁加族" },
         { "Au Ra", "敖龙族" },
+        { "AuRa", "敖龙族" },          // MOD 选项中常见的无空格拼写变体
         { "Hrothgar", "硌狮族" },
         { "Viera", "维埃拉族" },
         // 各种族可选子种族（官方 Tribe 标准名）
