@@ -24,7 +24,6 @@
 #include <thread>
 #include <mutex>
 #include <chrono>
-#include <regex>
 #include <algorithm>
 #include <cstdlib>
 #include <ctime>

@@ -6,10 +6,7 @@
 
 #include "framework.h"
 #include "FFXIV_MOD选项汉化工具.h"
-#include <shellapi.h>
-#include <functional>
 #include <richedit.h>
-#include <cctype>
 
 // 自定义消息：工作线程通知主线程追加日志 / 更新进度 / 结束
 #define WM_APP_LOG       (WM_APP + 1)
@@ -1781,103 +1778,6 @@ static void add_wiki_term(json& result, int& added, const std::string& enRaw, co
         added++;
     }
     else if (hitSkip) (*hitSkip)++;
-}
-
-// 从 wikitext 提取术语，支持多种格式（模板、链接、括号）
-static void extract_terms_from_wikitext(const std::string& wikitext, json& result, int& added)
-{
-    // 策略 A：模板参数 —— {{模板|英文|中文}} 或 {{模板|中文|英文}}
-    {
-        std::regex tplRe(R"(\{\{\s*([^{}]+?)\s*\}\})");
-        auto tStart = std::sregex_iterator(wikitext.begin(), wikitext.end(), tplRe);
-        auto tEnd = std::sregex_iterator();
-        for (auto it = tStart; it != tEnd; ++it) {
-            std::string body = it->str(1);
-            std::vector<std::string> parts;
-            std::stringstream ss(body);
-            std::string part;
-            while (std::getline(ss, part, '|')) {
-                size_t s = part.find_first_not_of(" \t"); if (s != std::string::npos) part = part.substr(s);
-                size_t e = part.find_last_not_of(" \t"); if (e != std::string::npos) part = part.substr(0, e + 1);
-                if (!part.empty()) parts.push_back(part);
-            }
-            if (parts.size() < 2) continue;
-            std::string tname = parts[0];
-            if (tname.empty()) continue;
-            // 模板名本身不能含中文侧判定，跳过明显非词条模板
-            bool tnameBad = tname.find('<') != std::string::npos || tname.find('>') != std::string::npos;
-            if (tnameBad) continue;
-
-            // 策略 D：命名参数对照 —— |名称=中文|英文名称=English 或 |en=...|zh=...
-            // 收集模板内全部 名称类 key=value 的 value，分别归类英文侧 / 中文侧
-            std::vector<std::string> enVals, zhVals;
-            for (size_t k = 1; k < parts.size(); ++k) {
-                size_t eq = parts[k].find('=');
-                if (eq == std::string::npos) continue;
-                std::string key = parts[k].substr(0, eq);
-                std::string val = parts[k].substr(eq + 1);
-                // 只处理名称相关 key，降低误配
-                std::string kl = key;
-                for (auto& ch : kl) ch = (char)tolower((unsigned char)ch);
-                bool isNameKey =
-                    kl.find("name") != std::string::npos ||
-                    kl.find("名称") != std::string::npos ||
-                    kl.find("en") != std::string::npos ||
-                    kl.find("zh") != std::string::npos ||
-                    kl.find("cn") != std::string::npos ||
-                    kl.find("jp") != std::string::npos ||
-                    kl.find("english") != std::string::npos ||
-                    kl.find("英文") != std::string::npos ||
-                    kl.find("中文") != std::string::npos ||
-                    kl.find("日文") != std::string::npos ||
-                    kl.find("英文名") != std::string::npos ||
-                    kl.find("title") != std::string::npos;
-                if (!isNameKey) continue;
-                if (contains_chinese(val)) zhVals.push_back(val);
-                else if (is_valid_english_side(val)) enVals.push_back(val);
-            }
-            // 名称类 key 下各恰有一个英文和一个中文时，配对
-            if (enVals.size() == 1 && zhVals.size() == 1) {
-                add_wiki_term(result, added, enVals[0], zhVals[0]);
-            }
-
-            // 策略 A：对参数前两个（parts[1]、parts[2]）位置参数配对
-            for (size_t i = 1; i < parts.size() && i < 3; ++i) {
-                for (size_t j = i + 1; j < parts.size() && j < 3; ++j) {
-                    const std::string& a = parts[i];
-                    const std::string& b = parts[j];
-                    bool aZh = contains_chinese(a), bZh = contains_chinese(b);
-                    if (aZh && !bZh) add_wiki_term(result, added, b, a);
-                    else if (bZh && !aZh) add_wiki_term(result, added, a, b);
-                }
-            }
-        }
-    }
-
-    // 策略 B：内链 —— [[中文|英文]] 或 [[英文|中文]]
-    {
-        std::regex linkRe(R"(\[\[\s*([^\[\]|]+)\s*\|\s*([^\[\]]+)\s*\]\])");
-        auto lStart = std::sregex_iterator(wikitext.begin(), wikitext.end(), linkRe);
-        auto lEnd = std::sregex_iterator();
-        for (auto it = lStart; it != lEnd; ++it) {
-            std::string a = it->str(1), b = it->str(2);
-            bool aZh = contains_chinese(a), bZh = contains_chinese(b);
-            if (aZh && !bZh) add_wiki_term(result, added, b, a);
-            else if (bZh && !aZh) add_wiki_term(result, added, a, b);
-        }
-    }
-
-    // 策略 C：中文（英文）括号对照 —— 如 治疗（Cure）
-    // 中文用 UTF-8 字节特征匹配（[\xE4-\xE9][\x80-\xBF]{2} 为一个中文字符），避免编码字面量问题
-    {
-        std::regex parenRe(
-            "([\xE4-\xE9][\x80-\xBF]{2}[^\x0A()（）]*?)\\s*[（(]([A-Za-z][^()（）]*?)[)）]");
-        auto pStart = std::sregex_iterator(wikitext.begin(), wikitext.end(), parenRe);
-        auto pEnd = std::sregex_iterator();
-        for (auto it = pStart; it != pEnd; ++it) {
-            add_wiki_term(result, added, it->str(2), it->str(1));
-        }
-    }
 }
 
 // 解析 Data:<类型>/<id>.json 数据页，提取 中文名/英文名 对照。
