@@ -1,11 +1,12 @@
-//Microsoft Visual C++ ���ɵ���Դ�ű���
+﻿#pragma code_page(65001)
+//Microsoft Visual C++ 生成的资源脚本。
 //
 #include "Resource.h"
 
 #define APSTUDIO_READONLY_SYMBOLS
 /////////////////////////////////////////////////////////////////////////////
 //
-// �� TEXTINCLUDE ��Դ���ɡ�
+// 从 TEXTINCLUDE 资源生成。
 //
 #ifndef APSTUDIO_INVOKED
 #include "targetver.h"
@@ -22,36 +23,36 @@ LANGUAGE 4, 2
 
 /////////////////////////////////////////////////////////////////////////////
 //
-// ͼ��
+// 图标
 //
 
-// ID ֵ��͵�ͼ�������ǰ�棬��ȷ��Ӧ�ó���ͼ��
-// ������ϵͳ�б���һ�¡�
+// ID 值最低的图标放在最前面，以确保应用程序图标
+// 在所有系统中保持一致。
 
-IDI_FFXIVMOD       ICON         "FFXIV_MODѡ�������.ico"
+IDI_FFXIVMOD       ICON         "FFXIV_MOD选项汉化工具.ico"
 IDI_SMALL               ICON         "small.ico"
 
 /////////////////////////////////////////////////////////////////////////////
 //
-// �˵�
+// 菜单
 //
 
 IDC_FFXIVMOD MENU
 BEGIN
-    POPUP "�ļ�(&F)"
+    POPUP "文件(&F)"
     BEGIN
-        MENUITEM "�˳�(&X)",                IDM_EXIT
+        MENUITEM "退出(&X)",                IDM_EXIT
     END
-    POPUP "����(&H)"
+    POPUP "帮助(&H)"
     BEGIN
-        MENUITEM "����(&A) ...",           IDM_ABOUT
+        MENUITEM "关于(&A) ...",           IDM_ABOUT
     END
 END
 
 
 /////////////////////////////////////////////////////////////////////////////
 //
-// ��ݼ�
+// 快捷键
 //
 
 IDC_FFXIVMOD ACCELERATORS
@@ -63,143 +64,143 @@ END
 
 /////////////////////////////////////////////////////////////////////////////
 //
-// �Ի���
+// 对话框
 //
 
 IDD_FFXIVMOD_DIALOG DIALOGEX 0, 0, 580, 470
 STYLE DS_SETFONT | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX
-CAPTION "FFXIV ģ�麺������"
+CAPTION "FFXIV 模组汉化工具"
 FONT 11, "MS Shell Dlg"
 BEGIN
-    GROUPBOX        "Ŀ¼����",IDC_GRP_DIR,7,7,566,82
-    LTEXT           "Penumbra ��Ŀ¼��ɨ������ģ�飩:",IDC_STATIC,15,17,165,11
+    GROUPBOX        "目录设置",IDC_GRP_DIR,7,7,566,82
+    LTEXT           "Penumbra 父目录（扫描所有模组）:",IDC_STATIC,15,17,165,11
     EDITTEXT        IDC_EDIT_PENUMBRA,185,15,285,15,ES_AUTOHSCROLL
-    PUSHBUTTON      "���",IDC_BTN_BROWSE_PENUMBRA,478,14,46,16
-    PUSHBUTTON      "��",IDC_BTN_OPEN_PENUMBRA,528,14,44,16
-    LTEXT           "����Ŀ¼:",IDC_STATIC,15,37,165,11
+    PUSHBUTTON      "浏览",IDC_BTN_BROWSE_PENUMBRA,478,14,46,16
+    PUSHBUTTON      "打开",IDC_BTN_OPEN_PENUMBRA,528,14,44,16
+    LTEXT           "翻译目录:",IDC_STATIC,15,37,165,11
     EDITTEXT        IDC_EDIT_TRANSLATION,185,35,285,15,ES_AUTOHSCROLL
-    PUSHBUTTON      "���",IDC_BTN_BROWSE_TRANS,478,34,46,16
-    PUSHBUTTON      "��",IDC_BTN_OPEN_TRANS,528,34,44,16
-    LTEXT           "�ʵ�Ŀ¼:",IDC_STATIC,15,57,165,11
+    PUSHBUTTON      "浏览",IDC_BTN_BROWSE_TRANS,478,34,46,16
+    PUSHBUTTON      "打开",IDC_BTN_OPEN_TRANS,528,34,44,16
+    LTEXT           "词典目录:",IDC_STATIC,15,57,165,11
     EDITTEXT        IDC_EDIT_DICTIONARY,185,55,285,15,ES_AUTOHSCROLL
-    PUSHBUTTON      "���",IDC_BTN_BROWSE_DICT,478,54,46,16
-    PUSHBUTTON      "��",IDC_BTN_OPEN_DICT,528,54,44,16
+    PUSHBUTTON      "浏览",IDC_BTN_BROWSE_DICT,478,54,46,16
+    PUSHBUTTON      "打开",IDC_BTN_OPEN_DICT,528,54,44,16
 
-    GROUPBOX        "Ӧ������",IDC_GRP_APP,7,89,566,56
-    AUTORADIOBUTTON "�����ģ�ȥ��Ӣ�����ţ�",IDC_RADIO_PURE_CN,15,102,150,11,WS_GROUP
-    AUTORADIOBUTTON "���ģ�Ӣ�ģ�����",IDC_RADIO_CN_EN,165,102,120,11
-    AUTOCHECKBOX    "������������ģ�Ӣ�ģ���ǰ��",IDC_CHK_SWAP,300,102,160,11
-    AUTOCHECKBOX    "�Զ����ݣ���ȡ/Ӧ��ǰ��� zip��",IDC_CHK_BACKUP,15,124,200,11
-    LTEXT           "�����С:",IDC_STATIC,225,124,45,11
+    GROUPBOX        "应用设置",IDC_GRP_APP,7,89,566,56
+    AUTORADIOBUTTON "纯中文（去掉英文括号）",IDC_RADIO_PURE_CN,15,102,150,11,WS_GROUP
+    AUTORADIOBUTTON "中文（英文）对照",IDC_RADIO_CN_EN,165,102,120,11
+    AUTOCHECKBOX    "词序调换（中文（英文）在前）",IDC_CHK_SWAP,300,102,160,11
+    AUTOCHECKBOX    "自动备份（提取/应用前打包 zip）",IDC_CHK_BACKUP,15,124,200,11
+    LTEXT           "字体大小:",IDC_STATIC,225,124,45,11
     EDITTEXT        IDC_EDIT_FONT_SIZE,270,122,35,15,ES_AUTOHSCROLL | ES_NUMBER
-    PUSHBUTTON      "Ӧ��",IDC_BTN_APPLY_FONT,310,121,45,16
-    AUTOCHECKBOX    "��������",IDC_CHK_AUTO_FONT,360,124,70,11
+    PUSHBUTTON      "应用",IDC_BTN_APPLY_FONT,310,121,45,16
+    AUTOCHECKBOX    "联动字体",IDC_CHK_AUTO_FONT,360,124,70,11
 
-    GROUPBOX        "AI ��������",IDC_GRP_AI,7,145,566,96
+    GROUPBOX        "AI 翻译设置",IDC_GRP_AI,7,145,566,96
     LTEXT           "API Key:",IDC_STATIC,15,158,60,11
     EDITTEXT        IDC_AI_KEY_NAME,80,154,100,15,ES_AUTOHSCROLL
     EDITTEXT        IDC_AI_KEY,185,154,252,15,ES_AUTOHSCROLL | ES_PASSWORD
-    PUSHBUTTON      "����",IDC_BTN_SAVE_KEY,442,153,50,16
-    PUSHBUTTON      "��ʾ",IDC_BTN_SHOW_KEY,496,153,46,16
-    LTEXT           "ģ�������� deepseek-v4��:",IDC_STATIC,15,179,165,11
+    PUSHBUTTON      "保存",IDC_BTN_SAVE_KEY,442,153,50,16
+    PUSHBUTTON      "显示",IDC_BTN_SHOW_KEY,496,153,46,16
+    LTEXT           "模型名（如 deepseek-v4）:",IDC_STATIC,15,179,165,11
     EDITTEXT        IDC_AI_MODEL,185,175,265,15,ES_AUTOHSCROLL
-    PUSHBUTTON      "ѡ��",IDC_BTN_AI_SELECT,455,174,50,16
-    LTEXT           "API ��ַ��OpenAI ���ݣ�:",IDC_STATIC,15,200,165,11
+    PUSHBUTTON      "选择",IDC_BTN_AI_SELECT,455,174,50,16
+    LTEXT           "API 地址（OpenAI 兼容）:",IDC_STATIC,15,200,165,11
     EDITTEXT        IDC_AI_BASEURL,185,196,265,15,ES_AUTOHSCROLL
-    LTEXT           "ÿ������(1-100��Ĭ��40):",IDC_STATIC,15,221,165,11
+    LTEXT           "每批条数(1-100，默认40):",IDC_STATIC,15,221,165,11
     EDITTEXT        IDC_AI_BATCH,185,217,50,15,ES_AUTOHSCROLL
-    LTEXT           "ԽСԽ��",IDC_STATIC,240,219,80,11
-    PUSHBUTTON      "������",IDC_BTN_OPEN_USER_CFG,330,215,62,22
-    PUSHBUTTON      "����",IDC_BTN_AI_TEST,400,215,48,22
-    PUSHBUTTON      "AI ����",IDC_BTN_AI_TRANSLATE,458,215,110,22
+    LTEXT           "越小越稳",IDC_STATIC,240,219,80,11
+    PUSHBUTTON      "打开配置",IDC_BTN_OPEN_USER_CFG,330,215,62,22
+    PUSHBUTTON      "测试",IDC_BTN_AI_TEST,400,215,48,22
+    PUSHBUTTON      "AI 翻译",IDC_BTN_AI_TRANSLATE,458,215,110,22
 
-    GROUPBOX        "����",IDC_GRP_OP,7,241,566,108
-    PUSHBUTTON      "1. ��ȡӢ��",IDC_BTN_EXTRACT,10,256,120,22
-    PUSHBUTTON      "2. ���뷭��",IDC_BTN_IMPORT,140,256,120,22
-    PUSHBUTTON      "3. Ӧ�÷���",IDC_BTN_APPLY,270,256,120,22
-    PUSHBUTTON      "4. �ָ�����",IDC_BTN_RESTORE,400,256,120,22
-    PUSHBUTTON      "���ʺ�����",IDC_BTN_BLACKLIST,10,284,120,22
-    PUSHBUTTON      "Wiki ����",IDC_BTN_WIKI,140,284,120,22
-    PUSHBUTTON      "�ж�",IDC_BTN_CANCEL,270,284,120,22
+    GROUPBOX        "操作",IDC_GRP_OP,7,241,566,108
+    PUSHBUTTON      "1. 提取英文",IDC_BTN_EXTRACT,10,256,120,22
+    PUSHBUTTON      "2. 导入翻译",IDC_BTN_IMPORT,140,256,120,22
+    PUSHBUTTON      "3. 应用翻译",IDC_BTN_APPLY,270,256,120,22
+    PUSHBUTTON      "4. 恢复备份",IDC_BTN_RESTORE,400,256,120,22
+    PUSHBUTTON      "单词黑名单",IDC_BTN_BLACKLIST,10,284,120,22
+    PUSHBUTTON      "Wiki 导出",IDC_BTN_WIKI,140,284,120,22
+    PUSHBUTTON      "中断",IDC_BTN_CANCEL,270,284,120,22
     CONTROL         "",IDC_PROGRESS,"msctls_progress32",WS_BORDER | PBS_MARQUEE,15,316,552,12
-    LTEXT           "���̣���ȡӢ�� �� AI/�ⲿ���� �� ���뷭�� �� Ӧ�÷��루��4 �ָ����ݡ��ɳ�����",IDC_STATIC,15,330,552,12
-    LTEXT           "������Wiki ���� / ���뷭�루����ǰ�������",IDC_STATIC,15,344,552,12
-    GROUPBOX        "��־",IDC_GRP_LOG,7,356,566,114
+    LTEXT           "流程：提取英文 → AI/外部翻译 → 导入翻译 → 应用翻译（『4 恢复备份』可撤销）",IDC_STATIC,15,330,552,12
+    LTEXT           "辅助：Wiki 导出 / 导入翻译（翻译前补充术语）",IDC_STATIC,15,344,552,12
+    GROUPBOX        "日志",IDC_GRP_LOG,7,356,566,114
     CONTROL         "",IDC_LOG_EDIT,"RichEdit20W",WS_BORDER | WS_VSCROLL | WS_TABSTOP | ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY,15,368,552,102
 END
 
 IDD_RESTORE_DIALOG DIALOGEX 0, 0, 460, 360
 STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU
-CAPTION "�ָ�����"
+CAPTION "恢复备份"
 FONT 9, "MS Shell Dlg"
 BEGIN
-    GROUPBOX        "ģ���ļ��У��������ѡ�����á�ȫѡ����",IDC_STATIC,7,7,220,310
+    GROUPBOX        "模组文件夹（点击即勾选，可用「全选」）",IDC_STATIC,7,7,220,310
     CONTROL         "",IDC_RESTORE_LEFTLIST,"SysListView32",LVS_REPORT | LVS_NOCOLUMNHEADER | LVS_SHOWSELALWAYS | WS_BORDER | WS_VSCROLL | WS_TABSTOP,15,20,204,285
-    GROUPBOX        "���ݰ����ɶ�ѡ��",IDC_STATIC,233,7,220,310
+    GROUPBOX        "备份包（可多选）",IDC_STATIC,233,7,220,310
     LISTBOX         IDC_RESTORE_RIGHTLIST,241,20,204,285,LBS_EXTENDEDSEL | LBS_NOINTEGRALHEIGHT | WS_VSCROLL | WS_TABSTOP
-    PUSHBUTTON      "ȫѡ",IDC_RESTORE_ALL,40,323,50,14
-    DEFPUSHBUTTON   "�ָ�ѡ��",IDC_RESTORE_BTN,150,323,75,14
-    PUSHBUTTON      "�ر�",IDC_RESTORE_CLOSE,260,323,50,14
+    PUSHBUTTON      "全选",IDC_RESTORE_ALL,40,323,50,14
+    DEFPUSHBUTTON   "恢复选中",IDC_RESTORE_BTN,150,323,75,14
+    PUSHBUTTON      "关闭",IDC_RESTORE_CLOSE,260,323,50,14
 END
 
 IDD_BLACKLIST_DIALOG DIALOGEX 0, 0, 320, 220
 STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU
-CAPTION "���ʺ�����"
+CAPTION "单词黑名单"
 FONT 9, "MS Shell Dlg"
 BEGIN
-    LTEXT           "ÿ��һ�����ʻ��ö��ż������ rue,small�����������ʣ���ȡʱ������Ӧ��ʱ��������Ӧ�õ��Զ���ԭΪӢ�ġ����浽�ʵ�Ŀ¼�� ���ʺ�����.json��",IDC_STATIC,7,7,306,38
+    LTEXT           "每行一个单词或用逗号间隔（如 rue,small）。黑名单词：提取时跳过、应用时跳过、已应用的自动还原为英文。保存到词典目录的 单词黑名单.json。",IDC_STATIC,7,7,306,38
     EDITTEXT        IDC_BLACKLIST_EDIT,7,50,306,140,ES_MULTILINE | ES_AUTOVSCROLL | WS_VSCROLL | WS_TABSTOP
-    DEFPUSHBUTTON   "ȷ��",IDC_BLACKLIST_OK,115,198,50,14
-    PUSHBUTTON      "ȡ��",IDC_BLACKLIST_CANCEL,175,198,50,14
+    DEFPUSHBUTTON   "确定",IDC_BLACKLIST_OK,115,198,50,14
+    PUSHBUTTON      "取消",IDC_BLACKLIST_CANCEL,175,198,50,14
 END
 
 IDD_WIKI_CATS_DIALOG DIALOGEX 0, 0, 360, 340
 STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU
-CAPTION "ѡ�� Wiki ��������"
+CAPTION "选择 Wiki 导出分类"
 FONT 9, "MS Shell Dlg"
 BEGIN
-    LTEXT           "�����м���ѡ����ѡ�򣩣�Ctrl+A ��㡸ȫѡ����һ�ο�ѡȫ����",IDC_STATIC,7,7,346,12
+    LTEXT           "单击行即勾选（复选框），Ctrl+A 或点「全选」可一次框选全部。",IDC_STATIC,7,7,346,12
     CONTROL         "",IDC_WIKI_CATS_LIST,"SysListView32",LVS_REPORT | LVS_NOCOLUMNHEADER | LVS_SHOWSELALWAYS | WS_BORDER | WS_VSCROLL | WS_TABSTOP,7,22,346,260
-    PUSHBUTTON      "ȫѡ",IDC_WIKI_CATS_ALL,100,292,50,14
-    PUSHBUTTON      "ȡ��ȫѡ",IDC_WIKI_CATS_NONE,160,292,60,14
-    DEFPUSHBUTTON   "ȷ��",IDC_WIKI_CATS_OK,230,292,50,14
-    PUSHBUTTON      "ȡ��",IDC_WIKI_CATS_CANCEL,290,292,50,14
+    PUSHBUTTON      "全选",IDC_WIKI_CATS_ALL,100,292,50,14
+    PUSHBUTTON      "取消全选",IDC_WIKI_CATS_NONE,160,292,60,14
+    DEFPUSHBUTTON   "确定",IDC_WIKI_CATS_OK,230,292,50,14
+    PUSHBUTTON      "取消",IDC_WIKI_CATS_CANCEL,290,292,50,14
 END
 
 IDD_IMPORT_TRANS_DIALOG DIALOGEX 0, 0, 420, 242
 STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU
-CAPTION "���뷭��"
+CAPTION "导入翻译"
 FONT 9, "MS Shell Dlg"
 BEGIN
-    LTEXT           "ѡ��Ҫ����ķ����ļ���AI ���˹�����õ� *_�ѷ���.json / *_δ����.json����",IDC_STATIC,7,7,406,12
+    LTEXT           "选择要导入的翻译文件（AI 或人工翻译好的 *_已翻译.json / *_未翻译.json）：",IDC_STATIC,7,7,406,12
     LISTBOX         IDC_IMPORT_LIST,7,22,406,140,LBS_NOINTEGRALHEIGHT | WS_VSCROLL | WS_TABSTOP | LBS_NOTIFY
-    AUTOCHECKBOX    "����ǰ�ôʵ��Զ���ȫδ�����Ψһ�ʵ䣩",IDC_IMPORT_AUTOFILL,7,168,406,12
-    LTEXT           "����һ���ôʵ䲹ȫ�հ��� �� ����/���� *_�ѷ���.json�����������з��룩��",IDC_STATIC,7,184,406,12
-    LTEXT           "���ܶ��������ļ����зǿշ������ Ψһ�ʵ� wiki_�������and�������.json�����в����ǣ���",IDC_STATIC,7,198,406,12
-    DEFPUSHBUTTON   "ȷ��",IDC_IMPORT_OK,265,220,60,14
-    PUSHBUTTON      "ȡ��",IDC_IMPORT_CANCEL,335,220,60,14
+    AUTOCHECKBOX    "导入前用词典自动补全未翻译项（唯一词典）",IDC_IMPORT_AUTOFILL,7,168,406,12
+    LTEXT           "功能一：用词典补全空白项 → 生成/更新 *_已翻译.json（不覆盖已有翻译）。",IDC_STATIC,7,184,406,12
+    LTEXT           "功能二：将该文件所有非空翻译编入 唯一词典 wiki_术语对照and个人填充.json（已有不覆盖）。",IDC_STATIC,7,198,406,12
+    DEFPUSHBUTTON   "确定",IDC_IMPORT_OK,265,220,60,14
+    PUSHBUTTON      "取消",IDC_IMPORT_CANCEL,335,220,60,14
 END
 
 IDD_AI_SELECT_DIALOG DIALOGEX 0, 0, 460, 250
 STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU
-CAPTION "ѡ�� AI ����"
+CAPTION "选择 AI 配置"
 FONT 9, "MS Shell Dlg"
 BEGIN
-    LTEXT           "��ѡҪ���õ����ã�Key / ģ���� / API ��ַ һ�����ã���",IDC_STATIC,7,7,446,11
+    LTEXT           "勾选要套用的配置（Key / 模型名 / API 地址 一起套用）：",IDC_STATIC,7,7,446,11
     CONTROL         "",IDC_AI_SELECT_LIST,"SysListView32",LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS | WS_BORDER | WS_TABSTOP,7,22,446,192
-    DEFPUSHBUTTON   "ȷ��",IDC_AI_SELECT_OK,299,222,75,23
-    PUSHBUTTON      "ȡ��",IDC_AI_SELECT_CANCEL,378,222,75,23
+    DEFPUSHBUTTON   "确定",IDC_AI_SELECT_OK,299,222,75,23
+    PUSHBUTTON      "取消",IDC_AI_SELECT_CANCEL,378,222,75,23
 END
 
 IDD_ABOUTBOX DIALOGEX 0, 0, 170, 62
 STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU
-CAPTION "���� FFXIV_MODѡ�������"
+CAPTION "关于 FFXIV_MOD选项汉化工具"
 FONT 9, "MS Shell Dlg"
 BEGIN
     ICON            IDI_FFXIVMOD,IDC_STATIC,14,14,21,20
-    LTEXT           "FFXIV_MODѡ�������, �汾 1.0",IDC_STATIC,42,14,114,8,SS_NOPREFIX
-    LTEXT           "��Ȩ����(c) 2026",IDC_STATIC,42,26,114,8
-    DEFPUSHBUTTON   "ȷ��",IDOK,113,41,50,14,WS_GROUP
+    LTEXT           "FFXIV_MOD选项汉化工具, 版本 1.0",IDC_STATIC,42,14,114,8,SS_NOPREFIX
+    LTEXT           "版权所有(c) 2026",IDC_STATIC,42,26,114,8
+    DEFPUSHBUTTON   "确定",IDOK,113,41,50,14,WS_GROUP
 END
 
 /////////////////////////////////////////////////////////////////////////////
@@ -272,13 +273,13 @@ END
 
 /////////////////////////////////////////////////////////////////////////////
 //
-// �ַ�����
+// 字符串表
 //
 
 STRINGTABLE
 BEGIN
    IDC_FFXIVMOD   "FFXIVMOD"
-   IDS_APP_TITLE       "FFXIV_MODѡ�������"
+   IDS_APP_TITLE       "FFXIV_MOD选项汉化工具"
 END
 
 #endif
@@ -289,7 +290,7 @@ END
 #ifndef APSTUDIO_INVOKED
 /////////////////////////////////////////////////////////////////////////////
 //
-// �� TEXTINCLUDE ��Դ���ɡ�
+// 从 TEXTINCLUDE 资源生成。
 //
 
 /////////////////////////////////////////////////////////////////////////////
