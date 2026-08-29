@@ -1863,7 +1863,8 @@ static bool is_valid_chinese_side(const std::string& raw)
 
 // 添加一对术语（英文 -> 中文），按键去重。
 // hitSkip 非空时，统计"词条已存在于词典、本次跳过"的次数（用于日志，避免误判爬虫失效）。
-static void add_wiki_term(json& result, int& added, const std::string& enRaw, const std::string& zhRaw, int* hitSkip = nullptr)
+// hitList 非空时，把命中的英文原词记入列表（供日志打印具体词条）。
+static void add_wiki_term(json& result, int& added, const std::string& enRaw, const std::string& zhRaw, int* hitSkip = nullptr, std::vector<std::string>* hitList = nullptr)
 {
     std::string e = enRaw, z = zhRaw;
     size_t ae = e.find_first_not_of(" \t\r\n"); if (ae == std::string::npos) return;
@@ -1880,13 +1881,16 @@ static void add_wiki_term(json& result, int& added, const std::string& enRaw, co
         result["terms"][e] = z;
         added++;
     }
-    else if (hitSkip) (*hitSkip)++;
+    else {
+        if (hitSkip) (*hitSkip)++;
+        if (hitList) hitList->push_back(e);
+    }
 }
 
 // 解析 Data:<类型>/<id>.json 数据页，提取 中文名/英文名 对照。
 // Item 用「中文名/英文名」，Action/Status/Trait 用「cn/en」；直接取顶层字段即可。
 // 返回 0=既无中文也无英文，1=有中文，2=有英文，3=两者都有（用于诊断统计）。
-static int parse_data_page(const std::string& type, const std::string& content, json& result, int& added, int* hitSkip = nullptr)
+static int parse_data_page(const std::string& type, const std::string& content, json& result, int& added, int* hitSkip = nullptr, std::vector<std::string>* hitList = nullptr)
 {
     json o;
     try { o = json::parse(content); }
@@ -1897,7 +1901,7 @@ static int parse_data_page(const std::string& type, const std::string& content, 
     std::string en = o.value("英文名", o.value("en", std::string()));
     int flag = (zh.empty() ? 0 : 1) | (en.empty() ? 0 : 2);
     if (flag == 3 && zh != en)
-        add_wiki_term(result, added, en, zh, hitSkip);
+        add_wiki_term(result, added, en, zh, hitSkip, hitList);
     return flag;
 }
 
@@ -2008,6 +2012,7 @@ void WikiImportThread()
         int added = 0;
         int pages = 0;
         int hitExisting = 0; // 已存在于词典、本次跳过（增量更新，非故障）
+        std::vector<std::string> hitList; // 命中的具体英文词条，供日志展示
         long long cntZh = 0, cntEn = 0, cntBoth = 0;
         uint64_t wikiStartMs = GetTickCount64();
         std::string gapCont, rvCont;
@@ -2054,7 +2059,7 @@ void WikiImportThread()
                     else
                         content = p["revisions"][0].value("*", std::string());
                     if (content.empty()) continue;
-                    int flag = parse_data_page(type, content, result, added, &hitExisting);
+                    int flag = parse_data_page(type, content, result, added, &hitExisting, &hitList);
                     if (flag & 1) cntZh++;
                     if (flag & 2) cntEn++;
                     if (flag == 3) cntBoth++;
@@ -2126,6 +2131,16 @@ void WikiImportThread()
         LogThread("[提示] 诊断：共解析 " + std::to_string(pages) + " 个数据页，其中含中文名 " + std::to_string(cntZh)
             + " 页、含英文名 " + std::to_string(cntEn) + " 页、中文+英文都齐全 " + std::to_string(cntBoth)
             + " 页；本次新增术语 " + std::to_string(added) + " 条，命中已有词条 " + std::to_string(hitExisting) + " 条（跳过）");
+        if (!hitList.empty()) {
+            std::string detail = "[提示] 命中已有的词条：";
+            size_t show = std::min<size_t>(hitList.size(), 20);
+            for (size_t i = 0; i < show; ++i) {
+                if (i) detail += "、";
+                detail += hitList[i];
+            }
+            if (hitList.size() > show) detail += " 等共 " + std::to_string(hitList.size()) + " 条";
+            LogThread(detail);
+        }
         uint64_t wikiTotalMs = GetTickCount64() - wikiStartMs;
         long long wSecs = (long long)(wikiTotalMs / 1000);
         std::string wTime = std::to_string(wSecs / 60) + "分" + std::to_string(wSecs % 60) + "秒";
