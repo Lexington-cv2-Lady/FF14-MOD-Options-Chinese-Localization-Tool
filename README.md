@@ -71,7 +71,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build_release.ps1 -Zip
 
 ### v2.1
 
-- 新增「模型名 / API 地址」下拉选择，内置 Deep Seek 与智谱 GLM 预设
+- 新增「模型名 / API 地址」下拉选择，内置 DeepSeek 与智谱 GLM 预设
 - 模型名与 API 地址独立选择，下拉框仅作为历史预设列表供快速选取，不再自动联动
 - 下拉框支持手动输入任意模型名或 API 地址，可保存为自定义配置
 - AI 服务商预设列表持久化到 config.json，可手动编辑增删，无需重新编译
