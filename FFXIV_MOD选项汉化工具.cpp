@@ -2376,13 +2376,16 @@ static bool AITranslateFile(const fs::path& inFile)
         std::string err;
         std::map<std::string, std::string> got;
         bool okBatch = false;
+        bool retried = false;
         for (int retry = 0; retry < 3 && !okBatch; ++retry) {
-            if (retry > 0) { LogThread("[提示] 批次 " + std::to_string(i / batch + 1) + " 重试第 " + std::to_string(retry) + " 次..."); Sleep(2000); }
+            if (retry > 0) { retried = true; LogThread("[提示] 批次 " + std::to_string(i / batch + 1) + " 重试第 " + std::to_string(retry) + " 次..."); Sleep(2000); }
             got.clear();
             if (AITranslateBatch(items, got, err)) okBatch = true;
             else LogThread("[错误] 批次 " + std::to_string(i / batch + 1) + " 失败: " + err);
         }
         if (okBatch) {
+            if (retried)
+                LogThread("[完成] 批次 " + std::to_string(i / batch + 1) + " 重试成功（该批结果已正常写入）");
             for (size_t k = 0; k < n; ++k) {
                 auto f = got.find(std::to_string(i + k));
                 if (f != got.end()) {
