@@ -2553,6 +2553,13 @@ static bool AITranslateFile(const fs::path& inFile)
         LogThread("[提示] 唯一词典命中 " + std::to_string(dictFilled) + " 条，直接填充");
     if (pending.empty()) {
         LogThread("[提示] 所有条目已由词典填充，无需调用 AI");
+        // 若输入是翻译失败.json，说明全部已由词典填满，清理掉残留清单
+        std::wstring fn = inFile.filename().wstring();
+        if (fn.find(L"翻译失败") != std::wstring::npos) {
+            std::error_code dec;
+            fs::remove(inFile, dec);
+            LogThread("[提示] 翻译失败.json 已全部由词典填充，已自动删除");
+        }
         return false;
     }
 
@@ -2621,6 +2628,25 @@ static bool AITranslateFile(const fs::path& inFile)
         LogThread("[提示] 经补翻后仍有 " + std::to_string(missed.size()) + " 条未翻译（见下方清单）");
     LogThread("[AI] 翻译完成：" + std::to_string(okCount) + " 条成功，"
         + std::to_string(missed.size()) + " 条最终未翻译");
+    // 生成/更新「翻译失败.json」：保留仍未翻译的条目（整批失败 + AI 漏翻），下次翻译优先重试
+    if (!missed.empty()) {
+        json failJ;
+        for (auto& sec : { "_options", "_descriptions" }) {
+            if (!tj.contains(sec) || !tj[sec].is_object()) continue;
+            json obj = json::object();
+            for (auto& it : tj[sec].items()) {
+                if (!it.value().is_string() || it.value().get<std::string>().empty())
+                    obj[it.key()] = "";
+            }
+            if (!obj.empty()) failJ[sec] = obj;
+        }
+        if (!failJ.empty()) {
+            fs::path failPath = fs::u8path(g_cfg.translationDir) / fs::u8path("翻译失败.json");
+            if (write_binary_file(failPath, failJ.dump(2)))
+                LogThread("[提示] 已生成/更新 翻译失败.json（" + std::to_string(missed.size())
+                    + " 条待重试，下次点 AI 翻译将优先处理）");
+        }
+    }
     if (okCount == 0) return false;
 
     // 落盘：_未翻译 → _已翻译；同名已翻译含内容则另存 *_已翻译_AI.json
@@ -2768,7 +2794,16 @@ void RunAITranslateThread()
         }
         auto files = ScanTransFiles(fs::u8path(g_cfg.translationDir));
         fs::path target;
-        for (auto& f : files) if (!f.isTranslated) { target = f.path; break; }
+        // 优先重试「翻译失败.json」里的失败条目，其次再处理 *_未翻译.json
+        fs::path failPath = fs::u8path(g_cfg.translationDir) / fs::u8path("翻译失败.json");
+        std::error_code fec;
+        if (fs::exists(failPath, fec) && !fec) {
+            target = failPath;
+            Log("[提示] 检测到 翻译失败.json，优先重新翻译失败条目");
+        }
+        else {
+            for (auto& f : files) if (!f.isTranslated) { target = f.path; break; }
+        }
         if (target.empty()) {
             Log("[错误] 翻译目录下没有 *_未翻译.json，请先执行『1. 提取英文』");
             g_busy = false;
@@ -2778,6 +2813,29 @@ void RunAITranslateThread()
         Log("===== 开始 AI 自动翻译 =====");
         Log("输入文件: " + wstring_to_utf8(target.filename().wstring()));
         bool ok = AITranslateFile(target);
+        // 翻译失败.json 已无空值（全部翻译成功）时自动删除，避免残留干扰下次
+        if (!target.empty() && target == failPath) {
+            std::string fd;
+            if (read_binary_file(failPath, fd)) {
+                try {
+                    json fj = json::parse(clean_utf8(fd));
+                    bool anyEmpty = false;
+                    if (fj.is_object()) {
+                        for (auto& sec : { "_options", "_descriptions" }) {
+                            if (!fj.contains(sec) || !fj[sec].is_object()) continue;
+                            for (auto& it : fj[sec].items())
+                                if (it.value().is_string() && it.value().get<std::string>().empty()) { anyEmpty = true; break; }
+                            if (anyEmpty) break;
+                        }
+                    }
+                    if (!anyEmpty) {
+                        std::error_code dec;
+                        fs::remove(failPath, dec);
+                        Log("[提示] 翻译失败.json 已全部翻译成功，已自动删除");
+                    }
+                } catch (...) {}
+            }
+        }
         Log("AI 翻译流程结束");
         g_busy = false;
     }
