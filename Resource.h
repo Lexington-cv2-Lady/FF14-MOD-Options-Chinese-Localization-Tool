@@ -1,6 +1,8 @@
 //{{NO_DEPENDENCIES}}
-// Microsoft Visual C++ 生成的包含文件。
-// 使用者 FFXIV_MOD选项汉化工具.rc
+// Microsoft Visual C++ generated include file.
+// Used by: FFXIV_MOD Hanhua Tool .rc
+// NOTE: keep this file ASCII-only so both rc.exe (ANSI/GBK)
+// and cl.exe (/utf-8) can parse it without warnings.
 
 #define IDS_APP_TITLE			103
 
@@ -14,27 +16,27 @@
 #define IDC_FFXIVMOD			109
 #define IDC_MYICON				2
 
-// ---- 恢复备份对话框 ----
+// ---- Restore backup dialog ----
 #define IDD_RESTORE_DIALOG		1200
 #define IDC_RESTORE_LEFTLIST	1201
 #define IDC_RESTORE_RIGHTLIST	1202
 #define IDC_RESTORE_BTN			1203
 #define IDC_RESTORE_CLOSE		1204
 
-// ---- 黑名单对话框 ----
+// ---- Blacklist dialog ----
 #define IDD_BLACKLIST_DIALOG	1210
 #define IDC_BLACKLIST_EDIT		1211
 #define IDC_BLACKLIST_OK		1212
 #define IDC_BLACKLIST_CANCEL	1213
 
-// ---- 导入翻译对话框 ----
+// ---- Import translation dialog ----
 #define IDD_IMPORT_TRANS_DIALOG	1230
 #define IDC_IMPORT_LIST			1231
 #define IDC_IMPORT_AUTOFILL		1232
 #define IDC_IMPORT_OK			1233
 #define IDC_IMPORT_CANCEL		1234
 
-// ---- Wiki 分类选择对话框 ----
+// ---- Wiki category dialog ----
 #define IDD_WIKI_CATS_DIALOG	1220
 #define IDC_WIKI_CATS_LIST		1221
 #define IDC_WIKI_CATS_ALL		1222
@@ -42,7 +44,16 @@
 #define IDC_WIKI_CATS_OK		1224
 #define IDC_WIKI_CATS_CANCEL	1225
 
-// ---- 主窗口控件 ----
+// ---- AI settings dialog ----
+#define IDD_AI_SETTINGS_DIALOG	1240
+#define IDC_AI_KEY				1241
+#define IDC_AI_MODEL			1242
+#define IDC_AI_BASEURL			1243
+#define IDC_AI_BATCH			1244
+#define IDC_AI_OK				1245
+#define IDC_AI_CANCEL			1246
+
+// ---- Main window controls ----
 #define IDC_EDIT_PENUMBRA		1300
 #define IDC_BTN_BROWSE_PENUMBRA	1301
 #define IDC_EDIT_TRANSLATION	1302
@@ -66,10 +77,13 @@
 #define IDC_BTN_OPEN_DICT		1322
 #define IDC_PROGRESS			1330
 
+#define IDC_BTN_AI_TRANSLATE	1331
+#define IDC_BTN_AI_SETTINGS		1332
+
 #ifndef IDC_STATIC
 #define IDC_STATIC				-1
 #endif
-// 新对象的下一组默认值
+// Next default values for new objects
 //
 #ifdef APSTUDIO_INVOKED
 #ifndef APSTUDIO_READONLY_SYMBOLS
@@ -81,3 +95,14 @@
 #define _APS_NEXT_SYMED_VALUE		110
 #endif
 #endif
+
+// ---- Main window groupboxes and extra controls ----
+#define IDC_GRP_DIR             1333
+#define IDC_GRP_APP             1334
+#define IDC_GRP_AI              1335
+#define IDC_GRP_OP              1336
+#define IDC_GRP_LOG             1337
+#define IDC_BTN_SHOW_KEY        1338
+#define IDC_EDIT_FONT_SIZE      1339
+#define IDC_BTN_APPLY_FONT      1340
+#define IDC_CHK_AUTO_FONT       1341

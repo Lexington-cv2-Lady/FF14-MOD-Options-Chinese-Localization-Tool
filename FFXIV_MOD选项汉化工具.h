@@ -101,6 +101,14 @@ struct AppConfig {
     bool pureChinese = false;         // 纯中文模式
     std::vector<std::string> blacklist; // 黑名单
     std::vector<std::string> wikiCategories; // Wiki 导出选中的分类 prefix
+    std::string aiApiKey;      // AI 翻译 API Key（DeepSeek 等，OpenAI 兼容）
+    std::string aiModel;       // AI 模型名（默认 deepseek-v4-flash）
+    std::string aiBaseUrl;     // API Base URL（默认 https://api.deepseek.com）
+    int aiBatchSize = 40;      // AI 每批翻译的词条数
+    int fontSize = 11;         // 主界面字体大小（点，默认 11）
+    bool autoFontSize = true;  // 窗口缩放时是否自动调整字体大小
+    int winX = -1, winY = -1;  // 上次退出时的窗口位置（-1 表示未保存，使用系统默认）
+    int winW = 0, winH = 0;    // 上次退出时的窗口大小（0 表示使用默认尺寸）
 };
 
 // ------------------------------------------------------------------

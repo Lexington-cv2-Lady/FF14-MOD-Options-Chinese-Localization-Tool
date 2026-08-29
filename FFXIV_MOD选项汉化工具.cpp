@@ -19,6 +19,7 @@ AppConfig g_cfg;
 HINSTANCE hInst = nullptr;
 HWND g_hMainWnd = nullptr;
 HWND g_hLogEdit = nullptr;
+HFONT g_hFont = nullptr;        // 主界面自定义字体（随字体大小重建）
 std::atomic<bool> g_busy{ false };
 std::atomic<bool> g_cancel{ false };
 std::mutex g_logMutex;
@@ -26,42 +27,52 @@ std::string g_workerName;
 std::vector<std::string> g_wikiPrefixes; // Wiki 导出当前选中的分类
 fs::path g_importFile;   // 导入翻译：选定的文件
 bool g_importAutoFill = true; // 导入翻译：是否先用词典补全空白项
+bool g_keyVisible = false;    // AI API Key 是否明文显示
+static int g_dlgW0 = 0, g_dlgH0 = 0; // 主窗口 .rc 设计尺寸对应客户区像素（缩放布局基准）
+struct CtrlLayout {
+    HWND hwnd;
+    RECT rc; // 初始位置（客户区坐标，像素）
+};
+static std::vector<CtrlLayout> g_layout;
+// 初始化完成标志：在此之前触发的 WM_SIZE/WM_MOVE 不记录窗口尺寸，
+// 否则对话框创建时的默认大小会把 config 里的记忆值冲掉
+static bool g_initialized = false;
 
 struct WikiCategory {
     std::wstring display; // 界面显示文本（prefix + 中文说明）
     std::string prefix;   // Data namespace 中的 prefix，如 "Item/"
 };
 static const std::vector<WikiCategory> g_wikiCategoryList = {
-    {L"Item 物品", "Item/"},
-    {L"Action 技能/动作", "Action/"},
-    {L"Status 状态", "Status/"},
-    {L"Trait 特性", "Trait/"},
-    {L"Quest 任务", "Quest/"},
-    {L"ENpcResident NPC", "ENpcResident/"},
-    {L"BNpcName 怪物", "BNpcName/"},
-    {L"PlaceName 地点", "PlaceName/"},
-    {L"Weather 天气", "Weather/"},
-    {L"Map 地图", "Map/"},
-    {L"Fate FATE", "Fate/"},
-    {L"Achievement 成就", "Achievement/"},
-    {L"Title 称号", "Title/"},
-    {L"ClassJob 职业", "ClassJob/"},
-    {L"Race 种族", "Race/"},
-    {L"Tribe 部族", "Tribe/"},
-    {L"GuardianDeity 守护神", "GuardianDeity/"},
-    {L"Mount 坐骑", "Mount/"},
-    {L"Minion 宠物", "Minion/"},
-    {L"Orchestrion 管弦乐琴", "Orchestrion/"},
-    {L"Emote 情感动作", "Emote/"},
-    {L"InstanceContent 副本", "InstanceContent/"},
-    {L"Leve 理符", "Leve/"},
-    {L"TripleTriadCard 九宫幻卡", "TripleTriadCard/"},
-    {L"Recipe 配方", "Recipe/"},
-    {L"Pet 召唤兽", "Pet/"},
-    {L"ItemSeries 装备系列", "ItemSeries/"},
-    {L"OnlineStatus 在线状态", "OnlineStatus/"},
-    {L"GrandCompany 大国防联军", "GrandCompany/"},
-    {L"ContentFinderCondition 副本搜索器", "ContentFinderCondition/"},
+    {L"物品（Item）", "Item/"},
+    {L"技能/动作（Action）", "Action/"},
+    {L"状态（Status）", "Status/"},
+    {L"特性（Trait）", "Trait/"},
+    {L"任务（Quest）", "Quest/"},
+    {L"NPC（ENpcResident）", "ENpcResident/"},
+    {L"怪物（BNpcName）", "BNpcName/"},
+    {L"地点（PlaceName）", "PlaceName/"},
+    {L"天气（Weather）", "Weather/"},
+    {L"地图（Map）", "Map/"},
+    {L"FATE（Fate）", "Fate/"},
+    {L"成就（Achievement）", "Achievement/"},
+    {L"称号（Title）", "Title/"},
+    {L"职业（ClassJob）", "ClassJob/"},
+    {L"种族（Race）", "Race/"},
+    {L"部族（Tribe）", "Tribe/"},
+    {L"守护神（GuardianDeity）", "GuardianDeity/"},
+    {L"坐骑（Mount）", "Mount/"},
+    {L"宠物（Minion）", "Minion/"},
+    {L"管弦乐琴（Orchestrion）", "Orchestrion/"},
+    {L"情感动作（Emote）", "Emote/"},
+    {L"副本（InstanceContent）", "InstanceContent/"},
+    {L"理符（Leve）", "Leve/"},
+    {L"九宫幻卡（TripleTriadCard）", "TripleTriadCard/"},
+    {L"配方（Recipe）", "Recipe/"},
+    {L"召唤兽（Pet）", "Pet/"},
+    {L"装备系列（ItemSeries）", "ItemSeries/"},
+    {L"在线状态（OnlineStatus）", "OnlineStatus/"},
+    {L"大国防联军（GrandCompany）", "GrandCompany/"},
+    {L"副本搜索器（ContentFinderCondition）", "ContentFinderCondition/"},
 };
 
 // 前向声明
@@ -92,6 +103,7 @@ void WikiImportThread();
 void RunExtractThread();
 void RunImportThread();
 void RunApplyThread();
+void RunAITranslateThread();
 
 // ------------------------------------------------------------------
 // 日志输出（主线程直接写，工作线程经 PostMessageW）
@@ -133,24 +145,29 @@ void AppendLogText(const std::wstring& text)
 
 void Log(const std::string& utf8Msg)
 {
-    AppendLogText(utf8_to_wstring(utf8Msg + "\r\n"));
+    if (!g_hMainWnd) {
+        AppendLogText(utf8_to_wstring(utf8Msg + "\r\n"));
+        return;
+    }
+    // 工作线程不能直接 SendMessage 到 RichEdit，否则可能与主线程死锁。
+    // 统一通过 PostMessage 转发到主线程，主线程在 WM_APP_LOG 里安全写入。
+    std::wstring w = utf8_to_wstring(utf8Msg + "\r\n");
+    PostMessageW(g_hMainWnd, WM_APP_LOG, 0, (LPARAM)new std::wstring(w));
 }
 
 void LogW(const std::wstring& wmsg)
 {
-    AppendLogText(wmsg + L"\r\n");
+    if (!g_hMainWnd) {
+        AppendLogText(wmsg + L"\r\n");
+        return;
+    }
+    PostMessageW(g_hMainWnd, WM_APP_LOG, 0, (LPARAM)new std::wstring(wmsg + L"\r\n"));
 }
 
-// 工作线程日志（转发到主线程）
+// 工作线程日志（兼容旧调用，行为与 Log 一致）
 void LogThread(const std::string& msg)
 {
-    if (GetCurrentThreadId() == GetWindowThreadProcessId(g_hMainWnd, nullptr)) {
-        Log(msg);
-    }
-    else if (g_hMainWnd) {
-        std::wstring w = utf8_to_wstring(msg + "\r\n");
-        PostMessageW(g_hMainWnd, WM_APP_LOG, 0, (LPARAM)new std::wstring(w));
-    }
+    Log(msg);
 }
 
 // 工作线程更新进度条（转发到主线程）。max<=0 表示不确定进度（滚动）
@@ -183,6 +200,16 @@ bool SaveConfig()
         j["pureChinese"] = g_cfg.pureChinese;
         j["blacklist"] = g_cfg.blacklist;
         j["wikiCategories"] = g_cfg.wikiCategories;
+        j["aiApiKey"] = g_cfg.aiApiKey;
+        j["aiModel"] = g_cfg.aiModel;
+        j["aiBaseUrl"] = g_cfg.aiBaseUrl;
+        j["aiBatchSize"] = g_cfg.aiBatchSize;
+        j["fontSize"] = g_cfg.fontSize;
+        j["autoFontSize"] = g_cfg.autoFontSize;
+        j["winX"] = g_cfg.winX;
+        j["winY"] = g_cfg.winY;
+        j["winW"] = g_cfg.winW;
+        j["winH"] = g_cfg.winH;
 
         std::string data = j.dump(2);
         fs::path cfgPath = GetExeDir() / "config.json";
@@ -213,6 +240,16 @@ bool LoadConfigFrom(const fs::path& cfgPath)
         g_cfg.pureChinese = j.value("pureChinese", false);
         if (j.contains("blacklist")) g_cfg.blacklist = j["blacklist"].get<std::vector<std::string>>();
         if (j.contains("wikiCategories")) g_cfg.wikiCategories = j["wikiCategories"].get<std::vector<std::string>>();
+        g_cfg.aiApiKey = j.value("aiApiKey", "");
+        g_cfg.aiModel = j.value("aiModel", "deepseek-v4-flash");
+        g_cfg.aiBaseUrl = j.value("aiBaseUrl", "https://api.deepseek.com");
+        g_cfg.aiBatchSize = j.value("aiBatchSize", 40);
+        g_cfg.fontSize = j.value("fontSize", 11);
+        g_cfg.autoFontSize = j.value("autoFontSize", true);
+        g_cfg.winX = j.value("winX", -1);
+        g_cfg.winY = j.value("winY", -1);
+        g_cfg.winW = j.value("winW", 0);
+        g_cfg.winH = j.value("winH", 0);
         return true;
     }
     catch (...) { return false; }
@@ -1723,6 +1760,7 @@ void WikiImportThread()
         int added = 0;
         int pages = 0;
         long long cntZh = 0, cntEn = 0, cntBoth = 0;
+        uint64_t wikiStartMs = GetTickCount64();
         std::string gapCont, rvCont;
         int dataset = 0;
         bool done = false;
@@ -1775,9 +1813,14 @@ void WikiImportThread()
                 }
             }
 
-            // 每 100 页更新进度
-            if (pages % 100 < 50) {
-                LogThread("[进度] " + type + " 已处理 " + std::to_string(pages) + " 页，新增术语 " + std::to_string(added));
+            // 每 100 页更新进度（附带用时与速度；页面总数未知，无法精确预估剩余时间）
+            if (pages > 0 && pages % 100 == 0) {
+                uint64_t elapsed = GetTickCount64() - wikiStartMs;
+                long long secs = (long long)(elapsed / 1000);
+                int speed = (int)(elapsed > 0 ? (double)pages * 1000.0 / elapsed : 0);
+                LogThread("[进度] " + type + " 已处理 " + std::to_string(pages) + " 页，新增术语 " + std::to_string(added)
+                    + "，用时 " + std::to_string(secs / 60) + "分" + std::to_string(secs % 60) + "秒"
+                    + "，约 " + std::to_string(speed) + " 页/秒");
             }
             SetProgress(pages, -1); // 页面总数未知，用不确定进度
 
@@ -1827,12 +1870,16 @@ void WikiImportThread()
         // 诊断：报告数据页中中文名/英文名的真实覆盖情况，帮助判断抓取是否正常
         LogThread("[提示] 诊断：共解析 " + std::to_string(pages) + " 个数据页，其中含中文名 " + std::to_string(cntZh)
             + " 页、含英文名 " + std::to_string(cntEn) + " 页、中文+英文都齐全 " + std::to_string(cntBoth) + " 页");
+        uint64_t wikiTotalMs = GetTickCount64() - wikiStartMs;
+        long long wSecs = (long long)(wikiTotalMs / 1000);
+        std::string wTime = std::to_string(wSecs / 60) + "分" + std::to_string(wSecs % 60) + "秒";
         if (g_cancel.load()) {
-            LogThread("[提示] 用户中断，已保存已抓取结果：共处理 " + std::to_string(pages) + " 页，新增术语 " + std::to_string(added));
+            LogThread("[提示] 用户中断，已保存已抓取结果：共处理 " + std::to_string(pages) + " 页，新增术语 " + std::to_string(added)
+                + "，总用时 " + wTime);
         }
         else {
             LogThread("[完成] Wiki 导出结束：共处理 " + std::to_string(pages) + " 页，新增术语 " + std::to_string(added)
-                + "，已增量并入 wiki_术语对照and个人填充.json");
+                + "，总用时 " + wTime + "，已增量并入 wiki_术语对照and个人填充.json");
         }
         LogThread("提示：Wiki 词条已直接并入唯一词典；想改已翻译的词条，请直接编辑 wiki_术语对照and个人填充.json");
     }
@@ -1918,6 +1965,467 @@ void LaunchWorker(void (*fn)(), const std::string& name)
 }
 
 // ------------------------------------------------------------------
+// AI 自动翻译（DeepSeek 等 OpenAI 兼容接口）
+// ------------------------------------------------------------------
+
+// 用 WinINet 发送 HTTPS POST 请求，返回响应体。成功返回 true。
+static bool HttpPostJson(const std::string& url, const std::string& apiKey,
+                         const std::string& body, std::string& outBody,
+                         std::string& errMsg)
+{
+    bool secure = (url.rfind("https://", 0) == 0);
+    std::string rest = url;
+    if (secure) rest = rest.substr(8);
+    else if (url.rfind("http://", 0) == 0) rest = rest.substr(7);
+
+    std::string host = rest, path = "/";
+    auto slash = rest.find('/');
+    if (slash != std::string::npos) {
+        host = rest.substr(0, slash);
+        path = rest.substr(slash);
+        if (path.empty()) path = "/";
+    }
+    INTERNET_PORT port = secure ? INTERNET_DEFAULT_HTTPS_PORT : INTERNET_DEFAULT_HTTP_PORT;
+    std::string hostOnly = host;
+    auto colon = host.find(':');
+    if (colon != std::string::npos) {
+        hostOnly = host.substr(0, colon);
+        port = (INTERNET_PORT)std::atoi(host.substr(colon + 1).c_str());
+        if (port == 0) port = secure ? INTERNET_DEFAULT_HTTPS_PORT : INTERNET_DEFAULT_HTTP_PORT;
+    }
+
+    HINTERNET hNet = InternetOpenW(L"FFXIV-Mod-Translation-Tool/1.0",
+        INTERNET_OPEN_TYPE_PRECONFIG, nullptr, nullptr, 0);
+    if (!hNet) { errMsg = "InternetOpen 失败: " + std::to_string(GetLastError()); return false; }
+
+    HINTERNET hConn = InternetConnectW(hNet, utf8_to_wstring(hostOnly).c_str(), port,
+        nullptr, nullptr, INTERNET_SERVICE_HTTP, 0, 0);
+    if (!hConn) {
+        errMsg = "InternetConnect 失败: " + std::to_string(GetLastError());
+        InternetCloseHandle(hNet);
+        return false;
+    }
+
+    std::wstring headers = L"Content-Type: application/json\r\nAuthorization: Bearer "
+        + utf8_to_wstring(apiKey) + L"\r\n";
+    DWORD flags = INTERNET_FLAG_RELOAD | INTERNET_FLAG_NO_CACHE_WRITE;
+    if (secure) flags |= INTERNET_FLAG_SECURE;
+    HINTERNET hReq = HttpOpenRequestW(hConn, L"POST", utf8_to_wstring(path).c_str(),
+        nullptr, nullptr, nullptr, flags, 0);
+    if (!hReq) {
+        errMsg = "HttpOpenRequest 失败: " + std::to_string(GetLastError());
+        InternetCloseHandle(hConn); InternetCloseHandle(hNet);
+        return false;
+    }
+
+    DWORD timeout = 180000; // 3 分钟超时
+    InternetSetOptionW(hReq, INTERNET_OPTION_RECEIVE_TIMEOUT, &timeout, sizeof(timeout));
+    InternetSetOptionW(hReq, INTERNET_OPTION_SEND_TIMEOUT, &timeout, sizeof(timeout));
+
+    BOOL ok = HttpSendRequestW(hReq, headers.c_str(), (DWORD)-1L,
+        (LPVOID)body.data(), (DWORD)body.size());
+    if (!ok) {
+        errMsg = "网络请求失败: " + std::to_string(GetLastError());
+        InternetCloseHandle(hReq); InternetCloseHandle(hConn); InternetCloseHandle(hNet);
+        return false;
+    }
+
+    DWORD status = 0, statusLen = sizeof(status);
+    if (HttpQueryInfoW(hReq, HTTP_QUERY_STATUS_CODE | HTTP_QUERY_FLAG_NUMBER,
+        &status, &statusLen, nullptr)) {
+        if (status != 200) {
+            char ebuf[4096]; DWORD rd = 0; std::string resp;
+            while (InternetReadFile(hReq, ebuf, sizeof(ebuf), &rd) && rd > 0) resp.append(ebuf, rd);
+            errMsg = "HTTP " + std::to_string(status) + (resp.empty() ? "" : ": " + resp);
+            InternetCloseHandle(hReq); InternetCloseHandle(hConn); InternetCloseHandle(hNet);
+            return false;
+        }
+    }
+
+    char buf[16384]; DWORD rd = 0; std::string resp;
+    while (InternetReadFile(hReq, buf, sizeof(buf), &rd) && rd > 0) {
+        resp.append(buf, rd);
+        if (resp.size() > 64 * 1024 * 1024) {
+            errMsg = "响应过大";
+            InternetCloseHandle(hReq); InternetCloseHandle(hConn); InternetCloseHandle(hNet);
+            return false;
+        }
+    }
+    outBody = resp;
+    InternetCloseHandle(hReq); InternetCloseHandle(hConn); InternetCloseHandle(hNet);
+    return true;
+}
+
+// 从 AI 回复文本中解析出 JSON 对象（容忍 ```json 代码块、前后说明文字）
+static bool ParseAIJson(const std::string& content, json& out)
+{
+    auto tryParse = [&](const std::string& s) -> bool {
+        try { out = json::parse(s); return out.is_object(); } catch (...) { return false; }
+    };
+    if (tryParse(content)) return true;
+    auto f1 = content.find("```");
+    if (f1 != std::string::npos) {
+        auto f2 = content.find("```", f1 + 3);
+        if (f2 != std::string::npos) {
+            std::string inner = content.substr(f1 + 3, f2 - f1 - 3);
+            auto b = inner.find('{'); auto e = inner.rfind('}');
+            if (b != std::string::npos && e != std::string::npos && e > b) {
+                if (tryParse(inner.substr(b, e - b + 1))) return true;
+            }
+        }
+    }
+    auto b = content.find('{'); auto e = content.rfind('}');
+    if (b != std::string::npos && e != std::string::npos && e > b) {
+        if (tryParse(content.substr(b, e - b + 1))) return true;
+    }
+    return false;
+}
+
+// 调用一次 AI 翻译一批词条，返回 条目 id -> 译文 的映射
+static bool AITranslateBatch(const std::vector<std::pair<std::string, std::string>>& items,
+                             std::map<std::string, std::string>& outMap, std::string& errMsg)
+{
+    if (items.empty()) return true;
+    std::string sysMsg =
+        "你是《最终幻想14》(FFXIV) 模组本地化的专业译者，把英文模组文本翻译成简体中文。\n"
+        "硬性要求：\n"
+        "1. 译文格式统一为「中文（英文）」，例如 治疗（Cure）。\n"
+        "2. 仅当括号内的英文与括号外的中文完全同义时，才可以省略括号只保留中文。\n"
+        "3. 纯数字、百分比（如75%）、版本号、MOD 专有名词（如 Yiggle、Rue、Bibo、EXQB、YAB）直接保留原文，不翻译。\n"
+        "4. 无法确定译名的专有名词保留英文，不要强行机翻。\n"
+        "5. 只输出一个 JSON 对象：键为条目 id（字符串），值为译文。不要输出任何其他内容。";
+    json arr = json::array();
+    for (auto& it : items) arr.push_back({ {"id", it.first}, {"text", it.second} });
+    std::string userMsg = "请翻译以下 FFXIV 模组文本条目，输出 JSON 对象：\n" + arr.dump();
+
+    json req;
+    req["model"] = g_cfg.aiModel.empty() ? "deepseek-v4-flash" : g_cfg.aiModel;
+    req["messages"] = json::array();
+    req["messages"].push_back({ {"role","system"}, {"content", sysMsg} });
+    req["messages"].push_back({ {"role","user"}, {"content", userMsg} });
+    req["stream"] = false;
+    req["temperature"] = 0.3;
+    std::string body = req.dump();
+
+    std::string url = g_cfg.aiBaseUrl.empty() ? "https://api.deepseek.com" : g_cfg.aiBaseUrl;
+    while (!url.empty() && url.back() == '/') url.pop_back();
+    if (url.find("/chat/completions") == std::string::npos) url += "/chat/completions";
+
+    std::string respBody, err;
+    if (!HttpPostJson(url, g_cfg.aiApiKey, body, respBody, err)) { errMsg = err; return false; }
+
+    json resp;
+    try { resp = json::parse(clean_utf8(respBody)); }
+    catch (...) { errMsg = "响应 JSON 解析失败: " + respBody.substr(0, 500); return false; }
+    if (!resp.contains("choices") || resp["choices"].empty() ||
+        !resp["choices"][0].contains("message") ||
+        !resp["choices"][0]["message"].contains("content")) {
+        errMsg = "响应缺少 choices/message/content: " + respBody.substr(0, 500);
+        return false;
+    }
+    std::string content = resp["choices"][0]["message"]["content"].get<std::string>();
+    json result;
+    if (!ParseAIJson(content, result)) {
+        errMsg = "AI 未返回有效 JSON: " + content.substr(0, 300);
+        return false;
+    }
+    for (auto& it : items) {
+        auto found = result.find(it.first);
+        if (found != result.end() && found.value().is_string()) {
+            std::string v = found.value().get<std::string>();
+            if (!v.empty()) outMap[it.first] = v;
+        }
+    }
+    return true;
+}
+
+// AI 翻译一个 *_未翻译.json → *_已翻译.json
+static bool AITranslateFile(const fs::path& inFile)
+{
+    if (g_cfg.aiApiKey.empty()) {
+        LogThread("[错误] 未设置 AI API Key，请先点『AI 设置』配置");
+        return false;
+    }
+    std::string data;
+    if (!read_binary_file(inFile, data)) {
+        LogThread("[错误] 无法读取 " + wstring_to_utf8(inFile.filename().wstring()));
+        return false;
+    }
+    json tj;
+    try { tj = json::parse(clean_utf8(data)); }
+    catch (...) {
+        LogThread("[错误] JSON 解析失败: " + wstring_to_utf8(inFile.filename().wstring()));
+        return false;
+    }
+    if (!tj.is_object()) { LogThread("[错误] JSON 不是对象"); return false; }
+
+    // 收集待翻译条目（值为空）；key 格式：模组路径||字段||英文原文
+    struct Item { std::string sec; std::string key; std::string english; };
+    std::vector<Item> pending;
+    int alreadyFilled = 0;
+    for (auto& sec : { "_options", "_descriptions" }) {
+        if (!tj.contains(sec) || !tj[sec].is_object()) continue;
+        for (auto& it : tj[sec].items()) {
+            if (!it.value().is_string()) continue;
+            std::string val = it.value().get<std::string>();
+            if (!val.empty()) { alreadyFilled++; continue; }
+            std::string english = it.key();
+            auto p = english.rfind("||");
+            if (p != std::string::npos) english = english.substr(p + 2);
+            pending.push_back({ sec, it.key(), english });
+        }
+    }
+    if (pending.empty()) {
+        LogThread("[提示] 该文件所有条目已有翻译，无需 AI 翻译");
+        return false;
+    }
+    LogThread("待翻译条目：" + std::to_string(pending.size())
+        + " 条（其中 " + std::to_string(alreadyFilled) + " 条已有翻译跳过）");
+
+    // 唯一词典预填：词典中已翻译的 key 直接填充，不再浪费 AI 额度
+    int dictFilled = 0;
+    if (!g_cfg.dictionaryDir.empty()) {
+        fs::path dictPath = fs::u8path(g_cfg.dictionaryDir) / fs::u8path("wiki_术语对照and个人填充.json");
+        std::error_code dec;
+        if (fs::exists(dictPath, dec) && !dec) {
+            std::string dd;
+            if (read_binary_file(dictPath, dd)) {
+                try {
+                    json dict = json::parse(clean_utf8(dd));
+                    if (dict.is_object()) {
+                        std::vector<Item> rest;
+                        for (auto& it : pending) {
+                            bool hit = false;
+                            if (dict.contains(it.sec) && dict[it.sec].is_object()
+                                && dict[it.sec].contains(it.key) && dict[it.sec][it.key].is_string()
+                                && !dict[it.sec][it.key].get<std::string>().empty()) {
+                                tj[it.sec][it.key] = dict[it.sec][it.key].get<std::string>();
+                                dictFilled++; hit = true;
+                            }
+                            if (!hit) rest.push_back(it);
+                        }
+                        pending = std::move(rest);
+                    }
+                } catch (...) {}
+            }
+        }
+    }
+    if (dictFilled > 0)
+        LogThread("[提示] 唯一词典命中 " + std::to_string(dictFilled) + " 条，直接填充");
+    if (pending.empty()) {
+        LogThread("[提示] 所有条目已由词典填充，无需调用 AI");
+        return false;
+    }
+
+    // 分批调用 AI
+    int batch = g_cfg.aiBatchSize;
+    if (batch < 1) batch = 1;
+    if (batch > 100) batch = 100;
+    int total = (int)pending.size();
+    int batches = (total + batch - 1) / batch;
+    int okCount = 0, failCount = 0, cur = 0;
+    LogThread("[AI] 正在翻译中，共 " + std::to_string(total) + " 条，分 " + std::to_string(batches) + " 批");
+    for (size_t i = 0; i < pending.size(); i += batch) {
+        int batchNo = (int)(i / batch) + 1;
+        LogThread("[AI] 正在翻译第 " + std::to_string(batchNo) + "/" + std::to_string(batches) + " 批...");
+        if (g_cancel) {
+            LogThread("[提示] 已中断，剩余 " + std::to_string(total - cur) + " 条未翻译");
+            break;
+        }
+        size_t n = std::min<size_t>(batch, pending.size() - i);
+        std::vector<std::pair<std::string, std::string>> items;
+        for (size_t k = 0; k < n; ++k)
+            items.emplace_back(std::to_string(i + k), pending[i + k].english);
+
+        std::string err;
+        std::map<std::string, std::string> got;
+        bool okBatch = false;
+        for (int retry = 0; retry < 3 && !okBatch; ++retry) {
+            if (retry > 0) { LogThread("[提示] 批次 " + std::to_string(i / batch + 1) + " 重试第 " + std::to_string(retry) + " 次..."); Sleep(2000); }
+            got.clear();
+            if (AITranslateBatch(items, got, err)) okBatch = true;
+            else LogThread("[错误] 批次 " + std::to_string(i / batch + 1) + " 失败: " + err);
+        }
+        if (okBatch) {
+            for (size_t k = 0; k < n; ++k) {
+                auto f = got.find(std::to_string(i + k));
+                if (f != got.end()) {
+                    tj[pending[i + k].sec][pending[i + k].key] = f->second;
+                    okCount++;
+                }
+            }
+        } else {
+            failCount += (int)n;
+        }
+        cur += (int)n;
+        SetProgress(cur, total);
+    }
+
+    LogThread("[AI] 翻译完成：" + std::to_string(okCount) + " 条成功，"
+        + std::to_string(failCount) + " 条失败");
+    if (okCount == 0) return false;
+
+    // 落盘：_未翻译 → _已翻译；同名已翻译含内容则另存 *_已翻译_AI.json
+    fs::path outFile = inFile;
+    std::wstring inName = inFile.filename().wstring();
+    size_t untrPos = inName.find(L"_未翻译");
+    if (untrPos != std::wstring::npos) {
+        std::wstring outName = inName;
+        outName.replace(untrPos, std::wstring(L"_未翻译").size(), L"_已翻译");
+        outFile = inFile.parent_path() / outName;
+        std::error_code oec;
+        if (fs::exists(outFile, oec) && !oec) {
+            bool hasContent = false;
+            std::string existData;
+            if (read_binary_file(outFile, existData)) {
+                try {
+                    json ej = json::parse(clean_utf8(existData));
+                    if (ej.is_object()) {
+                        for (auto& sec : { "_options", "_descriptions" }) {
+                            if (!ej.contains(sec) || !ej[sec].is_object()) continue;
+                            for (auto& it : ej[sec].items()) {
+                                if (it.value().is_string() && !it.value().get<std::string>().empty()) { hasContent = true; break; }
+                            }
+                            if (hasContent) break;
+                        }
+                    }
+                } catch (...) {}
+            }
+            if (hasContent) {
+                std::wstring alt = outName;
+                size_t dp = alt.rfind(L'.');
+                if (dp != std::wstring::npos) alt.insert(dp, L"_AI");
+                else alt += L"_AI";
+                outFile = inFile.parent_path() / alt;
+                LogThread("[提示] " + wstring_to_utf8(outName) + " 已存在且含翻译，本次输出为 " + wstring_to_utf8(alt));
+            }
+        }
+    }
+    if (write_binary_file(outFile, tj.dump(2))) {
+        LogThread("[提示] 已写入 " + wstring_to_utf8(outFile.filename().wstring()));
+        return true;
+    }
+    LogThread("[错误] 写入失败: " + wstring_to_utf8(outFile.filename().wstring()));
+    return false;
+}
+
+void RunAITranslateThread()
+{
+    try {
+        g_busy = true;
+        if (g_cfg.translationDir.empty()) {
+            Log("[错误] 未设置翻译目录");
+            g_busy = false;
+            PostMessageW(g_hMainWnd, WM_APP_DONE, 0, 0);
+            return;
+        }
+        auto files = ScanTransFiles(fs::u8path(g_cfg.translationDir));
+        fs::path target;
+        for (auto& f : files) if (!f.isTranslated) { target = f.path; break; }
+        if (target.empty()) {
+            Log("[错误] 翻译目录下没有 *_未翻译.json，请先执行『1. 提取英文』");
+            g_busy = false;
+            PostMessageW(g_hMainWnd, WM_APP_DONE, 0, 0);
+            return;
+        }
+        Log("===== 开始 AI 自动翻译 =====");
+        Log("输入文件: " + wstring_to_utf8(target.filename().wstring()));
+        bool ok = AITranslateFile(target);
+        Log("AI 翻译流程结束");
+        g_busy = false;
+    }
+    catch (const std::system_error& e) { Log(std::string("[错误] AI 翻译线程系统异常: ") + e.what()); }
+    catch (const std::exception& e) { Log(std::string("[错误] AI 翻译线程异常: ") + e.what()); }
+    catch (...) { Log("[错误] AI 翻译线程未知异常"); }
+    PostMessageW(g_hMainWnd, WM_APP_DONE, 0, 0);
+}
+
+// ------------------------------------------------------------------
+// 主窗口可缩放布局（等比缩放：所有子控件按窗口与设计尺寸的比例同步缩放）
+// ------------------------------------------------------------------
+static int g_currentAppliedFontSize = 0; // 当前实际应用的字号（含联动缩放）
+
+// 前向声明：LayoutMainDlg 在窗口缩放联动字体时会调用
+void CreateUiFont(int size);
+void ApplyFontToDialog(HWND hDlg);
+
+static void LayoutMainDlg(HWND hDlg)
+{
+    if (g_dlgW0 <= 0 || g_dlgH0 <= 0 || g_layout.empty()) return;
+    RECT rc;
+    GetClientRect(hDlg, &rc);
+    const int W = rc.right, H = rc.bottom;
+    const float sx = (float)W / (float)g_dlgW0;
+    const float sy = (float)H / (float)g_dlgH0;
+    // 等比缩放所有子控件（包括静态标签、GroupBox、RichEdit 等）
+    for (const auto& c : g_layout) {
+        if (!c.hwnd) continue;
+        int x = (int)(c.rc.left * sx);
+        int y = (int)(c.rc.top * sy);
+        int w = (int)((c.rc.right - c.rc.left) * sx);
+        int h = (int)((c.rc.bottom - c.rc.top) * sy);
+        if (w < 1) w = 1;
+        if (h < 1) h = 1;
+        MoveWindow(c.hwnd, x, y, w, h, TRUE);
+    }
+
+    // 窗口缩放时自动联动字体大小
+    if (g_cfg.autoFontSize && W > 0 && H > 0 && g_dlgW0 > 0 && g_dlgH0 > 0) {
+        float scaleW = (float)W / (float)g_dlgW0;
+        float scaleH = (float)H / (float)g_dlgH0;
+        float scale = (scaleW > scaleH) ? scaleW : scaleH;
+        int newSize = (int)std::round(g_cfg.fontSize * scale);
+        if (newSize < 8) newSize = 8;
+        if (newSize > 24) newSize = 24;
+        if (newSize != g_currentAppliedFontSize) {
+            CreateUiFont(newSize);
+            ApplyFontToDialog(hDlg);
+        }
+    }
+}
+
+// ------------------------------------------------------------------
+// 字体大小
+// ------------------------------------------------------------------
+void CreateUiFont(int size = 0)
+{
+    if (g_hFont) { DeleteObject(g_hFont); g_hFont = nullptr; }
+    int s = (size > 0) ? size : g_cfg.fontSize;
+    if (s < 8) s = 8;
+    if (s > 24) s = 24;
+    g_currentAppliedFontSize = s;
+    HDC dc = GetDC(nullptr);
+    int px = -MulDiv(s, GetDeviceCaps(dc, LOGPIXELSY), 72);
+    ReleaseDC(nullptr, dc);
+    g_hFont = CreateFontW(px, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"MS Shell Dlg");
+}
+
+void ApplyFontToDialog(HWND hDlg)
+{
+    if (!g_hFont) return;
+    HWND child = GetWindow(hDlg, GW_CHILD);
+    while (child) {
+        SendMessageW(child, WM_SETFONT, (WPARAM)g_hFont, TRUE);
+        // 日志 RichEdit：WM_SETFONT 只改默认格式，已存在的文本不会换字体，
+        // 需用 EM_SETCHARFORMAT(SCF_ALL) 强制所有已有文本跟随缩放
+        wchar_t cls[64];
+        if (GetClassNameW(child, cls, 64) > 0 && wcsncmp(cls, L"RichEdit", 8) == 0) {
+            CHARFORMAT2W cf = {};
+            cf.cbSize = sizeof(cf);
+            cf.dwMask = CFM_FACE | CFM_SIZE | CFM_CHARSET;
+            cf.dwEffects = 0;
+            cf.yHeight = g_currentAppliedFontSize * 20; // 磅值 -> twips（1pt = 20 twips）
+            cf.bCharSet = DEFAULT_CHARSET;
+            wcscpy_s(cf.szFaceName, L"MS Shell Dlg");
+            SendMessageW(child, EM_SETCHARFORMAT, SCF_ALL, (LPARAM)&cf);
+        }
+        child = GetWindow(child, GW_HWNDNEXT);
+    }
+}
+
+// ------------------------------------------------------------------
 // UI 刷新
 // ------------------------------------------------------------------
 void SetEditText(HWND hDlg, int id, const std::wstring& text)
@@ -1940,7 +2448,17 @@ void RefreshConfigUI()
     SetEditText(g_hMainWnd, IDC_EDIT_DICTIONARY, utf8_to_wstring(g_cfg.dictionaryDir));
     CheckDlgButton(g_hMainWnd, IDC_CHK_SWAP, g_cfg.swapWordOrder ? BST_CHECKED : BST_UNCHECKED);
     CheckDlgButton(g_hMainWnd, IDC_CHK_BACKUP, g_cfg.autoBackup ? BST_CHECKED : BST_UNCHECKED);
+    CheckDlgButton(g_hMainWnd, IDC_CHK_AUTO_FONT, g_cfg.autoFontSize ? BST_CHECKED : BST_UNCHECKED);
     CheckRadioButton(g_hMainWnd, IDC_RADIO_PURE_CN, IDC_RADIO_CN_EN, g_cfg.pureChinese ? IDC_RADIO_PURE_CN : IDC_RADIO_CN_EN);
+    // AI 翻译设置
+    SetEditText(g_hMainWnd, IDC_AI_KEY, utf8_to_wstring(g_cfg.aiApiKey));
+    SetEditText(g_hMainWnd, IDC_AI_MODEL,
+        utf8_to_wstring(g_cfg.aiModel.empty() ? "deepseek-v4-flash" : g_cfg.aiModel));
+    SetEditText(g_hMainWnd, IDC_AI_BASEURL,
+        utf8_to_wstring(g_cfg.aiBaseUrl.empty() ? "https://api.deepseek.com" : g_cfg.aiBaseUrl));
+    SetEditText(g_hMainWnd, IDC_AI_BATCH, std::to_wstring(g_cfg.aiBatchSize));
+    SetEditText(g_hMainWnd, IDC_EDIT_FONT_SIZE, std::to_wstring(g_cfg.fontSize));
+    SetDlgItemTextW(g_hMainWnd, IDC_BTN_SHOW_KEY, g_keyVisible ? L"隐藏" : L"显示");
 }
 
 // ------------------------------------------------------------------
@@ -1950,8 +2468,15 @@ INT_PTR CALLBACK RestoreDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM l
 {
     switch (message) {
     case WM_INITDIALOG: {
-        // 填充左侧：所有模组文件夹
+        // 初始化左侧 ListView：单选高亮 + 复选框
         HWND left = GetDlgItem(hDlg, IDC_RESTORE_LEFTLIST);
+        ListView_SetExtendedListViewStyle(left, LVS_EX_CHECKBOXES | LVS_EX_FULLROWSELECT);
+        LVCOLUMN col = {};
+        col.mask = LVCF_WIDTH;
+        col.cx = 1000; // 留足宽度，避免长文件名被截断
+        ListView_InsertColumn(left, 0, &col);
+
+        // 填充左侧：所有模组文件夹
         std::vector<std::wstring> mods;
         try {
             if (!g_cfg.penumbraDir.empty()) {
@@ -1967,7 +2492,48 @@ INT_PTR CALLBACK RestoreDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM l
             }
         }
         catch (...) {}
-        for (auto& m : mods) SendMessageW(left, LB_ADDSTRING, 0, (LPARAM)m.c_str());
+        for (auto& m : mods) {
+            LVITEM item = {};
+            item.mask = LVIF_TEXT;
+            item.iItem = INT_MAX;
+            item.pszText = (LPWSTR)m.c_str();
+            ListView_InsertItem(left, &item);
+        }
+        return TRUE;
+    }
+    case WM_NOTIFY: {
+        // 左侧当前选中项变化时，刷新右侧备份列表
+        NMHDR* nm = (NMHDR*)lParam;
+        if (nm->idFrom == IDC_RESTORE_LEFTLIST && nm->code == LVN_ITEMCHANGED) {
+            NMLISTVIEW* nmlv = (NMLISTVIEW*)lParam;
+            if ((nmlv->uChanged & LVIF_STATE)
+                && ((nmlv->uNewState & LVIS_SELECTED) != (nmlv->uOldState & LVIS_SELECTED))) {
+                HWND left = GetDlgItem(hDlg, IDC_RESTORE_LEFTLIST);
+                // 高亮选中（点击 / Ctrl+A 全选）时自动同步勾选复选框，让「勾选」与「选中/全选」等效
+                if (nmlv->uNewState & LVIS_SELECTED)
+                    ListView_SetCheckState(left, nmlv->iItem, TRUE);
+                HWND right = GetDlgItem(hDlg, IDC_RESTORE_RIGHTLIST);
+                int sel = ListView_GetNextItem(left, -1, LVNI_SELECTED);
+                SendMessageW(right, LB_RESETCONTENT, 0, 0);
+                if (sel < 0) return TRUE;
+                wchar_t name[1024] = {};
+                ListView_GetItemText(left, sel, 0, name, 1024);
+                fs::path modDir = fs::u8path(g_cfg.penumbraDir) / name;
+                try {
+                    std::error_code ec;
+                    if (fs::exists(modDir, ec) && !ec) {
+                        std::vector<std::wstring> zips;
+                        for (auto& fe : fs::directory_iterator(modDir, fs::directory_options::skip_permission_denied, ec)) {
+                            if (ec) { ec.clear(); continue; }
+                            if (fe.is_regular_file(ec) && !ec && fe.path().extension() == L".zip")
+                                zips.push_back(fe.path().filename().wstring());
+                        }
+                        for (auto& z : zips) SendMessageW(right, LB_ADDSTRING, 0, (LPARAM)z.c_str());
+                    }
+                }
+                catch (...) {}
+            }
+        }
         return TRUE;
     }
     case WM_COMMAND: {
@@ -1978,25 +2544,26 @@ INT_PTR CALLBACK RestoreDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM l
         }
         if (id == IDC_RESTORE_BTN) {
             HWND left = GetDlgItem(hDlg, IDC_RESTORE_LEFTLIST);
-            int leftSel = (int)SendMessageW(left, LB_GETCURSEL, 0, 0);
-            if (leftSel == LB_ERR) { MessageBoxW(hDlg, L"请先在左侧选择一个模组文件夹", L"提示", MB_OK); return TRUE; }
 
-            // 读取勾选的文件夹
+            // 读取左侧选中的文件夹：优先用勾选（复选框）；未勾选任何项时，用高亮选中项（支持 Ctrl/Shift 多选）
             std::vector<int> selIndices;
-            int count = (int)SendMessageW(left, LB_GETSELCOUNT, 0, 0);
-            if (count == LB_ERR) count = 0;
-            std::vector<int> selBuf(count);
-            SendMessageW(left, LB_GETSELITEMS, count, (LPARAM)selBuf.data());
-            selIndices = selBuf;
-
-            if (selIndices.empty()) { MessageBoxW(hDlg, L"请勾选要恢复的模组文件夹", L"提示", MB_OK); return TRUE; }
+            int count = ListView_GetItemCount(left);
+            for (int i = 0; i < count; ++i) {
+                if (ListView_GetCheckState(left, i)) selIndices.push_back(i);
+            }
+            if (selIndices.empty()) {
+                int s = -1;
+                while ((s = ListView_GetNextItem(left, s, LVNI_SELECTED)) != -1)
+                    selIndices.push_back(s);
+            }
+            if (selIndices.empty()) { MessageBoxW(hDlg, L"请勾选或选中要恢复的模组文件夹", L"提示", MB_OK); return TRUE; }
 
             // 收集每个文件夹要恢复的备份
             int success = 0, skip = 0, fail = 0;
             fs::path penRoot = fs::u8path(g_cfg.penumbraDir);
             for (int idx : selIndices) {
-                wchar_t name[1024];
-                SendMessageW(left, LB_GETTEXT, idx, (LPARAM)name);
+                wchar_t name[1024] = {};
+                ListView_GetItemText(left, idx, 0, name, 1024);
                 fs::path modDir = penRoot / name;
                 // 该文件夹勾选的具体备份
                 std::vector<fs::path> selectedZips;
@@ -2039,31 +2606,6 @@ INT_PTR CALLBACK RestoreDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM l
             wchar_t msg[256];
             swprintf_s(msg, L"恢复完成：成功 %d，跳过 %d，失败 %d", success, skip, fail);
             MessageBoxW(hDlg, msg, L"恢复备份", MB_OK);
-            return TRUE;
-        }
-        // 左侧选择变化时，刷新右侧备份列表
-        if (id == IDC_RESTORE_LEFTLIST && HIWORD(wParam) == LBN_SELCHANGE) {
-            HWND left = GetDlgItem(hDlg, IDC_RESTORE_LEFTLIST);
-            HWND right = GetDlgItem(hDlg, IDC_RESTORE_RIGHTLIST);
-            int sel = (int)SendMessageW(left, LB_GETCURSEL, 0, 0);
-            SendMessageW(right, LB_RESETCONTENT, 0, 0);
-            if (sel == LB_ERR) return TRUE;
-            wchar_t name[1024];
-            SendMessageW(left, LB_GETTEXT, sel, (LPARAM)name);
-            fs::path modDir = fs::u8path(g_cfg.penumbraDir) / name;
-            try {
-                std::error_code ec;
-                if (fs::exists(modDir, ec) && !ec) {
-                    std::vector<std::wstring> zips;
-                    for (auto& fe : fs::directory_iterator(modDir, fs::directory_options::skip_permission_denied, ec)) {
-                        if (ec) { ec.clear(); continue; }
-                        if (fe.is_regular_file(ec) && !ec && fe.path().extension() == L".zip")
-                            zips.push_back(fe.path().filename().wstring());
-                    }
-                    for (auto& z : zips) SendMessageW(right, LB_ADDSTRING, 0, (LPARAM)z.c_str());
-                }
-            }
-            catch (...) {}
             return TRUE;
         }
         break;
@@ -2338,8 +2880,52 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
         if (prog) SendMessageW(prog, PBM_SETRANGE32, 0, 100);
         EnableWindow(GetDlgItem(hDlg, IDC_BTN_CANCEL), FALSE);
         LoadConfig();
+
+        // 记录 .rc 设计尺寸对应的客户区像素，作为等比缩放基准（必须在 SetWindowPos 之前）
+        RECT rc0;
+        GetClientRect(hDlg, &rc0);
+        g_dlgW0 = rc0.right;
+        g_dlgH0 = rc0.bottom;
+
+        // 恢复上次退出时的窗口位置和大小（记忆窗口大小）
+        // 必须放在任何可能触发 WM_SIZE 的操作之前，否则默认大小会覆盖记忆值
+        if (g_cfg.winW > 0 && g_cfg.winH > 0) {
+            int x = (g_cfg.winX >= 0) ? g_cfg.winX : CW_USEDEFAULT;
+            int y = (g_cfg.winY >= 0) ? g_cfg.winY : CW_USEDEFAULT;
+            SetWindowPos(hDlg, nullptr, x, y, g_cfg.winW, g_cfg.winH, SWP_NOZORDER);
+            // 若窗口中心已落在虚拟屏幕外（分辨率/显示器变化），重置回主屏居中
+            RECT wr;
+            GetWindowRect(hDlg, &wr);
+            int vx = GetSystemMetrics(SM_XVIRTUALSCREEN);
+            int vy = GetSystemMetrics(SM_YVIRTUALSCREEN);
+            int vw = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+            int vh = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+            int cx = (wr.left + wr.right) / 2, cy = (wr.top + wr.bottom) / 2;
+            if (cx < vx || cx > vx + vw || cy < vy || cy > vy + vh) {
+                int sx = (GetSystemMetrics(SM_CXSCREEN) - (wr.right - wr.left)) / 2;
+                int sy = (GetSystemMetrics(SM_CYSCREEN) - (wr.bottom - wr.top)) / 2;
+                SetWindowPos(hDlg, nullptr, (sx > 0) ? sx : 0, (sy > 0) ? sy : 0, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
+            }
+        }
+
+        // 记录所有子窗口初始位置（基于 .rc 设计尺寸），用于后续纯等比缩放
+        g_layout.clear();
+        HWND child = GetWindow(hDlg, GW_CHILD);
+        while (child) {
+            RECT rc;
+            GetWindowRect(child, &rc);
+            ScreenToClient(hDlg, (LPPOINT)&rc);
+            ScreenToClient(hDlg, ((LPPOINT)&rc) + 1);
+            g_layout.push_back({ child, rc });
+            child = GetWindow(child, GW_HWNDNEXT);
+        }
+
+        CreateUiFont();
+        ApplyFontToDialog(hDlg);
         RefreshConfigUI();
         Log("FFXIV 模组汉化工具已启动");
+        if (g_cfg.winW > 0 && g_cfg.winH > 0)
+            Log("[窗口] 已恢复上次大小：" + std::to_string(g_cfg.winW) + " x " + std::to_string(g_cfg.winH));
         if (!g_cfg.penumbraDir.empty()) Log("Penumbra 目录：" + g_cfg.penumbraDir);
         if (g_cfg.dictionaryDir.empty())
             Log("[提示] 未找到 config.json（首次运行？）。请在『词典目录』处选择一次目录建立配置；旧版升级则选择原词典目录即可自动迁移已有设置");
@@ -2356,6 +2942,41 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
                 if (fs::exists(dictFile, dec1) && !dec1)
                     Log("[提示] 已生成唯一词典 wiki_术语对照and个人填充.json（wiki 固定优先 + 个人填充，先来后到；改词请直接编辑该文件）");
             }
+        }
+        LayoutMainDlg(hDlg);
+        g_initialized = true; // 此后 WM_SIZE/WM_MOVE 的记录才生效
+        return TRUE;
+    }
+
+    case WM_SIZE: {
+        LayoutMainDlg(hDlg);
+        // 初始化完成前不记录，避免创建期的默认大小覆盖 config 中的记忆值；
+        // 最小化时窗口矩形不在屏幕上，同样不记录
+        if (g_initialized && wParam != SIZE_MINIMIZED) {
+            RECT wrc;
+            GetWindowRect(hDlg, &wrc);
+            g_cfg.winW = wrc.right - wrc.left;
+            g_cfg.winH = wrc.bottom - wrc.top;
+        }
+        return TRUE;
+    }
+
+    case WM_MOVE: {
+        if (g_initialized && !IsIconic(hDlg)) {
+            RECT wrc;
+            GetWindowRect(hDlg, &wrc);
+            g_cfg.winX = wrc.left;
+            g_cfg.winY = wrc.top;
+        }
+        return TRUE;
+    }
+
+    case WM_GETMINMAXINFO: {
+        // 限制最小为 .rc 设计尺寸的 55%，再小文字和间距会太难用
+        if (g_dlgW0 > 0 && g_dlgH0 > 0) {
+            MINMAXINFO* mmi = (MINMAXINFO*)lParam;
+            mmi->ptMinTrackSize.x = (LONG)(g_dlgW0 * 0.55f);
+            mmi->ptMinTrackSize.y = (LONG)(g_dlgH0 * 0.55f);
         }
         return TRUE;
     }
@@ -2374,6 +2995,7 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
         EnableWindow(GetDlgItem(hDlg, IDC_BTN_RESTORE), TRUE);
         EnableWindow(GetDlgItem(hDlg, IDC_BTN_BLACKLIST), TRUE);
         EnableWindow(GetDlgItem(hDlg, IDC_BTN_WIKI), TRUE);
+        EnableWindow(GetDlgItem(hDlg, IDC_BTN_AI_TRANSLATE), TRUE);
         EnableWindow(GetDlgItem(hDlg, IDC_BTN_CANCEL), FALSE);
         g_cancel = false;
         // 操作结束：进度条归零
@@ -2483,11 +3105,60 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
         case IDC_EDIT_DICTIONARY:
             if (wmEvent == EN_CHANGE) g_cfg.dictionaryDir = wstring_to_utf8(GetEditText(hDlg, IDC_EDIT_DICTIONARY));
             break;
+        // AI 翻译设置同步到配置
+        case IDC_AI_KEY:
+            if (wmEvent == EN_CHANGE) g_cfg.aiApiKey = wstring_to_utf8(GetEditText(hDlg, IDC_AI_KEY));
+            break;
+        case IDC_AI_MODEL:
+            if (wmEvent == EN_CHANGE) {
+                g_cfg.aiModel = wstring_to_utf8(GetEditText(hDlg, IDC_AI_MODEL));
+                if (g_cfg.aiModel.empty()) g_cfg.aiModel = "deepseek-v4-flash";
+            }
+            break;
+        case IDC_AI_BASEURL:
+            if (wmEvent == EN_CHANGE) {
+                g_cfg.aiBaseUrl = wstring_to_utf8(GetEditText(hDlg, IDC_AI_BASEURL));
+                if (g_cfg.aiBaseUrl.empty()) g_cfg.aiBaseUrl = "https://api.deepseek.com";
+            }
+            break;
+        case IDC_AI_BATCH: {
+            if (wmEvent == EN_CHANGE) {
+                int b = _wtoi(GetEditText(hDlg, IDC_AI_BATCH).c_str());
+                if (b >= 1 && b <= 100) g_cfg.aiBatchSize = b;
+            }
+            break;
+        }
+        case IDC_BTN_SHOW_KEY: {
+            g_keyVisible = !g_keyVisible;
+            HWND he = GetDlgItem(hDlg, IDC_AI_KEY);
+            SendMessageW(he, EM_SETPASSWORDCHAR, g_keyVisible ? 0 : (WPARAM)L'*', 0);
+            SetDlgItemTextW(hDlg, IDC_BTN_SHOW_KEY, g_keyVisible ? L"隐藏" : L"显示");
+            InvalidateRect(he, nullptr, TRUE);
+            break;
+        }
         case IDC_CHK_SWAP:
-            if (wmEvent == BN_CLICKED) g_cfg.swapWordOrder = (IsDlgButtonChecked(hDlg, IDC_CHK_SWAP) == BST_CHECKED);
+            if (wmEvent == BN_CLICKED) {
+                g_cfg.swapWordOrder = (IsDlgButtonChecked(hDlg, IDC_CHK_SWAP) == BST_CHECKED);
+                SaveConfig();
+                if (g_cfg.swapWordOrder)
+                    Log("[提示] 已开启「词序调换」：应用翻译后名称显示为『中文（英文）』。直接点『3. 应用翻译』即可生效，无需重新提取/导入。");
+                else
+                    Log("[提示] 已关闭「词序调换」：应用翻译恢复为『英文（中文）』格式。直接点『3. 应用翻译』即可生效。");
+            }
             break;
         case IDC_CHK_BACKUP:
             if (wmEvent == BN_CLICKED) g_cfg.autoBackup = (IsDlgButtonChecked(hDlg, IDC_CHK_BACKUP) == BST_CHECKED);
+            break;
+        case IDC_CHK_AUTO_FONT:
+            if (wmEvent == BN_CLICKED) {
+                g_cfg.autoFontSize = (IsDlgButtonChecked(hDlg, IDC_CHK_AUTO_FONT) == BST_CHECKED);
+                SaveConfig();
+                if (g_cfg.autoFontSize)
+                    Log("[提示] 已开启「联动字体」：拉伸窗口时会自动按比例放大/缩小字号。");
+                else
+                    Log("[提示] 已关闭「联动字体」：窗口缩放不再改变字号，保持当前字体大小。");
+                LayoutMainDlg(hDlg);
+            }
             break;
         case IDC_RADIO_PURE_CN:
         case IDC_RADIO_CN_EN:
@@ -2506,6 +3177,7 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_RESTORE), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_BLACKLIST), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_WIKI), FALSE);
+            EnableWindow(GetDlgItem(hDlg, IDC_BTN_AI_TRANSLATE), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_CANCEL), TRUE);
             Log("===== 开始提取英文 =====");
             LaunchWorker(RunExtractThread, "提取英文");
@@ -2525,6 +3197,7 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_RESTORE), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_BLACKLIST), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_WIKI), FALSE);
+            EnableWindow(GetDlgItem(hDlg, IDC_BTN_AI_TRANSLATE), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_CANCEL), TRUE);
             Log("===== 开始导入翻译 =====");
             LaunchWorker(RunImportThread, "导入翻译");
@@ -2541,7 +3214,14 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_RESTORE), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_BLACKLIST), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_WIKI), FALSE);
+            EnableWindow(GetDlgItem(hDlg, IDC_BTN_AI_TRANSLATE), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_CANCEL), TRUE);
+            if (g_cfg.pureChinese)
+                Log("[提示] 当前为「纯中文」模式：应用后名称仅保留中文（去掉英文括号）。");
+            else if (g_cfg.swapWordOrder)
+                Log("[提示] 当前为「中文（英文）在前」模式（已勾选词序调换）：应用后名称显示为『中文（英文）』。");
+            else
+                Log("[提示] 当前为默认对照格式：应用后名称显示为『英文（中文）』；如需『中文（英文）』请在应用设置里勾选「词序调换」。");
             Log("===== 开始应用翻译 =====");
             LaunchWorker(RunApplyThread, "应用翻译");
             break;
@@ -2570,9 +3250,46 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_RESTORE), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_BLACKLIST), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_WIKI), FALSE);
+            EnableWindow(GetDlgItem(hDlg, IDC_BTN_AI_TRANSLATE), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_CANCEL), TRUE);
             Log("===== 开始 Wiki 全站导出 =====");
             LaunchWorker(WikiImportThread, "Wiki 导出");
+            break;
+        }
+        case IDC_BTN_APPLY_FONT: {
+            wchar_t buf[16] = {};
+            GetDlgItemTextW(hDlg, IDC_EDIT_FONT_SIZE, buf, 16);
+            int size = _wtoi(buf);
+            if (size < 8) size = 8;
+            if (size > 24) size = 24;
+            g_cfg.fontSize = size;
+            CreateUiFont();
+            ApplyFontToDialog(hDlg);
+            SetDlgItemTextW(hDlg, IDC_EDIT_FONT_SIZE, std::to_wstring(size).c_str());
+            SaveConfig();
+            LayoutMainDlg(hDlg);
+            Log("已应用字体大小：" + std::to_string(size) + " 号");
+            return TRUE;
+        }
+        case IDC_BTN_AI_TRANSLATE: {
+            if (g_busy) break;
+            if (g_cfg.aiApiKey.empty()) {
+                MessageBoxW(hDlg, L"尚未配置 AI API Key，请在上方『AI 翻译设置』中填写。", L"提示", MB_OK | MB_ICONINFORMATION);
+                break;
+            }
+            SaveConfig();
+            g_busy = true;
+            g_cancel = false;
+            EnableWindow(GetDlgItem(hDlg, IDC_BTN_EXTRACT), FALSE);
+            EnableWindow(GetDlgItem(hDlg, IDC_BTN_IMPORT), FALSE);
+            EnableWindow(GetDlgItem(hDlg, IDC_BTN_APPLY), FALSE);
+            EnableWindow(GetDlgItem(hDlg, IDC_BTN_RESTORE), FALSE);
+            EnableWindow(GetDlgItem(hDlg, IDC_BTN_BLACKLIST), FALSE);
+            EnableWindow(GetDlgItem(hDlg, IDC_BTN_WIKI), FALSE);
+            EnableWindow(GetDlgItem(hDlg, IDC_BTN_AI_TRANSLATE), FALSE);
+            EnableWindow(GetDlgItem(hDlg, IDC_BTN_CANCEL), TRUE);
+            Log("===== 开始 AI 自动翻译 =====");
+            LaunchWorker(RunAITranslateThread, "AI 翻译");
             break;
         }
         case IDC_BTN_CANCEL: {
@@ -2590,6 +3307,16 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
     }
 
     case WM_CLOSE:
+        // 退出前直接读取当前窗口矩形，确保记忆的是关闭瞬间的真实大小/位置
+        if (!IsIconic(hDlg)) {
+            RECT wrc;
+            GetWindowRect(hDlg, &wrc);
+            g_cfg.winX = wrc.left;
+            g_cfg.winY = wrc.top;
+            g_cfg.winW = wrc.right - wrc.left;
+            g_cfg.winH = wrc.bottom - wrc.top;
+        }
+        SaveConfig(); // 确保窗口大小与 AI 设置等改动在退出前落盘
         EndDialog(hDlg, IDOK);
         break;
     case WM_DESTROY:

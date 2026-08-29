@@ -1,5 +1,9 @@
-# One-click release packaging for FFXIV MOD Hanhua Tool
-# Steps: build Release x64 -> copy exe into release\ -> compress zip
+# One-click release build for FFXIV MOD Hanhua Tool
+# Default: build Release x64 -> copy exe into release\
+# Add -Zip to also compress the release folder into a zip.
+param(
+    [switch]$Zip
+)
 $ErrorActionPreference = 'Stop'
 
 $root = $PSScriptRoot
@@ -39,10 +43,12 @@ if (-not (Test-Path $pub)) { New-Item -ItemType Directory -Path $pub | Out-Null 
 Copy-Item $relExe.FullName (Join-Path $pub $relExe.Name) -Force
 Write-Host "==> Copied exe to release folder."
 
-# Step 3: zip the release folder content
-$zip = Join-Path $root 'FFXIV_Mod_Hanhua_v1.0_Green.zip'
-if (Test-Path $zip) { Remove-Item $zip -Force }
-Compress-Archive -Path (Join-Path $pub '*') -DestinationPath $zip -CompressionLevel Optimal
-Write-Host "==> Zip created: $zip  ($((Get-Item $zip).Length) bytes)"
+# Step 3 (optional): zip the release folder content, only with -Zip
+if ($Zip) {
+    $zip = Join-Path $root 'FFXIV_Mod_Hanhua_v1.0_Green.zip'
+    if (Test-Path $zip) { Remove-Item $zip -Force }
+    Compress-Archive -Path (Join-Path $pub '*') -DestinationPath $zip -CompressionLevel Optimal
+    Write-Host "==> Zip created: $zip  ($((Get-Item $zip).Length) bytes)"
+}
 Write-Host "[DONE] All done."
 exit 0
