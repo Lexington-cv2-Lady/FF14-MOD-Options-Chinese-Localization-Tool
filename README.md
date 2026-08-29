@@ -49,18 +49,18 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build_release.ps1 -Zip
 
 ## 使用说明
 
-1. **首次运行**：启动后选择一次「词典目录」（存放术语对照词典的文件夹），程序会在 exe 所在目录自动生成 `config.json` 保存设置。
-2. **配置 AI**：在设置中填入 API Key、选择翻译模型等（设置会保存在 `config.json`，请勿将配置文件公开分享）。**自定义 API 服务商**可手动编辑 `config.json` 的 `aiPresets` 添加，每项支持 `note` 中文备注（会显示在下拉框里，保存不丢失），例如：
+1. **首次运行**：启动后选择一次「词典目录」（存放术语对照词典的文件夹），程序会在 exe 所在目录自动生成默认配置 `config.default.json`；等你保存过可更改的设置后，才会生成用户配置 `config.user.json`。
+2. **配置 AI**：在设置中填入 API Key、选择翻译模型等（设置会保存在 `config.user.json`，请勿将配置文件公开分享）。**自定义 API 服务商**可手动编辑 `config.user.json` 的 `aiPresets` 添加（程序启动时与默认配置合并，同名预设以用户的为准），每项支持 `note` 中文备注（会显示在下拉框里，保存不丢失），例如：
 
    ```json
    "aiPresets": [
-     { "name": "DeepSeek", "model": "deepseek-v4-flash", "baseUrl": "https://api.deepseek.com", "note": "DeepSeek 官方 API" },
-     { "name": "智谱 GLM", "model": "glm-4.7-flash", "baseUrl": "https://open.bigmodel.cn/api/paas/v4", "note": "智谱 AI 开放平台（OpenAI 兼容）" },
      { "name": "我的网关", "model": "my-model", "baseUrl": "https://my-proxy.example.com/v1", "note": "自建中转，速度稳定" }
    ]
    ```
 
-   另外程序解析 `config.json` 时也兼容 `//` 与 `/* */` 注释（JSONC），但注意：**程序保存配置时会整体重写该文件，手写的 `//` 注释会丢失**，请把说明写进 `note` 字段。
+   另外程序解析配置时也兼容 `//` 与 `/* */` 注释（JSONC），但注意：**程序保存 `config.user.json` 时会整体重写该文件，手写的 `//` 注释会丢失**，请把说明写进 `note` 字段。
+
+   > 配置分两层：`config.default.json` 是随程序（zip）自带的默认配置，更新程序时用新版覆盖，保证默认值/新字段是最新的；`config.user.json` 是用户配置，首次保存设置后才生成，更新程序时**保留**。启动时「默认 + 用户」自动合并，用户值优先，因此用户配置不会因版本更新而过旧。旧版 `config.json` 会自动迁移为用户配置（旧文件保留，可自行删除）。
 3. **提取英文**：选择要汉化的 MOD 目录 → 点「1. 提取英文」，程序扫描并列出全部英文选项文本。
 4. **准备术语（可选）**：翻译前可通过「Wiki 导出」补充官方术语，或通过「导入翻译」将已有的 *_已翻译.json 合并进唯一词典，提升后续翻译准确性。
 5. **翻译**：点「2. 翻译」调用 AI 批量翻译；翻译结果可逐条人工校正（对照词典辅助）。若已用其它工具或网页 AI 翻译完成，也可通过「导入翻译」把结果合并进词典后再应用。
@@ -75,9 +75,15 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build_release.ps1 -Zip
 └─ README.md                          # 本说明
 ```
 
-编译产物（`x64\`、`release\`）与运行配置（`config.json`）均被 `.gitignore` 忽略，不会进入仓库。
+编译产物（`x64\`、`release\`）与运行配置（`config.default.json`、`config.user.json`、`自定义AI存档.json`）均被 `.gitignore` 忽略，不会进入仓库。
 
 ## 更新日志
+
+### v2.2.2
+
+- 新增：配置拆分为两层——`config.default.json`（默认配置，zip 打包自带）与 `config.user.json`（用户配置，保存可更改的选项后才创建）
+- 调整：更新程序时覆盖默认配置、保留用户配置；启动时「默认 + 用户」自动合并，用户值优先，用户配置不再因版本更新而过旧（新版新增的默认字段/预设会自动生效）
+- 调整：旧版 `config.json` 首次运行自动迁移为用户配置（旧文件保留，可自行删除）
 
 ### v2.2.1
 
@@ -155,7 +161,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build_release.ps1 -Zip
 
 ## 安全说明
 
-- `config.json`（含 AI API Key）保存在**程序运行目录**，已被 `.gitignore` 排除，不会提交到仓库。
+- 用户配置 `config.user.json`（含 AI API Key）与「自定义AI存档.json」保存在**程序运行目录**，已被 `.gitignore` 排除，不会提交到仓库。
 - 请勿把个人 API Key、词典数据等敏感文件上传到公开仓库。
 
 ## 许可证

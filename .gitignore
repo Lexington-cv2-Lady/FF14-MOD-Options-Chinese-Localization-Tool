@@ -15,6 +15,12 @@ FFXIV_MOD选项汉化工具/
 release/
 *.zip
 
+# 运行配置（含 API Key，勿提交）
+config.json
+config.default.json
+config.user.json
+自定义AI存档.json
+
 # 系统文件
 Thumbs.db
 Desktop.ini

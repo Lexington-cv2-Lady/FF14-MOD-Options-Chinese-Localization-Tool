@@ -90,7 +90,7 @@ void LogW(const std::wstring& wmsg);
 void SetProgress(int cur, int max);
 void RefreshConfigUI();
 fs::path GetExeDir();
-bool LoadConfigFrom(const fs::path& cfgPath);
+bool LoadConfigFrom(const fs::path& cfgPath, bool asUserLayer = false);
 bool LoadConfig();
 bool SaveConfig();
 bool SelectDirDialog(HWND parent, std::wstring& out);
@@ -203,7 +203,7 @@ void SetProgress(int cur, int max)
 }
 
 // ------------------------------------------------------------------
-// AI 默认预设（首次运行时写入 config.json；之后以 config.json 为准，用户可自由编辑增删）
+// AI 默认预设（首次运行时写入 config.default.json；之后默认配置更新时以新文件为准）
 // ------------------------------------------------------------------
 static const std::vector<AIPreset> g_defaultAIPresets = {
     { "DeepSeek", "deepseek-v4-flash", "https://api.deepseek.com", "DeepSeek 官方 API" },
@@ -211,7 +211,10 @@ static const std::vector<AIPreset> g_defaultAIPresets = {
 };
 
 // ------------------------------------------------------------------
-// 配置加载 / 保存（config.json 保存在程序 exe 所在目录，跟随程序走）
+// 配置加载 / 保存
+//   config.default.json —— 默认配置（zip 自带，更新程序时被新版覆盖，提供新字段/默认值兜底）
+//   config.user.json    —— 用户配置（用户保存可更改的选项后才创建，更新程序时保留）
+// 两文件都在程序 exe 所在目录，跟随程序走；启动时「默认 + 用户」叠加，用户值优先。
 // ------------------------------------------------------------------
 fs::path GetExeDir()
 {
@@ -221,49 +224,57 @@ fs::path GetExeDir()
     return p.parent_path();
 }
 
+static fs::path DefaultConfigPath() { return GetExeDir() / "config.default.json"; }
+static fs::path UserConfigPath() { return GetExeDir() / "config.user.json"; }
+
+// 把一份配置序列化成 JSON（config.default.json / config.user.json 共用）
+static json BuildConfigJson(const AppConfig& c)
+{
+    json j;
+    j["penumbraDir"] = c.penumbraDir;
+    j["translationDir"] = c.translationDir;
+    j["dictionaryDir"] = c.dictionaryDir;
+    j["swapWordOrder"] = c.swapWordOrder;
+    j["autoBackup"] = c.autoBackup;
+    j["pureChinese"] = c.pureChinese;
+    j["blacklist"] = c.blacklist;
+    j["wikiCategories"] = c.wikiCategories;
+    j["aiApiKey"] = c.aiApiKey;
+    j["aiKeyName"] = c.aiKeyName;
+    {
+        json ka = json::array();
+        for (const auto& k : c.aiKeys)
+            ka.push_back({ {"name", k.name}, {"key", k.key} });
+        j["aiKeys"] = ka;
+    }
+    j["aiModel"] = c.aiModel;
+    j["aiBaseUrl"] = c.aiBaseUrl;
+    j["aiBatchSize"] = c.aiBatchSize;
+    {
+        json pa = json::array();
+        for (const auto& p : c.aiPresets) {
+            json item = { {"name", p.name}, {"model", p.model}, {"baseUrl", p.baseUrl} };
+            if (!p.note.empty()) item["note"] = p.note;
+            pa.push_back(item);
+        }
+        j["aiPresets"] = pa;
+    }
+    j["aiPreset"] = c.aiPreset;
+    j["fontSize"] = c.fontSize;
+    j["autoFontSize"] = c.autoFontSize;
+    j["winX"] = c.winX;
+    j["winY"] = c.winY;
+    j["winW"] = c.winW;
+    j["winH"] = c.winH;
+    return j;
+}
+
+// 写出用户配置 config.user.json（首次保存可更改的选项时创建；内容一致则跳过写入）
 bool SaveConfig()
 {
     try {
-        json j;
-        j["penumbraDir"] = g_cfg.penumbraDir;
-        j["translationDir"] = g_cfg.translationDir;
-        j["dictionaryDir"] = g_cfg.dictionaryDir;
-        j["swapWordOrder"] = g_cfg.swapWordOrder;
-        j["autoBackup"] = g_cfg.autoBackup;
-        j["pureChinese"] = g_cfg.pureChinese;
-        j["blacklist"] = g_cfg.blacklist;
-        j["wikiCategories"] = g_cfg.wikiCategories;
-        j["aiApiKey"] = g_cfg.aiApiKey;
-        j["aiKeyName"] = g_cfg.aiKeyName;
-        {
-            json ka = json::array();
-            for (const auto& k : g_cfg.aiKeys)
-                ka.push_back({ {"name", k.name}, {"key", k.key} });
-            j["aiKeys"] = ka;
-        }
-        j["aiModel"] = g_cfg.aiModel;
-        j["aiBaseUrl"] = g_cfg.aiBaseUrl;
-        j["aiBatchSize"] = g_cfg.aiBatchSize;
-        {
-            json pa = json::array();
-            for (const auto& p : g_cfg.aiPresets) {
-                json item = { {"name", p.name}, {"model", p.model}, {"baseUrl", p.baseUrl} };
-                if (!p.note.empty()) item["note"] = p.note;
-                pa.push_back(item);
-            }
-            j["aiPresets"] = pa;
-        }
-        j["aiPreset"] = g_cfg.aiPreset;
-        j["fontSize"] = g_cfg.fontSize;
-        j["autoFontSize"] = g_cfg.autoFontSize;
-        j["winX"] = g_cfg.winX;
-        j["winY"] = g_cfg.winY;
-        j["winW"] = g_cfg.winW;
-        j["winH"] = g_cfg.winH;
-
-        std::string data = j.dump(2);
-        fs::path cfgPath = GetExeDir() / "config.json";
-        // 检测：若现有 config.json 内容与本次要写的一致，则跳过写入，避免每次操作都反复覆盖重建该文件
+        std::string data = BuildConfigJson(g_cfg).dump(2);
+        fs::path cfgPath = UserConfigPath();
         std::error_code ec;
         if (fs::exists(cfgPath, ec)) {
             std::string old;
@@ -274,24 +285,39 @@ bool SaveConfig()
     catch (...) { return false; }
 }
 
-// 从指定路径读取 config.json 填充 g_cfg；找不到或解析失败返回 false
-bool LoadConfigFrom(const fs::path& cfgPath)
+// 用内置默认值生成 config.default.json（首次运行或默认配置缺失时调用，供打包/更新兜底）
+static bool SaveDefaultConfig()
+{
+    try {
+        AppConfig def; // 全部取成员默认值
+        def.aiPresets = g_defaultAIPresets;
+        return write_binary_file(DefaultConfigPath(), BuildConfigJson(def).dump(2));
+    }
+    catch (...) { return false; }
+}
+
+// 从指定路径读取配置填充 g_cfg。
+// asUserLayer=false：默认配置——整体覆盖内存，预设缺失时恢复内置默认并写回默认文件；
+// asUserLayer=true ：用户配置——只覆盖文件中出现的字段，预设按「名称」与默认层合并
+//                    （同名用用户的，新名字追加），保证新版默认配置的更新能生效。
+// 找不到或解析失败返回 false
+bool LoadConfigFrom(const fs::path& cfgPath, bool asUserLayer)
 {
     try {
         if (!fs::exists(cfgPath)) return false;
         std::string data;
         if (!read_binary_file(cfgPath, data)) return false;
         json j = json::parse(data, nullptr, true, true); // 支持 // 与 /* */ 注释（JSONC），方便用户手写中文注释
-        g_cfg.penumbraDir = j.value("penumbraDir", "");
+        g_cfg.penumbraDir = j.value("penumbraDir", g_cfg.penumbraDir);
         g_cfg.translationDir = j.value("translationDir", g_cfg.translationDir);
         g_cfg.dictionaryDir = j.value("dictionaryDir", g_cfg.dictionaryDir);
-        g_cfg.swapWordOrder = j.value("swapWordOrder", false);
-        g_cfg.autoBackup = j.value("autoBackup", true);
-        g_cfg.pureChinese = j.value("pureChinese", false);
+        g_cfg.swapWordOrder = j.value("swapWordOrder", g_cfg.swapWordOrder);
+        g_cfg.autoBackup = j.value("autoBackup", g_cfg.autoBackup);
+        g_cfg.pureChinese = j.value("pureChinese", g_cfg.pureChinese);
         if (j.contains("blacklist")) g_cfg.blacklist = j["blacklist"].get<std::vector<std::string>>();
         if (j.contains("wikiCategories")) g_cfg.wikiCategories = j["wikiCategories"].get<std::vector<std::string>>();
-        g_cfg.aiApiKey = j.value("aiApiKey", "");
-        g_cfg.aiKeyName = j.value("aiKeyName", "");
+        g_cfg.aiApiKey = j.value("aiApiKey", g_cfg.aiApiKey);
+        g_cfg.aiKeyName = j.value("aiKeyName", g_cfg.aiKeyName);
         g_cfg.aiKeys.clear();
         if (j.contains("aiKeys") && j["aiKeys"].is_array()) {
             for (const auto& it : j["aiKeys"]) {
@@ -317,41 +343,62 @@ bool LoadConfigFrom(const fs::path& cfgPath)
                 g_cfg.aiApiKey = g_cfg.aiKeys[0].key;
             }
         }
-        g_cfg.aiModel = j.value("aiModel", "");
-        g_cfg.aiBaseUrl = j.value("aiBaseUrl", "");
-        g_cfg.aiPresets.clear();
+        g_cfg.aiModel = j.value("aiModel", g_cfg.aiModel);
+        g_cfg.aiBaseUrl = j.value("aiBaseUrl", g_cfg.aiBaseUrl);
         if (j.contains("aiPresets") && j["aiPresets"].is_array()) {
+            if (!asUserLayer) g_cfg.aiPresets.clear(); // 默认层：整体替换
             for (const auto& it : j["aiPresets"]) {
                 AIPreset p;
                 p.name = it.value("name", "");
                 p.model = it.value("model", "");
                 p.baseUrl = it.value("baseUrl", "");
                 p.note = it.value("note", "");
-                if (!p.name.empty()) g_cfg.aiPresets.push_back(p);
+                if (p.name.empty()) continue;
+                if (asUserLayer) {
+                    bool replaced = false;
+                    for (auto& q : g_cfg.aiPresets)
+                        if (q.name == p.name) { q = p; replaced = true; break; }
+                    if (!replaced) g_cfg.aiPresets.push_back(p);
+                } else {
+                    g_cfg.aiPresets.push_back(p);
+                }
             }
         }
         bool presetRestored = false;
-        if (g_cfg.aiPresets.empty()) {
-            g_cfg.aiPresets = g_defaultAIPresets; // 预设被清空/缺失时恢复默认，保证下拉框有可用项
+        if (!asUserLayer && g_cfg.aiPresets.empty()) {
+            g_cfg.aiPresets = g_defaultAIPresets; // 默认层预设被清空/缺失时恢复默认，保证下拉框有可用项
             presetRestored = true;
         }
-        g_cfg.aiPreset = j.value("aiPreset", "");
-        g_cfg.aiBatchSize = j.value("aiBatchSize", 40);
-        g_cfg.fontSize = j.value("fontSize", 11);
-        g_cfg.autoFontSize = j.value("autoFontSize", true);
-        g_cfg.winX = j.value("winX", -1);
-        g_cfg.winY = j.value("winY", -1);
-        g_cfg.winW = j.value("winW", 0);
-        g_cfg.winH = j.value("winH", 0);
-        if (presetRestored) SaveConfig(); // 预设缺失时把默认预设写回文件，避免每次启动都靠内存兜底
+        g_cfg.aiPreset = j.value("aiPreset", g_cfg.aiPreset);
+        g_cfg.aiBatchSize = j.value("aiBatchSize", g_cfg.aiBatchSize);
+        g_cfg.fontSize = j.value("fontSize", g_cfg.fontSize);
+        g_cfg.autoFontSize = j.value("autoFontSize", g_cfg.autoFontSize);
+        g_cfg.winX = j.value("winX", g_cfg.winX);
+        g_cfg.winY = j.value("winY", g_cfg.winY);
+        g_cfg.winW = j.value("winW", g_cfg.winW);
+        g_cfg.winH = j.value("winH", g_cfg.winH);
+        if (presetRestored) SaveDefaultConfig(); // 默认配置预设缺失时写回，避免每次启动都靠内存兜底
         return true;
     }
     catch (...) { return false; }
 }
 
+// 加载配置：先读默认配置 config.default.json（zip 自带，更新时覆盖），再叠加用户配置
+// config.user.json（用户保存的选项，更新时保留）；旧版 config.json 自动迁移为用户配置。
 bool LoadConfig()
 {
-    return LoadConfigFrom(GetExeDir() / "config.json");
+    if (!LoadConfigFrom(DefaultConfigPath(), /*asUserLayer=*/false)) {
+        g_cfg.aiPresets = g_defaultAIPresets; // 默认配置缺失：内置默认兜底
+        SaveDefaultConfig();                  // 顺手生成默认配置，让更新有基准
+    }
+    if (LoadConfigFrom(UserConfigPath(), /*asUserLayer=*/true)) return true;
+    // 旧版升级：程序目录有 config.json 时迁移为用户配置（不删除旧文件，避免误删用户数据）
+    if (LoadConfigFrom(GetExeDir() / "config.json", /*asUserLayer=*/true)) {
+        Log("[提示] 已从旧版 config.json 迁移用户配置（生成 config.user.json，旧文件保留可自行删除）");
+        SaveConfig();
+        return true;
+    }
+    return false;
 }
 
 // ------------------------------------------------------------------
@@ -2534,7 +2581,7 @@ static void RunAITestThread()
         std::string content;
         try { content = resp["choices"][0]["message"]["content"].get<std::string>(); }
         catch (...) { content = "(非文本回复)"; }
-        // 测试通过说明当前界面配置可用：立即写入 config.json，避免手动输入的地址/模型重启后丢失
+        // 测试通过说明当前界面配置可用：立即写入用户配置 config.user.json，避免手动输入的地址/模型重启后丢失
         SaveConfig();
         Log("[成功] AI 连接测试通过！模型 " + model + " 回复：" + content + "（耗时 " + std::to_string(ms) + " ms）");
         g_busy = false;
@@ -2793,7 +2840,7 @@ static void LoadCustomSaves()
 }
 
 // 把当前 Key + 模型名 + API 地址（+ 备注名）统一保存为一条自定义记录到程序根目录的存档文件。
-// 只写存档文件，不写 config.json（config 保持内置/手动预设不被覆盖）
+// 只写存档文件，不写 config.user.json（用户配置里的内置/手动预设不被「保存」按钮覆盖）
 static void SaveCustomSaves(HWND hDlg)
 {
     std::string name = wstring_to_utf8(GetEditText(hDlg, IDC_AI_KEY_NAME));
@@ -3491,7 +3538,7 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
             Log("[窗口] 已恢复上次大小：" + std::to_string(g_cfg.winW) + " x " + std::to_string(g_cfg.winH));
         if (!g_cfg.penumbraDir.empty()) Log("Penumbra 目录：" + g_cfg.penumbraDir);
         if (g_cfg.dictionaryDir.empty())
-            Log("[提示] 未找到 config.json（首次运行？）。请在『词典目录』处选择一次目录建立配置；旧版升级则选择原词典目录即可自动迁移已有设置");
+            Log("[提示] 未找到 config.user.json（首次运行？）。请在『词典目录』处选择一次目录建立用户配置；旧版升级则选择原词典目录即可自动迁移已有设置");
         // 创建初：若唯一词典 wiki_术语对照and个人填充.json 不存在，则从
         // wiki_术语对照.json + 汉化总词典.json 一次性合并生成（wiki 固定优先，先来后到）。
         // 之后程序不再自动重写它，改已翻译的词条请直接编辑该文件。
@@ -3625,14 +3672,14 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
             if (SelectDirDialog(hDlg, dir)) {
                 g_cfg.dictionaryDir = wstring_to_utf8(dir);
                 SetEditText(hDlg, IDC_EDIT_DICTIONARY, dir);
-                // 兼容旧版：程序目录还没有 config.json 时，若所选词典目录里有旧版 config.json，读取并迁移
-                fs::path exeCfg = GetExeDir() / "config.json";
+                // 兼容旧版：程序目录还没有用户配置时，若所选词典目录里有旧版 config.json，读取并迁移
+                fs::path exeCfg = GetExeDir() / "config.user.json";
                 std::error_code eec;
                 if (!fs::exists(exeCfg, eec)) {
                     fs::path legacy = fs::u8path(g_cfg.dictionaryDir) / "config.json";
                     std::error_code lec;
                     if (fs::exists(legacy, lec) && !lec) {
-                        if (LoadConfigFrom(legacy))
+                        if (LoadConfigFrom(legacy, true))
                             Log("[提示] 已从词典目录的旧 config.json 迁移配置（不覆盖旧文件）");
                         else
                             Log("[提示] 检测到词典目录有旧 config.json，但读取失败");
