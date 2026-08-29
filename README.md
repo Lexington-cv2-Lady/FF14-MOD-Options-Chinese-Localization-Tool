@@ -85,6 +85,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build_release.ps1 -Zip
 - 兼容：启动时若程序目录残留旧版「自定义AI存档.json」，自动迁移并入 `customSaves` 后写回用户配置（旧文件保留，可自行删除）
 - 内部：清理死代码（`extract_terms_from_wikitext`、未使用的 Resource.h 宏、冗余 include），精简构建产物
 - 内部：打包 zip 时随包附带默认配置 `config.default.json`（解压即用，默认 AI 预设开箱可用）
+- 调整：AI 翻译设置界面的「Key 备注」标签改为「API Key」
 
 ### v2.2.2
 
