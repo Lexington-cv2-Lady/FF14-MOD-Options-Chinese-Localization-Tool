@@ -2241,12 +2241,13 @@ static bool AITranslateBatch(const std::vector<std::pair<std::string, std::strin
     std::string sysMsg =
         "你是《最终幻想14》(FFXIV) 模组本地化的专业译者，把英文模组文本翻译成简体中文。\n"
         "硬性要求：\n"
-        "1. 译文格式统一为「中文（英文）」，例如 治疗（Cure）。\n"
-        "2. 仅当括号内的英文与括号外的中文完全同义时，才可以省略括号只保留中文。\n"
-        "3. 纯数字、百分比（如75%）、版本号、MOD 专有名词（如 Yiggle、Rue、Bibo、EXQB、YAB）直接保留原文，不翻译。\n"
-        "4. 无法确定译名的专有名词保留英文，不要强行机翻。\n"
-        "5. 形如「XXX - YYY」的英文文本（例如 Connectors - Face、Lights - Body、Hats - Off）是普通选项名，不是文件名、路径或专有名词，必须翻译，不要套用第 3、4 条保留原文。\n"
-        "6. 只输出一个 JSON 对象：键为条目 id（字符串），值为译文。不要输出任何其他内容。";
+        "1. 翻译范围：_descriptions（描述）与 _options（选项）一视同仁，都必须翻译。\n"
+        "2. 译文格式统一为「中文（英文）」，例如 治疗（Cure）；除非满足第 3 条，否则不得省略英文。\n"
+        "3. 去重：仅当括号内英文与括号外中文意思完全相同时，才可去掉括号只保留中文；若中英文意思不同（如版本区分），必须保留括号及英文。\n"
+        "4. 严格保留列表（仅限以下情况）：纯数字（如75%）、版本号、MOD 专有名词 Yiggle、Rue、Bibo、EXQB、YAB、YANILLA。除此之外的任何英文单词或短语都必须翻译成中文。\n"
+        "5. 形如「XXX - YYY」的英文（如 Connectors - Face）是普通选项名，应视为整体翻译，不得保留原文。\n"
+        "6. 遇到不确定含义的词汇，根据上下文推断其通用含义进行翻译，不得保留英文。\n"
+        "7. 只输出一个 JSON 对象：键为条目 id（字符串），值为译文。不要输出任何其他内容。";
     json arr = json::array();
     for (auto& it : items) arr.push_back({ {"id", it.first}, {"text", it.second} });
     std::string userMsg = "请翻译以下 FFXIV 模组文本条目，输出 JSON 对象：\n" + arr.dump();
