@@ -247,6 +247,12 @@ static json BuildConfigJson(const AppConfig& c)
             ka.push_back({ {"name", k.name}, {"key", k.key} });
         j["aiKeys"] = ka;
     }
+    {
+        json ca = json::array();
+        for (const auto& s : c.customSaves)
+            ca.push_back({ {"name", s.name}, {"key", s.key}, {"model", s.model}, {"baseUrl", s.baseUrl}, {"note", s.note} });
+        j["customSaves"] = ca;
+    }
     j["aiModel"] = c.aiModel;
     j["aiBaseUrl"] = c.aiBaseUrl;
     j["aiBatchSize"] = c.aiBatchSize;
@@ -325,6 +331,19 @@ bool LoadConfigFrom(const fs::path& cfgPath, bool asUserLayer)
                 e.name = it.value("name", "");
                 e.key = it.value("key", "");
                 if (!e.name.empty() && !e.key.empty()) g_cfg.aiKeys.push_back(e);
+            }
+        }
+        g_cfg.customSaves.clear();
+        if (j.contains("customSaves") && j["customSaves"].is_array()) {
+            for (const auto& it : j["customSaves"]) {
+                AISaveEntry e;
+                e.name = it.value("name", "");
+                e.key = it.value("key", "");
+                e.model = it.value("model", "");
+                e.baseUrl = it.value("baseUrl", "");
+                e.note = it.value("note", "");
+                if (e.name.empty() && e.key.empty() && e.model.empty() && e.baseUrl.empty()) continue;
+                g_cfg.customSaves.push_back(e);
             }
         }
         // 兼容旧版：只有单个 aiApiKey 时补成一条「默认 Key」
@@ -2788,59 +2807,72 @@ static std::string NextPresetName()
     }
 }
 
-// 程序根目录下的自定义存档文件（用户点「保存」写入；config.json 只保留内置/手动预设，不再被保存按钮改写）
-static fs::path CustomSavePath()
-{
-    return GetExeDir() / L"自定义AI存档.json";
-}
-
-// 启动时读取「自定义AI存档.json」（数组：[{name,key,model,baseUrl,note}, …]），
-// 把用户自定义的 Key/模型/地址合并进当前配置（用户自定义优先：同名 Key 用存档值覆盖）
+// 用户「保存」的自定义 AI 记录存于用户配置 config.user.json 的 customSaves（数组：
+// [{name,key,model,baseUrl,note}, …]），不再单独写「自定义AI存档.json」。
+// 启动时把它们并入当前 Key/预设（用户自定义优先：同名 Key 用存档值覆盖）。
 static void LoadCustomSaves()
 {
-    fs::path spath = CustomSavePath();
-    std::string data;
-    if (!read_binary_file(spath, data) || data.empty()) return;
-    try {
-        json j = json::parse(data, nullptr, true, true);
-        if (!j.is_array()) return;
-        size_t used = 0;
-        for (const auto& it : j) {
-            if (!it.is_object()) continue;
-            std::string name = it.value("name", "");
-            std::string key = it.value("key", "");
-            std::string model = it.value("model", "");
-            std::string baseUrl = it.value("baseUrl", "");
-            std::string note = it.value("note", "");
-            // Key：同名覆盖，否则（key 非空）追加
-            if (!key.empty()) {
-                bool updated = false;
-                for (auto& k : g_cfg.aiKeys) {
-                    if (!name.empty() && k.name == name) { k.key = key; updated = true; break; }
-                    if (name.empty() && k.key == key) { updated = true; break; }
+    // 旧版兼容：程序目录残留的「自定义AI存档.json」自动迁移并入 customSaves
+    size_t migrated = 0;
+    fs::path legacy = GetExeDir() / L"自定义AI存档.json";
+    std::string ldata;
+    if (read_binary_file(legacy, ldata) && !ldata.empty()) {
+        try {
+            json t = json::parse(ldata, nullptr, true, true);
+            if (t.is_array()) {
+                for (const auto& it : t) {
+                    if (!it.is_object()) continue;
+                    AISaveEntry e;
+                    e.name = it.value("name", "");
+                    e.key = it.value("key", "");
+                    e.model = it.value("model", "");
+                    e.baseUrl = it.value("baseUrl", "");
+                    e.note = it.value("note", "");
+                    if (e.name.empty() && e.key.empty() && e.model.empty() && e.baseUrl.empty()) continue;
+                    bool dup = false;
+                    for (const auto& x : g_cfg.customSaves)
+                        if (x.name == e.name && !e.name.empty()) { dup = true; break; }
+                    if (!dup) { g_cfg.customSaves.push_back(e); ++migrated; }
                 }
-                if (!updated) g_cfg.aiKeys.push_back({ name, key });
             }
-            // 预设：model+baseUrl 组合去重（忽略大小写），不同则追加
-            if (!model.empty() || !baseUrl.empty()) {
-                bool dup = false;
-                for (const auto& p : g_cfg.aiPresets)
-                    if (NormForDup(p.model) == NormForDup(model) && NormForDup(p.baseUrl) == NormForDup(baseUrl)) { dup = true; break; }
-                if (!dup) g_cfg.aiPresets.push_back({ name, model, baseUrl, note });
-            }
-            ++used;
-        }
-        // 当前选择的 Key 若在存档/列表中，以最新值为准
-        if (!g_cfg.aiKeyName.empty())
-            for (const auto& k : g_cfg.aiKeys)
-                if (k.name == g_cfg.aiKeyName) { g_cfg.aiApiKey = k.key; break; }
-        Log("[完成] 已读取自定义存档（" + std::to_string(used) + " 条）：" + wstring_to_utf8(spath.wstring()));
+        } catch (...) {}
     }
-    catch (...) { Log("[提示] 自定义存档解析失败，已忽略：" + wstring_to_utf8(spath.wstring())); }
+    if (migrated > 0) {
+        SaveConfig();
+        Log("[提示] 已把「自定义AI存档.json」迁移并入用户配置 config.user.json（" + std::to_string(migrated) + " 条；旧文件保留可自行删除）");
+    }
+
+    // 把 customSaves 并入当前 Key / 预设
+    size_t used = 0;
+    for (const auto& e : g_cfg.customSaves) {
+        // Key：同名覆盖，否则（key 非空）追加
+        if (!e.key.empty()) {
+            bool updated = false;
+            for (auto& k : g_cfg.aiKeys) {
+                if (!e.name.empty() && k.name == e.name) { k.key = e.key; updated = true; break; }
+                if (e.name.empty() && k.key == e.key) { updated = true; break; }
+            }
+            if (!updated) g_cfg.aiKeys.push_back({ e.name, e.key });
+        }
+        // 预设：model+baseUrl 组合去重（忽略大小写），不同则追加
+        if (!e.model.empty() || !e.baseUrl.empty()) {
+            bool dup = false;
+            for (const auto& p : g_cfg.aiPresets)
+                if (NormForDup(p.model) == NormForDup(e.model) && NormForDup(p.baseUrl) == NormForDup(e.baseUrl)) { dup = true; break; }
+            if (!dup) g_cfg.aiPresets.push_back({ e.name, e.model, e.baseUrl, e.note });
+        }
+        ++used;
+    }
+    // 当前选择的 Key 若在 customSaves 并入的列表中，以最新值为准
+    if (!g_cfg.aiKeyName.empty())
+        for (const auto& k : g_cfg.aiKeys)
+            if (k.name == g_cfg.aiKeyName) { g_cfg.aiApiKey = k.key; break; }
+    if (used > 0)
+        Log("[完成] 已读取自定义存档（" + std::to_string(used) + " 条）：用户配置 config.user.json");
 }
 
-// 把当前 Key + 模型名 + API 地址（+ 备注名）统一保存为一条自定义记录到程序根目录的存档文件。
-// 只写存档文件，不写 config.user.json（用户配置里的内置/手动预设不被「保存」按钮覆盖）
+// 把当前 Key + 模型名 + API 地址（+ 备注名）统一保存为一条自定义记录到用户配置
+// config.user.json 的 customSaves（「保存」按钮不改写预设列表等其它用户配置项）。
 static void SaveCustomSaves(HWND hDlg)
 {
     std::string name = wstring_to_utf8(GetEditText(hDlg, IDC_AI_KEY_NAME));
@@ -2854,31 +2886,19 @@ static void SaveCustomSaves(HWND hDlg)
     if (name.empty()) name = NextPresetName();
     const std::string note = "自定义";
 
-    fs::path spath = CustomSavePath();
-    json j = json::array();
-    std::string data;
-    if (read_binary_file(spath, data) && !data.empty()) {
-        try {
-            json t = json::parse(data, nullptr, true, true);
-            if (t.is_array()) j = t;
-        } catch (...) {}
-    }
+    // 更新内存中的 customSaves（同名覆盖，否则追加），随后写入用户配置
     bool updated = false;
-    for (auto& it : j) {
-        if (!it.is_object()) continue;
-        if (!name.empty() && it.value("name", "") == name) {
-            it["name"] = name; it["key"] = key; it["model"] = model; it["baseUrl"] = baseUrl; it["note"] = note;
+    for (auto& s : g_cfg.customSaves) {
+        if (s.name == name) {
+            s.key = key; s.model = model; s.baseUrl = baseUrl; s.note = note;
             updated = true;
             break;
         }
     }
-    if (!updated) {
-        json obj;
-        obj["name"] = name; obj["key"] = key; obj["model"] = model; obj["baseUrl"] = baseUrl; obj["note"] = note;
-        j.push_back(obj);
-    }
-    if (write_binary_file(spath, j.dump(2))) {
-        // 同步内存（下次启动读取存档时同样生效）
+    if (!updated) g_cfg.customSaves.push_back({ name, key, model, baseUrl, note });
+
+    if (SaveConfig()) {
+        // 同步内存（下次启动读取用户配置时同样生效）
         if (!key.empty()) {
             bool kdup = false;
             for (auto& k : g_cfg.aiKeys)
@@ -2898,9 +2918,9 @@ static void SaveCustomSaves(HWND hDlg)
         SetEditText(hDlg, IDC_AI_KEY, utf8_to_wstring(key));
         SetEditText(hDlg, IDC_AI_MODEL, utf8_to_wstring(model));
         SetEditText(hDlg, IDC_AI_BASEURL, utf8_to_wstring(baseUrl));
-        Log("[完成] 已保存到自定义存档：" + wstring_to_utf8(spath.wstring()));
+        Log("[完成] 已保存自定义 AI 记录「" + name + "」到用户配置（config.user.json）");
     } else {
-        MessageBoxW(hDlg, L"写入存档文件失败，请检查程序目录是否有写权限。", L"提示", MB_OK | MB_ICONWARNING);
+        MessageBoxW(hDlg, L"写入用户配置文件失败，请检查程序目录是否有写权限。", L"提示", MB_OK | MB_ICONWARNING);
     }
 }
 
@@ -3489,7 +3509,7 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
         if (prog) SendMessageW(prog, PBM_SETRANGE32, 0, 100);
         EnableWindow(GetDlgItem(hDlg, IDC_BTN_CANCEL), FALSE);
         LoadConfig();
-        LoadCustomSaves(); // 读取程序根目录的「自定义AI存档.json」，用户自定义的 Key/模型/地址优先并入
+        LoadCustomSaves(); // 读取用户配置 config.user.json 的 customSaves，用户自定义的 Key/模型/地址优先并入
 
         // 记录 .rc 设计尺寸对应的客户区像素，作为等比缩放基准（必须在 SetWindowPos 之前）
         RECT rc0;
@@ -3743,7 +3763,7 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
             }
             break;
         case IDC_BTN_SAVE_KEY:
-            // 统一保存：Key + 模型名 + API 地址（+ 备注名）一起存为一条自定义记录到程序根目录的「自定义AI存档.json」
+            // 统一保存：Key + 模型名 + API 地址（+ 备注名）一起存为一条自定义记录到用户配置 config.user.json 的 customSaves
             if (wmEvent == BN_CLICKED) SaveCustomSaves(hDlg);
             break;
         case IDC_AI_MODEL:

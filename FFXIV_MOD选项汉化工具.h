@@ -99,10 +99,19 @@ struct AIPreset {
     std::string note;     // 中文备注（可选，显示在下拉列表里；config.json 里可写，保存不丢）
 };
 
-// AI API Key 条目（下拉选择用；列表存 config.json，可自由增删）
+// AI API Key 条目（下拉选择用；列表存 config.user.json，可自由增删）
 struct AIKeyEntry {
     std::string name;     // 备注名，如 "我的主 key"
     std::string key;      // API Key 值
+};
+
+// 用户点「保存」写入的自定义 AI 记录（存 config.user.json 的 customSaves 数组）
+struct AISaveEntry {
+    std::string name;     // 备注名（空 = 自动命名「自定义 N」）
+    std::string key;      // API Key
+    std::string model;    // 模型名
+    std::string baseUrl;  // API Base URL
+    std::string note;     // 备注（当前固定「自定义」）
 };
 
 // ------------------------------------------------------------------
@@ -120,6 +129,7 @@ struct AppConfig {
     std::string aiApiKey;      // AI 翻译 API Key（当前选中项，OpenAI 兼容）
     std::string aiKeyName;     // 当前选中 Key 的备注名（空 = 自定义输入未保存）
     std::vector<AIKeyEntry> aiKeys; // 已保存的 Key 列表（备注 + Key，可手动增删）
+    std::vector<AISaveEntry> customSaves; // 用户点「保存」写入的自定义 AI 记录（存 config.user.json）
     std::string aiModel;       // AI 模型名（空 = 未设置）
     std::string aiBaseUrl;     // API Base URL（空 = 未设置）
     std::vector<AIPreset> aiPresets; // AI 下拉预设列表（存 config.json，可手动增删）

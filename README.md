@@ -75,9 +75,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build_release.ps1 -Zip
 └─ README.md                          # 本说明
 ```
 
-编译产物（`x64\`、`release\`）与运行配置（`config.default.json`、`config.user.json`、`自定义AI存档.json`）均被 `.gitignore` 忽略，不会进入仓库。
+编译产物（`x64\`、`release\`）与运行配置（`config.default.json`、`config.user.json`）均被 `.gitignore` 忽略，不会进入仓库。
 
 ## 更新日志
+
+### v2.2.3
+
+- 调整：点「保存」写入的自定义 AI 记录并入用户配置 `config.user.json` 的 `customSaves` 字段，不再单独生成「自定义AI存档.json」
+- 兼容：启动时若程序目录残留旧版「自定义AI存档.json」，自动迁移并入 `customSaves` 后写回用户配置（旧文件保留，可自行删除）
 
 ### v2.2.2
 
@@ -161,7 +166,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build_release.ps1 -Zip
 
 ## 安全说明
 
-- 用户配置 `config.user.json`（含 AI API Key）与「自定义AI存档.json」保存在**程序运行目录**，已被 `.gitignore` 排除，不会提交到仓库。
+- 用户配置 `config.user.json`（含 AI API Key 与点「保存」写入的 `customSaves`）保存在**程序运行目录**，已被 `.gitignore` 排除，不会提交到仓库。
 - 请勿把个人 API Key、词典数据等敏感文件上传到公开仓库。
 
 ## 许可证
