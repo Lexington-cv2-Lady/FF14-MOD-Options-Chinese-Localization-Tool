@@ -204,8 +204,8 @@ void SetProgress(int cur, int max)
 // AI 默认预设（首次运行时写入 config.json；之后以 config.json 为准，用户可自由编辑增删）
 // ------------------------------------------------------------------
 static const std::vector<AIPreset> g_defaultAIPresets = {
-    { "DeepSeek", "deepseek-v4-flash", "https://api.deepseek.com" },
-    { "智谱 GLM", "glm-4.7-flash", "https://open.bigmodel.cn/api/paas/v4" },
+    { "DeepSeek", "deepseek-v4-flash", "https://api.deepseek.com", "DeepSeek 官方 API" },
+    { "智谱 GLM", "glm-4.7-flash", "https://open.bigmodel.cn/api/paas/v4", "智谱 AI 开放平台（OpenAI 兼容）" },
 };
 
 // ------------------------------------------------------------------
@@ -244,8 +244,11 @@ bool SaveConfig()
         j["aiBatchSize"] = g_cfg.aiBatchSize;
         {
             json pa = json::array();
-            for (const auto& p : g_cfg.aiPresets)
-                pa.push_back({ {"name", p.name}, {"model", p.model}, {"baseUrl", p.baseUrl} });
+            for (const auto& p : g_cfg.aiPresets) {
+                json item = { {"name", p.name}, {"model", p.model}, {"baseUrl", p.baseUrl} };
+                if (!p.note.empty()) item["note"] = p.note;
+                pa.push_back(item);
+            }
             j["aiPresets"] = pa;
         }
         j["aiPreset"] = g_cfg.aiPreset;
@@ -276,7 +279,7 @@ bool LoadConfigFrom(const fs::path& cfgPath)
         if (!fs::exists(cfgPath)) return false;
         std::string data;
         if (!read_binary_file(cfgPath, data)) return false;
-        json j = json::parse(data);
+        json j = json::parse(data, nullptr, true, true); // 支持 // 与 /* */ 注释（JSONC），方便用户手写中文注释
         g_cfg.penumbraDir = j.value("penumbraDir", "");
         g_cfg.translationDir = j.value("translationDir", g_cfg.translationDir);
         g_cfg.dictionaryDir = j.value("dictionaryDir", g_cfg.dictionaryDir);
@@ -321,6 +324,7 @@ bool LoadConfigFrom(const fs::path& cfgPath)
                 p.name = it.value("name", "");
                 p.model = it.value("model", "");
                 p.baseUrl = it.value("baseUrl", "");
+                p.note = it.value("note", "");
                 if (!p.name.empty()) g_cfg.aiPresets.push_back(p);
             }
         }
@@ -2708,9 +2712,20 @@ static void FillAIPresetCombos(HWND hDlg)
     if (!hModel || !hBase) return;
     SendMessageW(hModel, CB_RESETCONTENT, 0, 0);
     SendMessageW(hBase, CB_RESETCONTENT, 0, 0);
-    for (const auto& p : g_cfg.aiPresets) {
-        SendMessageW(hModel, CB_ADDSTRING, 0, (LPARAM)utf8_to_wstring(p.model).c_str());
-        SendMessageW(hBase, CB_ADDSTRING, 0, (LPARAM)utf8_to_wstring(p.baseUrl).c_str());
+    // 下拉项显示「值　（备注）」，选中后用预设索引取真实值回填编辑框（与 Key 下拉同理）
+    for (size_t i = 0; i < g_cfg.aiPresets.size(); ++i) {
+        const auto& p = g_cfg.aiPresets[i];
+        std::wstring m = utf8_to_wstring(p.model);
+        std::wstring b = utf8_to_wstring(p.baseUrl);
+        if (!p.note.empty()) {
+            std::wstring note = L"　（" + utf8_to_wstring(p.note) + L"）";
+            m += note;
+            b += note;
+        }
+        int mi = (int)SendMessageW(hModel, CB_ADDSTRING, 0, (LPARAM)m.c_str());
+        SendMessageW(hModel, CB_SETITEMDATA, mi, (LPARAM)i);
+        int bi = (int)SendMessageW(hBase, CB_ADDSTRING, 0, (LPARAM)b.c_str());
+        SendMessageW(hBase, CB_SETITEMDATA, bi, (LPARAM)i);
     }
 }
 
@@ -3510,16 +3525,34 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
         }
         case IDC_AI_MODEL:
             // 模型名与 API 地址完全独立：选择/输入模型名只更新模型名，不联动地址
-            if (wmEvent == CBN_SELCHANGE || wmEvent == CBN_EDITCHANGE) {
+            if (wmEvent == CBN_SELCHANGE) {
+                int sel = (int)SendMessageW(GetDlgItem(hDlg, IDC_AI_MODEL), CB_GETCURSEL, 0, 0);
+                if (sel >= 0) {
+                    size_t idx = (size_t)SendMessageW(GetDlgItem(hDlg, IDC_AI_MODEL), CB_GETITEMDATA, sel, 0);
+                    if (idx < g_cfg.aiPresets.size()) {
+                        g_cfg.aiModel = g_cfg.aiPresets[idx].model;
+                        SetEditText(hDlg, IDC_AI_MODEL, utf8_to_wstring(g_cfg.aiModel)); // 编辑框回填纯模型名
+                        SaveConfig();
+                    }
+                }
+            } else if (wmEvent == CBN_EDITCHANGE) {
                 g_cfg.aiModel = wstring_to_utf8(GetEditText(hDlg, IDC_AI_MODEL));
-                if (wmEvent == CBN_SELCHANGE) SaveConfig();
             }
             break;
         case IDC_AI_BASEURL:
             // 地址与模型名完全独立：选择/输入地址只更新地址，不联动模型名
-            if (wmEvent == CBN_SELCHANGE || wmEvent == CBN_EDITCHANGE) {
+            if (wmEvent == CBN_SELCHANGE) {
+                int sel = (int)SendMessageW(GetDlgItem(hDlg, IDC_AI_BASEURL), CB_GETCURSEL, 0, 0);
+                if (sel >= 0) {
+                    size_t idx = (size_t)SendMessageW(GetDlgItem(hDlg, IDC_AI_BASEURL), CB_GETITEMDATA, sel, 0);
+                    if (idx < g_cfg.aiPresets.size()) {
+                        g_cfg.aiBaseUrl = g_cfg.aiPresets[idx].baseUrl;
+                        SetEditText(hDlg, IDC_AI_BASEURL, utf8_to_wstring(g_cfg.aiBaseUrl)); // 编辑框回填纯地址
+                        SaveConfig();
+                    }
+                }
+            } else if (wmEvent == CBN_EDITCHANGE) {
                 g_cfg.aiBaseUrl = wstring_to_utf8(GetEditText(hDlg, IDC_AI_BASEURL));
-                if (wmEvent == CBN_SELCHANGE) SaveConfig();
             }
             break;
         case IDC_AI_BATCH: {

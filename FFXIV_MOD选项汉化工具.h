@@ -96,6 +96,7 @@ struct AIPreset {
     std::string name;     // 显示名，如 "DeepSeek"
     std::string model;    // 模型名，如 "deepseek-v4-flash"
     std::string baseUrl;  // API Base URL，如 "https://api.deepseek.com"
+    std::string note;     // 中文备注（可选，显示在下拉列表里；config.json 里可写，保存不丢）
 };
 
 // AI API Key 条目（下拉选择用；列表存 config.json，可自由增删）

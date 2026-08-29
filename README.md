@@ -50,7 +50,17 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build_release.ps1 -Zip
 ## 使用说明
 
 1. **首次运行**：启动后选择一次「词典目录」（存放术语对照词典的文件夹），程序会在 exe 所在目录自动生成 `config.json` 保存设置。
-2. **配置 AI**：在设置中填入 API Key、选择翻译模型等（设置会保存在 `config.json`，请勿将配置文件公开分享）。
+2. **配置 AI**：在设置中填入 API Key、选择翻译模型等（设置会保存在 `config.json`，请勿将配置文件公开分享）。**自定义 API 服务商**可手动编辑 `config.json` 的 `aiPresets` 添加，每项支持 `note` 中文备注（会显示在下拉框里，保存不丢失），例如：
+
+   ```json
+   "aiPresets": [
+     { "name": "DeepSeek", "model": "deepseek-v4-flash", "baseUrl": "https://api.deepseek.com", "note": "DeepSeek 官方 API" },
+     { "name": "智谱 GLM", "model": "glm-4.7-flash", "baseUrl": "https://open.bigmodel.cn/api/paas/v4", "note": "智谱 AI 开放平台（OpenAI 兼容）" },
+     { "name": "我的网关", "model": "my-model", "baseUrl": "https://my-proxy.example.com/v1", "note": "自建中转，速度稳定" }
+   ]
+   ```
+
+   另外程序解析 `config.json` 时也兼容 `//` 与 `/* */` 注释（JSONC），但注意：**程序保存配置时会整体重写该文件，手写的 `//` 注释会丢失**，请把说明写进 `note` 字段。
 3. **提取英文**：选择要汉化的 MOD 目录 → 点「1. 提取英文」，程序扫描并列出全部英文选项文本。
 4. **准备术语（可选）**：翻译前可通过「Wiki 导出」补充官方术语，或通过「导入翻译」将已有的 *_已翻译.json 合并进唯一词典，提升后续翻译准确性。
 5. **翻译**：点「2. 翻译」调用 AI 批量翻译；翻译结果可逐条人工校正（对照词典辅助）。若已用其它工具或网页 AI 翻译完成，也可通过「导入翻译」把结果合并进词典后再应用。
@@ -68,6 +78,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build_release.ps1 -Zip
 编译产物（`x64\`、`release\`）与运行配置（`config.json`）均被 `.gitignore` 忽略，不会进入仓库。
 
 ## 更新日志
+
+### v2.1.10
+
+- 新增：AI 预设支持 `note` 中文备注字段（写在 `config.json` 的 `aiPresets` 里，如 `"note": "自建中转，速度稳定"`），下拉框会显示「模型/地址（备注）」，保存配置不丢失，方便管理多个自定义 API 服务商
+- 改进：程序解析 `config.json` 时兼容 JSONC 注释（`//` 与 `/* */`），手写注释不再导致解析失败
+- 调整：模型名/API 地址下拉选中预设后，编辑框回填纯值（不带备注），避免备注污染实际填入的值
 
 ### v2.1.9
 
