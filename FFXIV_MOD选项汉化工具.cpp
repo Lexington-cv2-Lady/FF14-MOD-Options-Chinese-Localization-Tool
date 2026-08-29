@@ -1564,8 +1564,9 @@ static bool is_valid_chinese_side(const std::string& raw)
     return true;
 }
 
-// 添加一对术语（英文 -> 中文），按键去重
-static void add_wiki_term(json& result, int& added, const std::string& enRaw, const std::string& zhRaw)
+// 添加一对术语（英文 -> 中文），按键去重。
+// hitSkip 非空时，统计"词条已存在于词典、本次跳过"的次数（用于日志，避免误判爬虫失效）。
+static void add_wiki_term(json& result, int& added, const std::string& enRaw, const std::string& zhRaw, int* hitSkip = nullptr)
 {
     std::string e = enRaw, z = zhRaw;
     size_t ae = e.find_first_not_of(" \t\r\n"); if (ae == std::string::npos) return;
@@ -1582,6 +1583,7 @@ static void add_wiki_term(json& result, int& added, const std::string& enRaw, co
         result["terms"][e] = z;
         added++;
     }
+    else if (hitSkip) (*hitSkip)++;
 }
 
 // 从 wikitext 提取术语，支持多种格式（模板、链接、括号）
@@ -1684,7 +1686,7 @@ static void extract_terms_from_wikitext(const std::string& wikitext, json& resul
 // 解析 Data:<类型>/<id>.json 数据页，提取 中文名/英文名 对照。
 // Item 用「中文名/英文名」，Action/Status/Trait 用「cn/en」；直接取顶层字段即可。
 // 返回 0=既无中文也无英文，1=有中文，2=有英文，3=两者都有（用于诊断统计）。
-static int parse_data_page(const std::string& type, const std::string& content, json& result, int& added)
+static int parse_data_page(const std::string& type, const std::string& content, json& result, int& added, int* hitSkip = nullptr)
 {
     json o;
     try { o = json::parse(content); }
@@ -1695,14 +1697,14 @@ static int parse_data_page(const std::string& type, const std::string& content, 
     std::string en = o.value("英文名", o.value("en", std::string()));
     int flag = (zh.empty() ? 0 : 1) | (en.empty() ? 0 : 2);
     if (flag == 3 && zh != en)
-        add_wiki_term(result, added, en, zh);
+        add_wiki_term(result, added, en, zh, hitSkip);
     return flag;
 }
 
 // 固定词表：玩家种族（含子种族）官方中文名/英文名。
 // 数据来源：灰机 wiki「种族」页面（ff14.huijiwiki.com/wiki/种族），
 // 英文名为游戏内建 Race/Tribe 标准名。
-static void add_race_terms(json& result, int& added)
+static void add_race_terms(json& result, int& added, int* hitSkip = nullptr)
 {
     struct R { const char* en; const char* zh; };
     static const R races[] = {
@@ -1743,7 +1745,7 @@ static void add_race_terms(json& result, int& added)
         { "Viis", "维斯族" },
     };
     for (const auto& r : races)
-        add_wiki_term(result, added, r.en, r.zh);
+        add_wiki_term(result, added, r.en, r.zh, hitSkip);
 }
 
 void WikiImportThread()
@@ -1786,6 +1788,7 @@ void WikiImportThread()
         }
         int added = 0;
         int pages = 0;
+        int hitExisting = 0; // 已存在于词典、本次跳过（增量更新，非故障）
         long long cntZh = 0, cntEn = 0, cntBoth = 0;
         uint64_t wikiStartMs = GetTickCount64();
         std::string gapCont, rvCont;
@@ -1832,7 +1835,7 @@ void WikiImportThread()
                     else
                         content = p["revisions"][0].value("*", std::string());
                     if (content.empty()) continue;
-                    int flag = parse_data_page(type, content, result, added);
+                    int flag = parse_data_page(type, content, result, added, &hitExisting);
                     if (flag & 1) cntZh++;
                     if (flag & 2) cntEn++;
                     if (flag == 3) cntBoth++;
@@ -1846,7 +1849,8 @@ void WikiImportThread()
                 long long secs = (long long)(elapsed / 1000);
                 int speed = (int)(elapsed > 0 ? (double)pages * 1000.0 / elapsed : 0);
                 LogThread("[进度] " + type + " 已处理 " + std::to_string(pages) + " 页，新增术语 " + std::to_string(added)
-                    + "，用时 " + std::to_string(secs / 60) + "分" + std::to_string(secs % 60) + "秒"
+                    + "（命中已有 " + std::to_string(hitExisting) + "，跳过），用时 "
+                    + std::to_string(secs / 60) + "分" + std::to_string(secs % 60) + "秒"
                     + "，约 " + std::to_string(speed) + " 页/秒");
             }
             SetProgress(pages, -1); // 页面总数未知，用不确定进度
@@ -1889,14 +1893,17 @@ void WikiImportThread()
         }
 
         // 阶段2：并入固定种族/子种族词表
-        add_race_terms(result, added);
-        LogThread("[提示] 已并入种族/子种族词表，当前累计术语 " + std::to_string(added));
+        add_race_terms(result, added, &hitExisting);
+        LogThread("[提示] 已并入种族/子种族词表，本次新增术语 " + std::to_string(added)
+            + " 条，其中命中已有 " + std::to_string(hitExisting) + " 条（跳过）");
 
         std::string data = result.dump(2);
         write_binary_file(wikiPath, data);
-        // 诊断：报告数据页中中文名/英文名的真实覆盖情况，帮助判断抓取是否正常
+        // 诊断：报告数据页中中文名/英文名的真实覆盖情况，帮助判断抓取是否正常。
+        // 「命中已有」说明词条早已在词典中（增量更新），并非爬虫失效。
         LogThread("[提示] 诊断：共解析 " + std::to_string(pages) + " 个数据页，其中含中文名 " + std::to_string(cntZh)
-            + " 页、含英文名 " + std::to_string(cntEn) + " 页、中文+英文都齐全 " + std::to_string(cntBoth) + " 页");
+            + " 页、含英文名 " + std::to_string(cntEn) + " 页、中文+英文都齐全 " + std::to_string(cntBoth)
+            + " 页；本次新增术语 " + std::to_string(added) + " 条，命中已有词条 " + std::to_string(hitExisting) + " 条（跳过）");
         uint64_t wikiTotalMs = GetTickCount64() - wikiStartMs;
         long long wSecs = (long long)(wikiTotalMs / 1000);
         std::string wTime = std::to_string(wSecs / 60) + "分" + std::to_string(wSecs % 60) + "秒";
@@ -2777,50 +2784,77 @@ INT_PTR CALLBACK BlacklistDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM
 // ------------------------------------------------------------------
 INT_PTR CALLBACK WikiCatsDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
 {
-    UNREFERENCED_PARAMETER(lParam);
     HWND hList = GetDlgItem(hDlg, IDC_WIKI_CATS_LIST);
 
     switch (message) {
     case WM_INITDIALOG: {
-        // 填充列表
+        // 与恢复备份一致：复选框 + 整行高亮；单击行即勾选（LVN_ITEMCHANGED 联动），Ctrl+A / 全选按钮可框选全部
+        ListView_SetExtendedListViewStyle(hList, LVS_EX_CHECKBOXES | LVS_EX_FULLROWSELECT);
+        LVCOLUMN col = {};
+        col.mask = LVCF_WIDTH;
+        col.cx = 1000; // 留足宽度，避免长分类名被截断
+        ListView_InsertColumn(hList, 0, &col);
+        // 填充列表（行序与 g_wikiCategoryList 一一对应）
         for (const auto& cat : g_wikiCategoryList) {
-            SendMessageW(hList, LB_ADDSTRING, 0, (LPARAM)cat.display.c_str());
+            LVITEM item = {};
+            item.mask = LVIF_TEXT;
+            item.iItem = INT_MAX;
+            item.pszText = (LPWSTR)cat.display.c_str();
+            ListView_InsertItem(hList, &item);
         }
-        // 恢复上次选中状态
+        // 恢复上次勾选状态；无历史时默认勾选第一项（Item/）
+        bool anyChecked = false;
         for (size_t i = 0; i < g_wikiCategoryList.size(); ++i) {
             bool selected = false;
             for (const auto& saved : g_cfg.wikiCategories) {
                 if (saved == g_wikiCategoryList[i].prefix) { selected = true; break; }
             }
-            SendMessageW(hList, LB_SETSEL, selected ? TRUE : FALSE, (LPARAM)i);
+            if (selected) anyChecked = true;
+            ListView_SetCheckState(hList, (int)i, selected ? TRUE : FALSE);
         }
-        // 默认至少选中 Item/
-        if (g_cfg.wikiCategories.empty()) {
-            SendMessageW(hList, LB_SETSEL, TRUE, 0);
-        }
+        if (!anyChecked && !g_wikiCategoryList.empty())
+            ListView_SetCheckState(hList, 0, TRUE);
         return TRUE;
+    }
+    case WM_NOTIFY: {
+        // 点击/选中行时自动勾选复选框，让「勾选」与「选中/全选」等效（与恢复备份一致）
+        NMHDR* nm = (NMHDR*)lParam;
+        if (nm->idFrom == IDC_WIKI_CATS_LIST && nm->code == LVN_ITEMCHANGED) {
+            NMLISTVIEW* nmlv = (NMLISTVIEW*)lParam;
+            if ((nmlv->uChanged & LVIF_STATE)
+                && ((nmlv->uNewState & LVIS_SELECTED) != (nmlv->uOldState & LVIS_SELECTED))
+                && (nmlv->uNewState & LVIS_SELECTED))
+                ListView_SetCheckState(hList, nmlv->iItem, TRUE);
+            return TRUE;
+        }
+        break;
     }
     case WM_COMMAND: {
         int id = LOWORD(wParam);
         if (id == IDC_WIKI_CATS_ALL) {
-            for (size_t i = 0; i < g_wikiCategoryList.size(); ++i)
-                SendMessageW(hList, LB_SETSEL, TRUE, (LPARAM)i);
+            // 全选：整行选中 + 勾选
+            for (size_t i = 0; i < g_wikiCategoryList.size(); ++i) {
+                ListView_SetItemState(hList, (int)i, LVIS_SELECTED, LVIS_SELECTED);
+                ListView_SetCheckState(hList, (int)i, TRUE);
+            }
             return TRUE;
         }
         if (id == IDC_WIKI_CATS_NONE) {
-            for (size_t i = 0; i < g_wikiCategoryList.size(); ++i)
-                SendMessageW(hList, LB_SETSEL, FALSE, (LPARAM)i);
+            // 取消全选：取消选中 + 取消勾选
+            for (size_t i = 0; i < g_wikiCategoryList.size(); ++i) {
+                ListView_SetItemState(hList, (int)i, 0, LVIS_SELECTED);
+                ListView_SetCheckState(hList, (int)i, FALSE);
+            }
             return TRUE;
         }
         if (id == IDC_WIKI_CATS_OK || id == IDOK) {
             std::vector<std::string> selected;
             for (size_t i = 0; i < g_wikiCategoryList.size(); ++i) {
-                if (SendMessageW(hList, LB_GETSEL, (WPARAM)i, 0) > 0) {
+                if (ListView_GetCheckState(hList, (int)i))
                     selected.push_back(g_wikiCategoryList[i].prefix);
-                }
             }
             if (selected.empty()) {
-                MessageBoxW(hDlg, L"请至少选择一个分类。", L"提示", MB_OK | MB_ICONINFORMATION);
+                MessageBoxW(hDlg, L"请至少勾选一个分类。", L"提示", MB_OK | MB_ICONINFORMATION);
                 return TRUE;
             }
             g_wikiPrefixes = selected;
