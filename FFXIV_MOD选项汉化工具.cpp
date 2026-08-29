@@ -2370,55 +2370,71 @@ static bool AITranslateFile(const fs::path& inFile)
         return false;
     }
 
-    // 分批调用 AI
+    // 分批调用 AI（第一轮 + 最多 2 轮自动补翻，减少 AI 漏翻）
     int batch = g_cfg.aiBatchSize;
     if (batch < 1) batch = 1;
     if (batch > 100) batch = 100;
     int total = (int)pending.size();
     int batches = (total + batch - 1) / batch;
-    int okCount = 0, failCount = 0, cur = 0;
+    int okCount = 0;
     LogThread("[AI] 正在翻译中，共 " + std::to_string(total) + " 条，分 " + std::to_string(batches) + " 批");
-    for (size_t i = 0; i < pending.size(); i += batch) {
-        int batchNo = (int)(i / batch) + 1;
-        LogThread("[AI] 正在翻译第 " + std::to_string(batchNo) + "/" + std::to_string(batches) + " 批...");
-        if (g_cancel) {
-            LogThread("[提示] 已中断，剩余 " + std::to_string(total - cur) + " 条未翻译");
-            break;
-        }
-        size_t n = std::min<size_t>(batch, pending.size() - i);
-        std::vector<std::pair<std::string, std::string>> items;
-        for (size_t k = 0; k < n; ++k)
-            items.emplace_back(std::to_string(i + k), pending[i + k].english);
+    auto translateList = [&](std::vector<Item>& list) -> std::vector<Item> {
+        std::vector<Item> missed;
+        int cur = 0;
+        int nTotal = (int)list.size();
+        int nBatches = (nTotal + batch - 1) / batch;
+        for (size_t i = 0; i < list.size(); i += batch) {
+            int batchNo = (int)(i / batch) + 1;
+            LogThread("[AI] 正在翻译第 " + std::to_string(batchNo) + "/" + std::to_string(nBatches) + " 批...");
+            if (g_cancel) {
+                LogThread("[提示] 已中断，剩余 " + std::to_string(nTotal - cur) + " 条未翻译");
+                break;
+            }
+            size_t n = std::min<size_t>(batch, list.size() - i);
+            std::vector<std::pair<std::string, std::string>> items;
+            for (size_t k = 0; k < n; ++k)
+                items.emplace_back(std::to_string(i + k), list[i + k].english);
 
-        std::string err;
-        std::map<std::string, std::string> got;
-        bool okBatch = false;
-        bool retried = false;
-        for (int retry = 0; retry < 3 && !okBatch; ++retry) {
-            if (retry > 0) { retried = true; LogThread("[提示] 批次 " + std::to_string(i / batch + 1) + " 重试第 " + std::to_string(retry) + " 次..."); Sleep(2000); }
-            got.clear();
-            if (AITranslateBatch(items, got, err)) okBatch = true;
-            else LogThread("[错误] 批次 " + std::to_string(i / batch + 1) + " 失败: " + err);
-        }
-        if (okBatch) {
-            if (retried)
-                LogThread("[完成] 批次 " + std::to_string(i / batch + 1) + " 重试成功（该批结果已正常写入）");
-            for (size_t k = 0; k < n; ++k) {
-                auto f = got.find(std::to_string(i + k));
-                if (f != got.end()) {
-                    tj[pending[i + k].sec][pending[i + k].key] = f->second;
-                    okCount++;
+            std::string err;
+            std::map<std::string, std::string> got;
+            bool okBatch = false;
+            bool retried = false;
+            for (int retry = 0; retry < 3 && !okBatch; ++retry) {
+                if (retry > 0) { retried = true; LogThread("[提示] 批次 " + std::to_string(i / batch + 1) + " 重试第 " + std::to_string(retry) + " 次..."); Sleep(2000); }
+                got.clear();
+                if (AITranslateBatch(items, got, err)) okBatch = true;
+                else LogThread("[错误] 批次 " + std::to_string(i / batch + 1) + " 失败: " + err);
+            }
+            if (okBatch) {
+                if (retried)
+                    LogThread("[完成] 批次 " + std::to_string(i / batch + 1) + " 重试成功（该批结果已正常写入）");
+                for (size_t k = 0; k < n; ++k) {
+                    auto f = got.find(std::to_string(i + k));
+                    if (f != got.end()) {
+                        tj[list[i + k].sec][list[i + k].key] = f->second;
+                        okCount++;
+                    }
+                    else missed.push_back(list[i + k]);
                 }
             }
-        } else {
-            failCount += (int)n;
+            else {
+                for (size_t k = 0; k < n; ++k) missed.push_back(list[i + k]);
+            }
+            cur += (int)n;
+            SetProgress(cur, nTotal);
         }
-        cur += (int)n;
-        SetProgress(cur, total);
-    }
+        return missed;
+    };
 
+    std::vector<Item> missed = translateList(pending);
+    for (int round = 1; round <= 2 && !missed.empty() && !g_cancel; ++round) {
+        LogThread("[AI] 第 " + std::to_string(round) + " 轮补翻：仍有 " + std::to_string(missed.size()) + " 条漏项，重新发送...");
+        missed = translateList(missed);
+    }
+    if (!missed.empty())
+        LogThread("[提示] 经补翻后仍有 " + std::to_string(missed.size()) + " 条未翻译（见下方清单）");
     LogThread("[AI] 翻译完成：" + std::to_string(okCount) + " 条成功，"
-        + std::to_string(failCount) + " 条失败");
+        + std::to_string(missed.size()) + " 条最终未翻译");
     if (okCount == 0) return false;
 
     // 落盘：_未翻译 → _已翻译；同名已翻译含内容则另存 *_已翻译_AI.json
