@@ -2774,7 +2774,7 @@ static bool AITranslateFile(const fs::path& inFile)
     int total = (int)pending.size();
     int batches = (total + batch - 1) / batch;
     int okCount = 0;
-    LogThread("[AI] 正在翻译中，共 " + std::to_string(total) + " 条，分 " + std::to_string(batches) + " 批");
+    LogThread("[AI] 正在翻译中，共 " + std::to_string(total) + " 条，每批 " + std::to_string(batch) + " 条，分 " + std::to_string(batches) + " 批");
     auto translateList = [&](std::vector<Item>& list) -> std::vector<Item> {
         std::vector<Item> missed;
         int cur = 0;
