@@ -84,6 +84,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build_release.ps1 -Zip
 ### v2.2.4
 
 - 新增：操作区新增「检查翻译」按钮——扫描 MOD 内所有 group_*.json，报告仍为英文（未翻译）的组名/描述/选项条目；日志输出统计与残留 MOD 汇总，详细残留清单写入翻译目录的「_翻译检查报告.json」，方便快速核对哪些 MOD 还没翻完
+- 修复：AI 翻译前现在会用词典里的纯词条术语（如 wiki 术语「Tycoon Bootlets→泰空公主高跟鞋」）预填命中条目，不再因 AI 不知道术语而乱翻（此前 AI 翻译不参考词典，词典又只填空值，导致词典有的译名没被用上）
 - 调整：AI 翻译规则删除「严格保留列表」（Yiggle、Rue、Bibo、EXQB、YAB、YANILLA 等 MOD 专有名词不再要求保留英文，按普通词义翻译）
 
 ### v2.2.3

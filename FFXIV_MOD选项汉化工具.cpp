@@ -2734,6 +2734,24 @@ static bool AITranslateFile(const fs::path& inFile)
                 } catch (...) {}
             }
         }
+        // 纯词条术语（wiki 术语表/个人词条）预填：按英文原文查术语映射，
+        // 命中则直接填词典译名（纯中文），避免 AI 不知道术语乱翻（如 Tycoon Bootlets）
+        if (!pending.empty()) {
+            std::unordered_map<std::string, std::string> termMap;
+            size_t maxTermLen = 0;
+            if (LoadTermMap(termMap, maxTermLen)) {
+                std::vector<Item> rest;
+                for (auto& it : pending) {
+                    std::string tr = TranslateText(it.english, termMap, maxTermLen);
+                    if (!tr.empty() && tr != it.english) {
+                        tj[it.sec][it.key] = tr;
+                        dictFilled++;
+                    }
+                    else rest.push_back(it);
+                }
+                pending = std::move(rest);
+            }
+        }
     }
     if (dictFilled > 0)
         LogThread("[提示] 唯一词典命中 " + std::to_string(dictFilled) + " 条，直接填充");
