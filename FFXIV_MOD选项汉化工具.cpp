@@ -2457,6 +2457,28 @@ static bool AITranslateFile(const fs::path& inFile)
             }
         }
     }
+    // 统计仍未翻译的条目（AI 漏掉 / 返回为空的），方便用户定位后手动补翻或重跑
+    {
+        std::vector<std::string> stillUntranslated;
+        for (auto& sec : { "_options", "_descriptions" }) {
+            if (!tj.contains(sec) || !tj[sec].is_object()) continue;
+            for (auto& it : tj[sec].items()) {
+                std::string v = it.value().is_string() ? it.value().get<std::string>() : "";
+                if (v.empty()) {
+                    auto kp = it.key().rfind("||");
+                    stillUntranslated.push_back((kp == std::string::npos) ? it.key() : it.key().substr(kp + 2));
+                }
+            }
+        }
+        if (!stillUntranslated.empty()) {
+            std::string msg = "[提示] 仍有 " + std::to_string(stillUntranslated.size()) + " 条未翻译（AI 漏掉/未返回）：";
+            for (size_t z = 0; z < stillUntranslated.size() && z < 10; ++z)
+                msg += "\r\n  - " + stillUntranslated[z];
+            if (stillUntranslated.size() > 10)
+                msg += "\r\n  ... 其余 " + std::to_string(stillUntranslated.size() - 10) + " 条省略";
+            LogThread(msg);
+        }
+    }
     if (write_binary_file(outFile, tj.dump(2))) {
         LogThread("[提示] 已写入 " + wstring_to_utf8(outFile.filename().wstring()));
         return true;

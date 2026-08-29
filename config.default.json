@@ -28,7 +28,7 @@
   "fontSize": 11,
   "penumbraDir": "",
   "pureChinese": false,
-  "swapWordOrder": false,
+  "swapWordOrder": true,
   "translationDir": "",
   "wikiCategories": [],
   "winH": 0,

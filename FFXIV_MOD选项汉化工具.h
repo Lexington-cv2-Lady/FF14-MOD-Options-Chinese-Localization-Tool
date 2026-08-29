@@ -120,7 +120,7 @@ struct AppConfig {
     std::string penumbraDir;          // Penumbra 父目录
     std::string translationDir;       // 翻译目录
     std::string dictionaryDir;        // 词典目录（旧版也在此存放 config.json，可迁移）
-    bool swapWordOrder = false;       // 词序调换
+    bool swapWordOrder = true;        // 词序调换（默认勾选：显示「中文（英文）」）
     bool autoBackup = true;           // 自动备份
     bool pureChinese = false;         // 纯中文模式
     std::vector<std::string> blacklist; // 黑名单
