@@ -3181,33 +3181,22 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
                     SaveConfig();
                 }
             }
-            // 手动输入：匹配得上就记住预设名，否则记为自定义
+            // 手动输入：更新模型名（允许留空，翻译时才用默认值），匹配得上就记住预设名
             else if (wmEvent == CBN_EDITCHANGE) {
                 g_cfg.aiModel = wstring_to_utf8(GetEditText(hDlg, IDC_AI_MODEL));
-                if (g_cfg.aiModel.empty()) g_cfg.aiModel = "deepseek-v4-flash";
                 int idx = FindPresetByModel(g_cfg.aiModel);
                 g_cfg.aiPreset = (idx >= 0) ? g_cfg.aiPresets[idx].name : "";
             }
             break;
         case IDC_AI_BASEURL:
-            // 下拉选中：联动填充该预设对应的模型名
-            if (wmEvent == CBN_SELCHANGE) {
+            // 地址变化（下拉选择或手动输入）：只更新地址，绝不反向改动模型名
+            if (wmEvent == CBN_SELCHANGE || wmEvent == CBN_EDITCHANGE) {
                 g_cfg.aiBaseUrl = wstring_to_utf8(GetEditText(hDlg, IDC_AI_BASEURL));
-                int idx = FindPresetByBaseUrl(g_cfg.aiBaseUrl);
-                if (idx >= 0) {
-                    const AIPreset& p = g_cfg.aiPresets[idx];
-                    g_cfg.aiPreset = p.name;
-                    g_cfg.aiModel = p.model;
-                    SetEditText(hDlg, IDC_AI_MODEL, utf8_to_wstring(p.model));
-                    Log("已选择预设：" + p.name + "（模型 " + p.model + "，地址 " + p.baseUrl + "）");
-                    SaveConfig();
-                }
-            }
-            else if (wmEvent == CBN_EDITCHANGE) {
-                g_cfg.aiBaseUrl = wstring_to_utf8(GetEditText(hDlg, IDC_AI_BASEURL));
-                if (g_cfg.aiBaseUrl.empty()) g_cfg.aiBaseUrl = "https://api.deepseek.com";
-                int idx = FindPresetByBaseUrl(g_cfg.aiBaseUrl);
-                g_cfg.aiPreset = (idx >= 0) ? g_cfg.aiPresets[idx].name : "";
+                // 仅当模型与地址同属一个预设时才保留预设名，否则视为自定义组合
+                int mi = FindPresetByModel(g_cfg.aiModel);
+                int bi = FindPresetByBaseUrl(g_cfg.aiBaseUrl);
+                g_cfg.aiPreset = (mi >= 0 && mi == bi) ? g_cfg.aiPresets[mi].name : "";
+                if (wmEvent == CBN_SELCHANGE) SaveConfig();
             }
             break;
         case IDC_AI_BATCH: {
