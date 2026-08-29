@@ -860,7 +860,16 @@ bool ApplyTranslation()
         std::string d;
         if (!read_binary_file(dictPath, d)) { Log("[错误] 无法读取词典"); return false; }
         try { dict = json::parse(clean_utf8(d)); }
-        catch (...) { Log("[错误] 词典解析失败"); return false; }
+        catch (...) {
+            // 汇总词典损坏：备份后按「wiki 原典优先 + 汉化总词典补充」重建，避免整个流程卡死
+            Log("[错误] wiki_术语对照and个人填充.json 解析失败（可能损坏），已备份并从 wiki 原典重建");
+            std::error_code bec;
+            fs::path bak = dictPath;
+            bak += L".损坏备份";
+            fs::rename(dictPath, bak, bec);
+            EnsureDictFile();
+            dict = json::object();
+        }
     }
     if (!dict.is_object()) dict = json::object();
     if (!dict.contains("_options")) dict["_options"] = json::object();
@@ -1334,11 +1343,12 @@ bool ApplyTranslation()
 // ------------------------------------------------------------------
 // 确保唯一词典文件 wiki_术语对照and个人填充.json 存在（仅首次生成）。
 // 该文件是程序唯一的词典，含三部分：
-//   terms         英文->中文 固定映射（wiki 导出 + 个人填充，先来后到），补全/回滚用
+//   terms         英文->中文 固定映射（wiki 原典 + 个人填充，先来后到），补全/回滚用
 //   _options      完整 key（路径||Name||原文）翻译，应用翻译用
 //   _descriptions 同上
-// 首次生成规则：wiki_术语对照.json 的词条固定优先，汉化总词典.json 的条目仅补充。
+// 首次生成规则：wiki_术语对照.json（wiki 导出的原典，固定优先）→ 汉化总词典.json 仅补充。
 // 生成后程序不再自动重写本文件——要修改已翻译的词条，直接编辑本文件即可。
+// 若汇总词典缺失或损坏，程序会以 wiki 原典为基准重建，个人填充靠 *_已翻译.json 自动回填。
 static void EnsureDictFile()
 {
     if (g_cfg.dictionaryDir.empty()) return;
@@ -1416,6 +1426,58 @@ static void EnsureDictFile()
     write_binary_file(outPath, merged.dump(2));
 }
 
+// Wiki 原典导出后，把新增词条同步进汇总词典 wiki_术语对照and个人填充.json：
+// - 汇总词典不存在 → 按 EnsureDictFile 规则从原典 + 汉化总词典 重新生成
+// - 已存在 → 只补入原典有而汇总没有的 terms（不覆盖已有，先来后到）
+static void SyncWikiToMerged(const fs::path& dictDir)
+{
+    std::error_code ec;
+    fs::path mergedPath = dictDir / fs::u8path("wiki_术语对照and个人填充.json");
+    if (!fs::exists(mergedPath, ec) || ec) {
+        EnsureDictFile();
+        LogThread("[提示] 汇总词典 wiki_术语对照and个人填充.json 不存在，已按「wiki 原典优先 + 汉化总词典补充」重新生成");
+        return;
+    }
+    std::string d;
+    if (!read_binary_file(mergedPath, d)) return;
+    json merged;
+    try { merged = json::parse(clean_utf8(d)); }
+    catch (...) { merged = json::object(); }
+    if (!merged.is_object()) merged = json::object();
+    if (!merged.contains("terms")) merged["terms"] = json::object();
+    if (!merged["terms"].is_object()) merged["terms"] = json::object();
+
+    fs::path wikiPath = dictDir / fs::u8path("wiki_术语对照.json");
+    std::error_code wec;
+    if (!fs::exists(wikiPath, wec) || wec) return;
+    std::string wd;
+    if (!read_binary_file(wikiPath, wd)) return;
+    json wiki;
+    try { wiki = json::parse(clean_utf8(wd)); }
+    catch (...) { return; }
+    if (!wiki.is_object() || !wiki.contains("terms") || !wiki["terms"].is_object()) return;
+
+    int added = 0;
+    for (auto& it : wiki["terms"].items()) {
+        if (!it.value().is_string()) continue;
+        std::string en = it.key(), zh = it.value().get<std::string>();
+        if (en.empty() || zh.empty() || en == zh) continue;
+        if (!merged["terms"].contains(en)) {
+            merged["terms"][en] = zh;
+            added++;
+        }
+    }
+    if (added > 0) {
+        if (!merged.contains("_options")) merged["_options"] = json::object();
+        if (!merged.contains("_descriptions")) merged["_descriptions"] = json::object();
+        write_binary_file(mergedPath, merged.dump(2));
+        LogThread("[提示] 已把 wiki 原典新增的 " + std::to_string(added) + " 条术语同步进汇总词典");
+    }
+    else {
+        LogThread("[提示] 汇总词典已包含全部 wiki 原典词条，无需同步");
+    }
+}
+
 // 加载词典 → 英文->中文 映射。
 // 唯一词典来源：wiki_术语对照and个人填充.json 的 terms 部分
 // （wiki 固定优先 + 个人填充，先来后到；要修改词条请直接编辑该文件）。
@@ -1430,25 +1492,40 @@ static bool LoadTermMap(std::unordered_map<std::string, std::string>& termMap, s
     fs::path mergedPath = dictDir / fs::u8path("wiki_术语对照and个人填充.json");
     std::error_code gec;
     if (fs::exists(mergedPath, gec) && !gec) {
+        auto loadInto = [&](const json& md) {
+            if (!md.is_object() || !md.contains("terms") || !md["terms"].is_object()) return;
+            for (auto& it : md["terms"].items()) {
+                if (!it.value().is_string()) continue;
+                std::string en = it.key(), zh = it.value().get<std::string>();
+                if (en.empty() || zh.empty() || en == zh) continue;
+                termMap[en] = zh;
+                // 同时存入小写 key：选项文本中常出现小写/首字母小写，避免大小写不一致导致漏翻
+                std::string enLower;
+                enLower.reserve(en.size());
+                for (unsigned char c : en) enLower += static_cast<char>(std::tolower(c));
+                if (enLower != en) termMap[enLower] = zh;
+                if (en.size() > maxTermLen) maxTermLen = en.size();
+            }
+        };
         std::string d;
         if (read_binary_file(mergedPath, d)) {
             try {
                 json md = json::parse(clean_utf8(d));
-                if (md.is_object() && md.contains("terms") && md["terms"].is_object()) {
-                    for (auto& it : md["terms"].items()) {
-                        if (!it.value().is_string()) continue;
-                        std::string en = it.key(), zh = it.value().get<std::string>();
-                        if (en.empty() || zh.empty() || en == zh) continue;
-                        termMap[en] = zh;
-                        // 同时存入小写 key：选项文本中常出现小写/首字母小写，避免大小写不一致导致漏翻
-                        std::string enLower;
-                        enLower.reserve(en.size());
-                        for (unsigned char c : en) enLower += static_cast<char>(std::tolower(c));
-                        if (enLower != en) termMap[enLower] = zh;
-                        if (en.size() > maxTermLen) maxTermLen = en.size();
-                    }
+                loadInto(md);
+            }
+            catch (...) {
+                // 汇总词典损坏：备份后按「wiki 原典优先 + 汉化总词典补充」重建，再读取
+                LogThread("[错误] wiki_术语对照and个人填充.json 解析失败（可能损坏），已备份并从 wiki 原典重建");
+                std::error_code bec;
+                fs::path bak = mergedPath;
+                bak += L".损坏备份";
+                fs::rename(mergedPath, bak, bec);
+                EnsureDictFile();
+                std::string d2;
+                if (read_binary_file(mergedPath, d2)) {
+                    try { loadInto(json::parse(clean_utf8(d2))); } catch (...) {}
                 }
-            } catch (...) {}
+            }
         }
     }
     if (maxTermLen > 200) maxTermLen = 200;
@@ -1662,7 +1739,16 @@ bool ImportTranslations(const fs::path& inFile, bool autoFill)
         std::string d;
         if (read_binary_file(dictPath, d)) {
             try { dict = json::parse(clean_utf8(d)); }
-            catch (...) { dict = json::object(); }
+            catch (...) {
+                // 汇总词典损坏：备份后从 wiki 原典重建，防止后续写入覆盖丢失全部数据
+                LogThread("[错误] wiki_术语对照and个人填充.json 解析失败（可能损坏），已备份并从 wiki 原典重建");
+                std::error_code bec;
+                fs::path bak = dictPath;
+                bak += L".损坏备份";
+                fs::rename(dictPath, bak, bec);
+                EnsureDictFile();
+                dict = json::object();
+            }
         }
     }
     if (!dict.is_object()) dict = json::object();
@@ -1876,7 +1962,8 @@ void WikiImportThread()
         fs::create_directories(dictDir, ec);
         if (ec) { LogThread("[错误] 无法创建词典目录"); PostMessageW(g_hMainWnd, WM_APP_DONE, 0, 0); return; }
     }
-    fs::path wikiPath = dictDir / fs::u8path("wiki_术语对照and个人填充.json");
+    // wiki 原典（纯 wiki 导出，只含 terms）；汇总词典由原典 + 个人填充生成
+    fs::path wikiPath = dictDir / fs::u8path("wiki_术语对照.json");
 
     json result;
     bool wikiExists = fs::exists(wikiPath, existEc);
@@ -1889,17 +1976,34 @@ void WikiImportThread()
     }
     if (!result.is_object()) result = json::object();
     if (!result.contains("terms")) result["terms"] = json::object();
-    if (!result.contains("_options")) result["_options"] = json::object();
-    if (!result.contains("_descriptions")) result["_descriptions"] = json::object();
+    if (!result["terms"].is_object()) result["terms"] = json::object();
+    // 原典不存在时：以现有汇总词典的 terms 作为初始基线，避免首次导出全量重抓
+    if (result["terms"].empty()) {
+        fs::path mergedPath = dictDir / fs::u8path("wiki_术语对照and个人填充.json");
+        std::error_code mec;
+        if (fs::exists(mergedPath, mec) && !mec) {
+            std::string d;
+            if (read_binary_file(mergedPath, d)) {
+                try {
+                    json mj = json::parse(clean_utf8(d));
+                    if (mj.is_object() && mj.contains("terms") && mj["terms"].is_object()) {
+                        result["terms"] = mj["terms"];
+                        LogThread("[提示] wiki 原典 wiki_术语对照.json 不存在，已从现有汇总词典复制 "
+                            + std::to_string(mj["terms"].size()) + " 条术语作为初始原典");
+                    }
+                } catch (...) {}
+            }
+        }
+    }
 
     try {
         // 阶段1：批量抓取 Data:Item/、Data:Action/ 等数据页（含中文名/英文名/描述）
         // 用 cdn 只读接口：ff14.huijiwiki.com/api.php 会被 Cloudflare 拦截（返回 HTML 导致解析失败），
         // cdn.huijiwiki.com/ff14/api.php 对爬虫/程序友好，稳定返回完整 JSON（含英文名/日文名等）。
         std::string api = "https://cdn.huijiwiki.com/ff14/api.php?action=query&generator=allpages&format=json&utf8=1&gaplimit=500&prop=revisions&rvprop=content&rvslots=main";
-        if (wikiExists && result.contains("terms") && result["terms"].is_object() && result["terms"].size() > 0) {
-            LogThread("[提示] 已加载现有 wiki_术语对照and个人填充.json（已有 " + std::to_string(result["terms"].size())
-                + " 条术语），本次为增量更新；已存在的词条（含你手动改过的）不会被覆盖");
+        if (wikiExists && result["terms"].size() > 0) {
+            LogThread("[提示] 已加载现有 wiki 原典 wiki_术语对照.json（已有 " + std::to_string(result["terms"].size())
+                + " 条术语），本次为增量更新；已存在的词条不会被覆盖");
         }
         int added = 0;
         int pages = 0;
@@ -2012,8 +2116,11 @@ void WikiImportThread()
         LogThread("[提示] 已并入种族/子种族词表，本次新增术语 " + std::to_string(added)
             + " 条，其中命中已有 " + std::to_string(hitExisting) + " 条（跳过）");
 
-        std::string data = result.dump(2);
-        write_binary_file(wikiPath, data);
+        // 写回 wiki 原典（纯净结构：仅 terms），再同步进汇总词典
+        json wikiOut;
+        wikiOut["terms"] = result["terms"];
+        write_binary_file(wikiPath, wikiOut.dump(2));
+        SyncWikiToMerged(dictDir);
         // 诊断：报告数据页中中文名/英文名的真实覆盖情况，帮助判断抓取是否正常。
         // 「命中已有」说明词条早已在词典中（增量更新），并非爬虫失效。
         LogThread("[提示] 诊断：共解析 " + std::to_string(pages) + " 个数据页，其中含中文名 " + std::to_string(cntZh)
@@ -2024,14 +2131,15 @@ void WikiImportThread()
         std::string wTime = std::to_string(wSecs / 60) + "分" + std::to_string(wSecs % 60) + "秒";
         if (g_cancel.load()) {
             LogThread("[提示] Wiki 导出已中断：共处理 " + std::to_string(pages) + " 页，新增术语 " + std::to_string(added)
-                + " 条，命中已有 " + std::to_string(hitExisting) + " 条（跳过），总用时 " + wTime + "，已保存当前结果");
+                + " 条，命中已有 " + std::to_string(hitExisting) + " 条（跳过），总用时 " + wTime + "，原典已保存");
         }
         else {
             LogThread("[完成] Wiki 导出结束：共处理 " + std::to_string(pages) + " 页，新增术语 " + std::to_string(added)
                 + " 条，命中已有 " + std::to_string(hitExisting) + " 条（跳过），总用时 " + wTime
-                + "，结果已并入 wiki_术语对照and个人填充.json");
+                + "，结果已写入 wiki 原典 wiki_术语对照.json 并同步进汇总词典");
         }
-        LogThread("[提示] 词典文件：wiki_术语对照and个人填充.json —— 如需修改词条请直接编辑该文件");
+        LogThread("[提示] 原典：wiki_术语对照.json（纯 wiki 词条，防止汇总词典出错时丢失）；"
+            "程序实际使用：wiki_术语对照and个人填充.json（原典 + 个人填充）—— 个人词条请直接编辑汇总词典");
     }
     catch (const std::exception& e) {
         LogThread("[错误] Wiki 导出异常：" + std::string(e.what()));
