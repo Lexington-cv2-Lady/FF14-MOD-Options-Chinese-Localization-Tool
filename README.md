@@ -2,6 +2,8 @@
 
 一款面向《最终幻想 14》（FFXIV）MOD 作者的选项汉化辅助工具。自动提取 MOD 内的英文选项文本，调用 AI 批量翻译，并结合官方术语对照词典辅助人工校正，最终把汉化结果写回 MOD。
 
+![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)
+
 ## 功能特性
 
 - **一键提取**：扫描 MOD 目录，提取选项/配置文本中的英文条目
@@ -68,6 +70,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build_release.ps1 -Zip
 
 - `config.json`（含 AI API Key）保存在**程序运行目录**，已被 `.gitignore` 排除，不会提交到仓库。
 - 请勿把个人 API Key、词典数据等敏感文件上传到公开仓库。
+
+## 许可证
+
+本项目基于 **GNU GPL v3.0** 协议开源：
+
+- 你可以**免费**使用、修改、分发本软件；
+- 任何基于本项目的修改版/衍生作品，**对外发布时必须同样以 GPL-3.0 开源其源码**；
+- 本项目**无任何担保**（详见 LICENSE 文件第 15/16 条）。
 
 ## 免责声明
 
