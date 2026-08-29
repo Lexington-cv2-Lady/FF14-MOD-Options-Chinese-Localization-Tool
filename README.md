@@ -88,6 +88,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build_release.ps1 -Zip
 - 调整：AI 翻译设置界面的「Key 备注」标签改为「API Key」
 - 调整：AI 翻译设置区新增「打开配置」按钮，可直接用系统关联程序打开 `config.user.json`
 - 修复：模型名 / API 地址下拉框不再拼接预设 `note`，避免编辑框和保存值被污染
+- 调整：模型名 / API 地址下拉项显示「预设名 | 值」（如 `DeepSeek | deepseek-v4-flash`），一眼可辨认 DeepSeek / 智谱 GLM 等预设；选中后编辑框仍回填纯值，不污染保存
+- 内部：启动时日志打印已加载的 AI 预设数量与名称，便于排查
 
 ### v2.2.2
 

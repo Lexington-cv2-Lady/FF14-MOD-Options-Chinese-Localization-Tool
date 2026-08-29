@@ -2847,19 +2847,34 @@ static void FillAIPresetCombos(HWND hDlg)
     if (!hModel || !hBase) return;
     SendMessageW(hModel, CB_RESETCONTENT, 0, 0);
     SendMessageW(hBase, CB_RESETCONTENT, 0, 0);
-    // 下拉项只显示纯模型名 / 纯 API 地址，不拼接备注，避免编辑框被污染（note 仍可显示在 AI 服务商预设列表中）
+    // 下拉项显示「预设名 | 值」，一眼能认出 DeepSeek / 智谱 GLM 等预设；
+    // 选中后编辑框回填纯值（CBN_SELCHANGE 通过 itemdata 索引取 g_cfg.aiPresets），不会把名字/备注拼进保存值
     // 仅填充非空项，避免保存了单侧值的预设在下拉里出现空行
+    HDC hdc = GetDC(hModel);
+    HFONT hf = (HFONT)SendMessageW(hModel, WM_GETFONT, 0, 0);
+    HFONT hOld = hf ? (HFONT)SelectObject(hdc, hf) : nullptr;
+    int maxMW = 240, maxBW = 240;
     for (size_t i = 0; i < g_cfg.aiPresets.size(); ++i) {
         const auto& p = g_cfg.aiPresets[i];
         if (!p.model.empty()) {
-            int mi = (int)SendMessageW(hModel, CB_ADDSTRING, 0, (LPARAM)utf8_to_wstring(p.model).c_str());
+            std::wstring label = (p.name.empty() ? L"" : utf8_to_wstring(p.name) + L" | ") + utf8_to_wstring(p.model);
+            int mi = (int)SendMessageW(hModel, CB_ADDSTRING, 0, (LPARAM)label.c_str());
             SendMessageW(hModel, CB_SETITEMDATA, mi, (LPARAM)i);
+            SIZE sz = {};
+            if (GetTextExtentPoint32W(hdc, label.c_str(), (int)label.size(), &sz) && sz.cx + 24 > maxMW) maxMW = sz.cx + 24;
         }
         if (!p.baseUrl.empty()) {
-            int bi = (int)SendMessageW(hBase, CB_ADDSTRING, 0, (LPARAM)utf8_to_wstring(p.baseUrl).c_str());
+            std::wstring label = (p.name.empty() ? L"" : utf8_to_wstring(p.name) + L" | ") + utf8_to_wstring(p.baseUrl);
+            int bi = (int)SendMessageW(hBase, CB_ADDSTRING, 0, (LPARAM)label.c_str());
             SendMessageW(hBase, CB_SETITEMDATA, bi, (LPARAM)i);
+            SIZE sz = {};
+            if (GetTextExtentPoint32W(hdc, label.c_str(), (int)label.size(), &sz) && sz.cx + 24 > maxBW) maxBW = sz.cx + 24;
         }
     }
+    if (hOld) SelectObject(hdc, hOld);
+    ReleaseDC(hModel, hdc);
+    SendMessageW(hModel, CB_SETDROPPEDWIDTH, maxMW, 0);
+    SendMessageW(hBase, CB_SETDROPPEDWIDTH, maxBW, 0);
 }
 
 // 让输入框宽度随文本字节长度自适应（minDlu~maxDlu，DLU 单位），宽度不足自动截断滚动
@@ -3465,6 +3480,11 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
         ApplyFontToDialog(hDlg);
         RefreshConfigUI();
         Log("FFXIV 模组汉化工具已启动");
+        {
+            std::string names;
+            for (const auto& p : g_cfg.aiPresets) { if (!names.empty()) names += "、"; names += p.name; }
+            Log("[AI] 已加载 " + std::to_string(g_cfg.aiPresets.size()) + " 个 AI 预设：" + names);
+        }
         if (g_cfg.winW > 0 && g_cfg.winH > 0)
             Log("[窗口] 已恢复上次大小：" + std::to_string(g_cfg.winW) + " x " + std::to_string(g_cfg.winH));
         if (!g_cfg.penumbraDir.empty()) Log("Penumbra 目录：" + g_cfg.penumbraDir);
