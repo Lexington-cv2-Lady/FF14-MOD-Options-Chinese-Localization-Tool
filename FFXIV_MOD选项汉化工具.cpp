@@ -644,14 +644,14 @@ bool ExtractEnglish()
     json out;
     out["翻译规则"] = {
         {"1. 翻译范围", "无论是 _descriptions（描述）还是 _options（选项），都必须翻译，一视同仁。"},
-        {"2. 格式要求", "所有翻译结果统一为\"中文（英文）\"格式，例如\"治疗（Cure）\"。除非满足第3条，否则不得省略英文。"},
+        {"2. 格式要求", "短名称（选项/组名）统一为\"中文（英文）\"格式，如\"治疗（Cure）\"，括号一律用全角；长描述（Description）直接翻译成通顺的中文句子，不套括号，也不得保留英文原文。"},
         {"3. 去重规则", "仅当括号内的英文与括号外的中文内容完全一致（即意思完全相同）时，才可去掉括号，只保留中文。若中英文意思不同（如版本区分），则必须保留括号及英文。"},
         {"4. 严格保留列表（仅限以下词汇）", "纯数字（如75%）、版本号，以及以下MOD专有名词：Yiggle, Rue, Bibo, EXQB, YAB, YANILLA。除此之外的其他英文单词或短语，都必须翻译成中文。"},
-        {"5. 翻译指令", "对于任何英文短语，即使带有连字符（如 Connectors - Face），也应将其视为一个整体进行翻译，而不是保留原文。如果遇到无法确认的词汇，请根据上下文推断其通用含义进行翻译，译文保留\"中文（英文）\"格式。"},
+        {"5. 翻译指令", "对于任何英文短语，即使带有连字符（如 Connectors - Face），也应将其视为一个整体进行翻译，而不是保留原文。带「└─」「├─」等层级装饰符的名字忽略装饰符整体翻译，括号内只放最简英文，禁止嵌套重复。绝对禁止输出\"英文 / 中文\"或\"英文换行中文\"这类双语拼接。如果遇到无法确认的词汇，请根据上下文推断其通用含义进行翻译。"},
         {"6. 文件命名", "翻译完成后，将文件名中的\"_未翻译\"改为\"_已翻译\"。"},
         {"7. 交付方式", "每次修改后，请直接提供完整的 JSON 文件内容。"},
         {"说明", "将英文翻译为中文。请保持 JSON 结构，仅填写 _options 和 _descriptions 的翻译。"},
-        {"格式提示", "请按照 中文（英文） 格式填写翻译，例如 发型1（Hairstyle 1）。纯中文模式下只填中文。"}
+        {"格式提示", "短名称按 中文（英文） 格式填写，例如 发型1（Hairstyle 1）；长描述直接填中文句子，不要保留英文，也不要输出\"英文 / 中文\"拼接。"}
     };
     out["_options"] = json::object();
     out["_descriptions"] = json::object();
@@ -1200,7 +1200,8 @@ bool ApplyTranslation()
         // - 已是中文：识别双语格式（括号 / 斜杠）按当前设置重新规范化，实现
         //   ① 斜杠"英文/中文"转"中文（英文）对照/纯中文"；② 纯中文可覆盖之前应用的对照格式
         // - 纯英文：优先查格式转换词典，回退到唯一词典 + 拼接规则
-        auto applyString = [&](const std::string& original, const std::string& dictTrans) -> std::string {
+        // - isDesc=true（描述字段）：译文已是中文时直接采用，不强制拼上括号英文
+        auto applyString = [&](const std::string& original, const std::string& dictTrans, bool isDesc = false) -> std::string {
             if (contains_chinese(original)) {
                 std::string zh, en;
                 if (parseParenPair(original, zh, en))          // 中文（英文）/ 英文（中文）
@@ -1212,6 +1213,16 @@ bool ApplyTranslation()
             // 1. 优先查格式转换词典：把"英文"或"英文 / 中文"直接转成标准"中文（英文）"
             auto fit = formatMap.find(original);
             if (fit != formatMap.end()) return fit->second;
+            if (isDesc) {
+                // 描述字段：译文含中文即视为已翻译，直接采用（规范化括号/斜杠格式）
+                std::string z, e;
+                if (parseParenPair(dictTrans, z, e))
+                    return combineZhEn("", z, e);              // 已有括号格式则按设置规范化
+                if (parseSlashPair(dictTrans, z, e))
+                    return combineZhEn(extractPrefix(dictTrans, z, e), z, e); // 斜杠双语转标准格式
+                if (contains_chinese(dictTrans)) return dictTrans;             // 纯中文直接采用
+                return dictTrans.empty() ? original : dictTrans;               // 仍是英文则回退
+            }
             // 2. 回退到唯一词典 + 拼接规则
             return makeTranslation(original, dictTrans);
         };
@@ -1305,7 +1316,7 @@ bool ApplyTranslation()
                     if (!is_blacklisted(orig, blacklist)) {
                         std::string trans = lookupTrans(descriptions, backupDesc, key);
                         if (!trans.empty()) {
-                            std::string res = applyString(orig, trans);
+                            std::string res = applyString(orig, trans, true); // 描述：纯中文直接采用
                             if (res != orig) { j["Description"] = res; appliedDesc++; changed = true; }
                         }
                     }
@@ -1322,7 +1333,7 @@ bool ApplyTranslation()
                         if (!is_blacklisted(orig, blacklist)) {
                             std::string trans = lookupTrans(descriptions, backupDesc, key);
                             if (!trans.empty()) {
-                                std::string res = applyString(orig, trans);
+                                std::string res = applyString(orig, trans, true); // 描述：纯中文直接采用
                                 if (res != orig) { it.value() = res; appliedDesc++; changed = true; }
                             }
                         }
@@ -2419,12 +2430,16 @@ static bool AITranslateBatch(const std::vector<std::pair<std::string, std::strin
         "你是《最终幻想14》(FFXIV) 模组本地化的专业译者，把英文模组文本翻译成简体中文。\n"
         "硬性要求：\n"
         "1. 翻译范围：_descriptions（描述）与 _options（选项）一视同仁，都必须翻译。\n"
-        "2. 译文格式统一为「中文（英文）」，例如 治疗（Cure）；除非满足第 3 条，否则不得省略英文。\n"
-        "3. 去重：仅当括号内英文与括号外中文意思完全相同时，才可去掉括号只保留中文；若中英文意思不同（如版本区分），必须保留括号及英文。\n"
-        "4. 严格保留列表（仅限以下情况）：纯数字（如75%）、版本号、MOD 专有名词 Yiggle、Rue、Bibo、EXQB、YAB、YANILLA。除此之外的任何英文单词或短语都必须翻译成中文。\n"
-        "5. 形如「XXX - YYY」的英文（如 Connectors - Face）是普通选项名，应视为整体翻译，不得保留原文。\n"
-        "6. 遇到不确定含义的词汇，根据上下文推断其通用含义进行翻译，译文仍按第 2 条格式保留「中文（英文）」，括号内为原文英文。\n"
-        "7. 只输出一个 JSON 对象：键为条目 id（字符串），值为译文。不要输出任何其他内容。";
+        "2. 短名称（选项名/组名）格式统一为「中文（英文）」，例如 治疗（Cure）；括号一律用全角（），括号内英文为原名的本体英文（最简形式），不得省略。\n"
+        "3. 长描述（Description）直接翻译成自然通顺的中文句子，不使用括号格式，也不得保留英文原文；仅当描述本身是单个术语或短语时才用「中文（英文）」。\n"
+        "4. 禁止双语拼接：绝对禁止输出「英文 / 中文」或「英文 换行 中文」这类把原文与译文并排的文本。\n"
+        "5. 禁止嵌套与重复：原名形如「└─ animation (cure&haelan(pvp) / 治疗&治愈(pvp))」时，忽略「└─」「├─」等层级装饰符，把整串名字作为一个整体翻译成一对「中文（英文）」；括号内只放一个最简英文，禁止输出「中文（半截原文）（另半截原文）」或重复原名。示例：应输出 角色动作（Animation），而不是 角色动作 (Cure&Haelan(PVP) / 治疗&治愈(PVP))（└─ Animation）。\n"
+        "6. 去重：仅当括号内英文与括号外中文意思完全相同时，才可去掉括号只保留中文；若中英文意思不同（如版本区分），必须保留括号及英文。\n"
+        "7. 严格保留列表（仅限以下情况）：纯数字（如75%）、版本号、MOD 专有名词 Yiggle、Rue、Bibo、EXQB、YAB、YANILLA。除此之外的任何英文单词或短语都必须翻译成中文。\n"
+        "8. 形如「XXX - YYY」的英文（如 Connectors - Face）是普通选项名，应视为整体翻译，不得保留原文。\n"
+        "9. 原文拼写错误（如 devine caress、care ii）按正确词义理解翻译，括号内英文保留原文拼写。\n"
+        "10. 遇到不确定含义的词汇，根据上下文推断其通用含义进行翻译，译文仍按第 2 条格式保留「中文（英文）」，括号内为原文英文。\n"
+        "11. 只输出一个 JSON 对象：键为条目 id（字符串），值为译文。不要输出任何其他内容。";
     json arr = json::array();
     for (auto& it : items) arr.push_back({ {"id", it.first}, {"text", it.second} });
     std::string userMsg = "请翻译以下 FFXIV 模组文本条目，输出 JSON 对象：\n" + arr.dump();
