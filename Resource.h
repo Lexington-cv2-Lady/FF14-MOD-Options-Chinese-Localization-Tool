@@ -83,6 +83,8 @@
 #define IDC_BTN_AI_TEST		1342
 #define IDC_AI_KEY_NAME		1343
 #define IDC_BTN_SAVE_KEY		1344
+#define IDC_BTN_SAVE_MODEL		1345
+#define IDC_BTN_SAVE_BASEURL	1346
 
 #ifndef IDC_STATIC
 #define IDC_STATIC				-1

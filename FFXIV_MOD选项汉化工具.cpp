@@ -328,7 +328,11 @@ bool LoadConfigFrom(const fs::path& cfgPath)
                 if (!p.name.empty()) g_cfg.aiPresets.push_back(p);
             }
         }
-        if (g_cfg.aiPresets.empty()) g_cfg.aiPresets = g_defaultAIPresets;
+        bool presetRestored = false;
+        if (g_cfg.aiPresets.empty()) {
+            g_cfg.aiPresets = g_defaultAIPresets; // 预设被清空/缺失时恢复默认，保证下拉框有可用项
+            presetRestored = true;
+        }
         g_cfg.aiPreset = j.value("aiPreset", "");
         g_cfg.aiBatchSize = j.value("aiBatchSize", 40);
         g_cfg.fontSize = j.value("fontSize", 11);
@@ -337,6 +341,7 @@ bool LoadConfigFrom(const fs::path& cfgPath)
         g_cfg.winY = j.value("winY", -1);
         g_cfg.winW = j.value("winW", 0);
         g_cfg.winH = j.value("winH", 0);
+        if (presetRestored) SaveConfig(); // 预设缺失时把默认预设写回文件，避免每次启动都靠内存兜底
         return true;
     }
     catch (...) { return false; }
@@ -2681,7 +2686,8 @@ static void SyncAISettingsFromUI(HWND hDlg)
     g_cfg.aiBaseUrl = wstring_to_utf8(GetEditText(hDlg, IDC_AI_BASEURL));
 }
 
-// 检查模型名与 API 地址是否属于同一个预设（忽略大小写）；不匹配时返回警告文本
+// 检查模型名与 API 地址是否分属不同的「内置」预设（忽略大小写）；不匹配时返回警告文本。
+// 用户自定义保存的预设（name 非内置名）不参与警告，避免误报。
 static std::string CheckAIMatch()
 {
     if (g_cfg.aiModel.empty() || g_cfg.aiBaseUrl.empty()) return "";
@@ -2697,11 +2703,40 @@ static std::string CheckAIMatch()
         if (lower(p.model) == cm) m = &p;
         if (lower(p.baseUrl) == cb) b = &p;
     }
-    if (m && b && m->name != b->name)
-        return "模型名「" + g_cfg.aiModel + "」属于预设「" + m->name +
-               "」，但 API 地址「" + g_cfg.aiBaseUrl + "」属于预设「" + b->name +
-               "」，两者不匹配，可能认证失败（401），请核对";
-    return "";
+    if (!m || !b || m->name == b->name) return "";
+    auto isBuiltin = [](const AIPreset* p) {
+        for (const auto& d : g_defaultAIPresets)
+            if (d.name == p->name) return true;
+        return false;
+    };
+    if (!isBuiltin(m) || !isBuiltin(b)) return "";
+    return "模型名「" + g_cfg.aiModel + "」属于预设「" + m->name +
+           "」，但 API 地址「" + g_cfg.aiBaseUrl + "」属于预设「" + b->name +
+           "」，两者不匹配，可能认证失败（401），请核对";
+}
+
+// 规范化用于重复检测：转小写并去掉空白字符
+static std::string NormForDup(std::string s)
+{
+    std::string r;
+    r.reserve(s.size());
+    for (unsigned char c : s) {
+        if (c == ' ' || c == '\t' || c == '\r' || c == '\n') continue;
+        r += (char)std::tolower(c);
+    }
+    return r;
+}
+
+// 自动生成不重复的预设名（如「自定义 1」「自定义 2」…）
+static std::string NextPresetName()
+{
+    for (int n = 1;; ++n) {
+        std::string name = "自定义 " + std::to_string(n);
+        bool used = false;
+        for (const auto& p : g_cfg.aiPresets)
+            if (p.name == name) { used = true; break; }
+        if (!used) return name;
+    }
 }
 
 // 把预设列表填入「模型名」「API 地址」两个下拉框
@@ -2712,39 +2747,76 @@ static void FillAIPresetCombos(HWND hDlg)
     if (!hModel || !hBase) return;
     SendMessageW(hModel, CB_RESETCONTENT, 0, 0);
     SendMessageW(hBase, CB_RESETCONTENT, 0, 0);
-    // 下拉项显示「值　（备注）」，选中后用预设索引取真实值回填编辑框（与 Key 下拉同理）
+    // 下拉项显示「值　（备注）」，选中后用预设索引取真实值回填编辑框（与 Key 下拉同理）；
+    // 仅填充非空项，避免保存了单侧值的预设在下拉里出现空行
     for (size_t i = 0; i < g_cfg.aiPresets.size(); ++i) {
         const auto& p = g_cfg.aiPresets[i];
-        std::wstring m = utf8_to_wstring(p.model);
-        std::wstring b = utf8_to_wstring(p.baseUrl);
-        if (!p.note.empty()) {
-            std::wstring note = L"　（" + utf8_to_wstring(p.note) + L"）";
-            m += note;
-            b += note;
+        if (!p.model.empty()) {
+            std::wstring m = utf8_to_wstring(p.model);
+            if (!p.note.empty()) m += L"　（" + utf8_to_wstring(p.note) + L"）";
+            int mi = (int)SendMessageW(hModel, CB_ADDSTRING, 0, (LPARAM)m.c_str());
+            SendMessageW(hModel, CB_SETITEMDATA, mi, (LPARAM)i);
         }
-        int mi = (int)SendMessageW(hModel, CB_ADDSTRING, 0, (LPARAM)m.c_str());
-        SendMessageW(hModel, CB_SETITEMDATA, mi, (LPARAM)i);
-        int bi = (int)SendMessageW(hBase, CB_ADDSTRING, 0, (LPARAM)b.c_str());
-        SendMessageW(hBase, CB_SETITEMDATA, bi, (LPARAM)i);
+        if (!p.baseUrl.empty()) {
+            std::wstring b = utf8_to_wstring(p.baseUrl);
+            if (!p.note.empty()) b += L"　（" + utf8_to_wstring(p.note) + L"）";
+            int bi = (int)SendMessageW(hBase, CB_ADDSTRING, 0, (LPARAM)b.c_str());
+            SendMessageW(hBase, CB_SETITEMDATA, bi, (LPARAM)i);
+        }
     }
 }
 
-// 把已保存的 Key 列表填入「API Key」下拉框（项文本 = 备注（Key 前 10 位…））
+// 让输入框宽度随文本字节长度自适应（minDlu~maxDlu，DLU 单位），宽度不足自动截断滚动
+static void AutoFitEditWidth(HWND hDlg, int id, int minDlu, int maxDlu)
+{
+    HWND he = GetDlgItem(hDlg, id);
+    if (!he) return;
+    std::wstring t = GetEditText(hDlg, id);
+    HDC hdc = GetDC(he);
+    HFONT hf = (HFONT)SendMessageW(he, WM_GETFONT, 0, 0);
+    HFONT hOld = hf ? (HFONT)SelectObject(hdc, hf) : nullptr;
+    SIZE sz = {};
+    GetTextExtentPoint32W(hdc, t.c_str(), (int)t.size(), &sz);
+    if (hOld) SelectObject(hdc, hOld);
+    ReleaseDC(he, hdc);
+    RECT rd = {0, 0, 1, 1};
+    MapDialogRect(hDlg, &rd);
+    int dluPx = rd.right;
+    if (dluPx < 1) dluPx = 1;
+    int w = sz.cx + 20; // 内容宽度 + 边距
+    if (w < minDlu * dluPx) w = minDlu * dluPx;
+    if (w > maxDlu * dluPx) w = maxDlu * dluPx;
+    RECT wr;
+    GetWindowRect(he, &wr);
+    if (wr.right - wr.left != w)
+        SetWindowPos(he, nullptr, 0, 0, w, wr.bottom - wr.top, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+}
+
+// 把已保存的 Key 列表填入「API Key」下拉框（项文本 = 备注（完整 Key），下拉宽度按最长项自适应）
 static void FillAIKeyCombo(HWND hDlg)
 {
     HWND hKey = GetDlgItem(hDlg, IDC_AI_KEY);
     if (!hKey) return;
     SendMessageW(hKey, CB_RESETCONTENT, 0, 0);
     int sel = -1;
+    int maxW = 240;
+    HDC hdc = GetDC(hKey);
+    HFONT hf = (HFONT)SendMessageW(hKey, WM_GETFONT, 0, 0);
+    HFONT hOld = hf ? (HFONT)SelectObject(hdc, hf) : nullptr;
     for (size_t i = 0; i < g_cfg.aiKeys.size(); ++i) {
         std::wstring label = utf8_to_wstring(g_cfg.aiKeys[i].name);
         std::wstring k = utf8_to_wstring(g_cfg.aiKeys[i].key);
-        if (k.size() > 10) k = k.substr(0, 10) + L"…";
-        label += L"（" + k + L"）";
+        label += L"（" + k + L"）"; // 完整 Key
         int idx = (int)SendMessageW(hKey, CB_ADDSTRING, 0, (LPARAM)label.c_str());
         SendMessageW(hKey, CB_SETITEMDATA, idx, (LPARAM)i);
         if (g_cfg.aiKeyName == g_cfg.aiKeys[i].name) sel = idx;
+        SIZE sz = {};
+        if (GetTextExtentPoint32W(hdc, label.c_str(), (int)label.size(), &sz))
+            if (sz.cx + 24 > maxW) maxW = sz.cx + 24;
     }
+    if (hOld) SelectObject(hdc, hOld);
+    ReleaseDC(hKey, hdc);
+    SendMessageW(hKey, CB_SETDROPPEDWIDTH, maxW, 0);
     if (sel >= 0) SendMessageW(hKey, CB_SETCURSEL, sel, 0);
     // 编辑框显示完整 Key（与下拉项文本不同）
     SetEditText(hDlg, IDC_AI_KEY, utf8_to_wstring(g_cfg.aiApiKey));
@@ -3499,8 +3571,10 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
             }
             break;
         case IDC_AI_KEY_NAME:
-            if (wmEvent == EN_CHANGE)
+            if (wmEvent == EN_CHANGE) {
                 g_cfg.aiKeyName = wstring_to_utf8(GetEditText(hDlg, IDC_AI_KEY_NAME));
+                AutoFitEditWidth(hDlg, IDC_AI_KEY_NAME, 60, 121); // 备注框宽度随内容自适应（60~121 DLU）
+            }
             break;
         case IDC_BTN_SAVE_KEY: {
             std::string name = wstring_to_utf8(GetEditText(hDlg, IDC_AI_KEY_NAME));
@@ -3521,6 +3595,66 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
             FillAIKeyCombo(hDlg);
             SetEditText(hDlg, IDC_AI_KEY_NAME, utf8_to_wstring(name));
             Log("[完成] 已保存 API Key：" + name);
+            break;
+        }
+        case IDC_BTN_SAVE_MODEL: {
+            std::string v = wstring_to_utf8(GetEditText(hDlg, IDC_AI_MODEL));
+            if (v.empty()) {
+                MessageBoxW(hDlg, L"模型名为空，请先输入要保存的模型名。", L"提示", MB_OK | MB_ICONINFORMATION);
+                break;
+            }
+            std::string nv = NormForDup(v);
+            bool dup = false;
+            for (const auto& p : g_cfg.aiPresets)
+                if (!p.model.empty() && NormForDup(p.model) == nv) {
+                    MessageBoxW(hDlg, (L"该模型名已在预设「" + utf8_to_wstring(p.name) + L"」中，无需重复保存。").c_str(),
+                                L"提示", MB_OK | MB_ICONINFORMATION);
+                    dup = true;
+                    break;
+                }
+            if (dup) break;
+            std::string pname = NextPresetName();
+            std::string curBase = wstring_to_utf8(GetEditText(hDlg, IDC_AI_BASEURL));
+            g_cfg.aiPresets.push_back({ pname, v, curBase, "" });
+            SaveConfig();
+            FillAIPresetCombos(hDlg);
+            for (size_t i = 0; i < g_cfg.aiPresets.size(); ++i)
+                if (g_cfg.aiPresets[i].name == pname) {
+                    SendMessageW(GetDlgItem(hDlg, IDC_AI_MODEL), CB_SETCURSEL, i, 0);
+                    SetEditText(hDlg, IDC_AI_MODEL, utf8_to_wstring(v)); // 编辑框回填纯模型名
+                    break;
+                }
+            Log("[完成] 已保存模型名预设「" + pname + "」：" + v);
+            break;
+        }
+        case IDC_BTN_SAVE_BASEURL: {
+            std::string v = wstring_to_utf8(GetEditText(hDlg, IDC_AI_BASEURL));
+            if (v.empty()) {
+                MessageBoxW(hDlg, L"API 地址为空，请先输入要保存的地址。", L"提示", MB_OK | MB_ICONINFORMATION);
+                break;
+            }
+            std::string nv = NormForDup(v);
+            bool dup = false;
+            for (const auto& p : g_cfg.aiPresets)
+                if (!p.baseUrl.empty() && NormForDup(p.baseUrl) == nv) {
+                    MessageBoxW(hDlg, (L"该 API 地址已在预设「" + utf8_to_wstring(p.name) + L"」中，无需重复保存。").c_str(),
+                                L"提示", MB_OK | MB_ICONINFORMATION);
+                    dup = true;
+                    break;
+                }
+            if (dup) break;
+            std::string pname = NextPresetName();
+            std::string curModel = wstring_to_utf8(GetEditText(hDlg, IDC_AI_MODEL));
+            g_cfg.aiPresets.push_back({ pname, curModel, v, "" });
+            SaveConfig();
+            FillAIPresetCombos(hDlg);
+            for (size_t i = 0; i < g_cfg.aiPresets.size(); ++i)
+                if (g_cfg.aiPresets[i].name == pname) {
+                    SendMessageW(GetDlgItem(hDlg, IDC_AI_BASEURL), CB_SETCURSEL, i, 0);
+                    SetEditText(hDlg, IDC_AI_BASEURL, utf8_to_wstring(v)); // 编辑框回填纯地址
+                    break;
+                }
+            Log("[完成] 已保存 API 地址预设「" + pname + "」：" + v);
             break;
         }
         case IDC_AI_MODEL:
