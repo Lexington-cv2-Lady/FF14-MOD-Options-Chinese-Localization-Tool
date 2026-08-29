@@ -66,6 +66,28 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build_release.ps1 -Zip
 
 编译产物（`x64\`、`release\`）与运行配置（`config.json`）均被 `.gitignore` 忽略，不会进入仓库。
 
+## 更新日志
+
+### v2.1
+
+- 新增「模型名 / API 地址」下拉选择，内置 DeepSeek 与智谱 GLM 预设
+- 下拉选中任一预设时自动联动填充另一项（选模型名→自动填对应 API 地址，反之亦然）
+- 下拉框支持手动输入任意模型名（如 `glm-5.3-flash`），自动标记为自定义配置
+- AI 服务商预设列表持久化到 `config.json`，可手动编辑增删，无需重新编译
+- 修正：资源脚本 `.rc` 编码问题导致的编译失败
+
+### v2.0
+
+- 新增 AI 批量翻译（OpenAI 兼容接口，支持 DeepSeek / 智谱 GLM 等）
+- 支持自定义 AI 模型名、API 地址、Key 与每批翻译条数
+- 窗口缩放等比自适应，日志区字体同步缩放
+- 配置（含窗口位置与大小）自动记忆
+
+### v1.0
+
+- 首个版本：半自动翻译流程（提取 → 词典补全 → 人工翻译 → 应用）
+- 官方术语对照词典、单词黑名单、Wiki 分类导出
+
 ## 安全说明
 
 - `config.json`（含 AI API Key）保存在**程序运行目录**，已被 `.gitignore` 排除，不会提交到仓库。
