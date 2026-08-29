@@ -112,3 +112,11 @@
 #define IDC_CHK_AUTO_FONT       1341
 
 #define IDC_BTN_OPEN_USER_CFG	1345
+
+// ---- AI config select dialog ----
+#define IDD_AI_SELECT_DIALOG	1250
+#define IDC_AI_SELECT_LIST		1251
+#define IDC_AI_SELECT_OK		1252
+#define IDC_AI_SELECT_CANCEL	1253
+
+#define IDC_BTN_AI_SELECT		1346

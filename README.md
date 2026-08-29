@@ -87,8 +87,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build_release.ps1 -Zip
 - 内部：打包 zip 时随包附带默认配置 `config.default.json`（解压即用，默认 AI 预设开箱可用）
 - 调整：AI 翻译设置界面的「Key 备注」标签改为「API Key」
 - 调整：AI 翻译设置区新增「打开配置」按钮，可直接用系统关联程序打开 `config.user.json`
-- 修复：模型名 / API 地址下拉框不再拼接预设 `note`，避免编辑框和保存值被污染
-- 调整：模型名 / API 地址下拉项显示「预设名 | 值」（如 `DeepSeek | deepseek-v4-flash`），一眼可辨认 DeepSeek / 智谱 GLM 等预设；选中后编辑框仍回填纯值，不污染保存
+- 调整：AI 设置区的 API Key / 模型名 / API 地址 改为普通输入框，移除下拉框（下拉列表在窗口放大后可能显示异常，且易把备注拼进保存值）
+- 新增：模型名右侧「选择」按钮 → 打开「选择 AI 配置」窗口，以清单勾选方式选择内置预设（DeepSeek / 智谱 GLM）或自定义保存记录，勾选一条即整套套用 Key / 模型名 / API 地址
+- 修复：API Key「显示 / 隐藏」切换失效——运行时改 `ES_PASSWORD` 样式对已创建的编辑框不生效，改用 `EM_SETPASSWORDCHAR`
 - 内部：启动时日志打印已加载的 AI 预设数量与名称，便于排查
 
 ### v2.2.2

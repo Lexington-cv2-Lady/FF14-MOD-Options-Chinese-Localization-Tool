@@ -2567,6 +2567,12 @@ static void LayoutMainDlg(HWND hDlg)
         int y = (int)(c.rc.top * sy);
         int w = (int)((c.rc.right - c.rc.left) * sx);
         int h = (int)((c.rc.bottom - c.rc.top) * sy);
+        // 组合框（CBS_DROPDOWN / CBS_DROPDOWNLIST）的高度参数被系统解释为
+        // 「下拉列表弹出高度」：窗口缩放时保持 .rc 设计高度不变，
+        // 否则列表弹出高度被缩放破坏，导致点开箭头看不到列表项
+        LONG_PTR st = GetWindowLongPtrW(c.hwnd, GWL_STYLE);
+        if ((st & 0x0003L) == CBS_DROPDOWN || (st & 0x0003L) == CBS_DROPDOWNLIST)
+            h = c.rc.bottom - c.rc.top;
         if (w < 1) w = 1;
         if (h < 1) h = 1;
         MoveWindow(c.hwnd, x, y, w, h, TRUE);
@@ -2840,41 +2846,11 @@ static void OpenUserConfigFile()
     }
 }
 
+// 模型名 / API 地址已改为普通输入框（无下拉列表），这里只负责回填当前值
 static void FillAIPresetCombos(HWND hDlg)
 {
-    HWND hModel = GetDlgItem(hDlg, IDC_AI_MODEL);
-    HWND hBase = GetDlgItem(hDlg, IDC_AI_BASEURL);
-    if (!hModel || !hBase) return;
-    SendMessageW(hModel, CB_RESETCONTENT, 0, 0);
-    SendMessageW(hBase, CB_RESETCONTENT, 0, 0);
-    // 下拉项显示「预设名 | 值」，一眼能认出 DeepSeek / 智谱 GLM 等预设；
-    // 选中后编辑框回填纯值（CBN_SELCHANGE 通过 itemdata 索引取 g_cfg.aiPresets），不会把名字/备注拼进保存值
-    // 仅填充非空项，避免保存了单侧值的预设在下拉里出现空行
-    HDC hdc = GetDC(hModel);
-    HFONT hf = (HFONT)SendMessageW(hModel, WM_GETFONT, 0, 0);
-    HFONT hOld = hf ? (HFONT)SelectObject(hdc, hf) : nullptr;
-    int maxMW = 240, maxBW = 240;
-    for (size_t i = 0; i < g_cfg.aiPresets.size(); ++i) {
-        const auto& p = g_cfg.aiPresets[i];
-        if (!p.model.empty()) {
-            std::wstring label = (p.name.empty() ? L"" : utf8_to_wstring(p.name) + L" | ") + utf8_to_wstring(p.model);
-            int mi = (int)SendMessageW(hModel, CB_ADDSTRING, 0, (LPARAM)label.c_str());
-            SendMessageW(hModel, CB_SETITEMDATA, mi, (LPARAM)i);
-            SIZE sz = {};
-            if (GetTextExtentPoint32W(hdc, label.c_str(), (int)label.size(), &sz) && sz.cx + 24 > maxMW) maxMW = sz.cx + 24;
-        }
-        if (!p.baseUrl.empty()) {
-            std::wstring label = (p.name.empty() ? L"" : utf8_to_wstring(p.name) + L" | ") + utf8_to_wstring(p.baseUrl);
-            int bi = (int)SendMessageW(hBase, CB_ADDSTRING, 0, (LPARAM)label.c_str());
-            SendMessageW(hBase, CB_SETITEMDATA, bi, (LPARAM)i);
-            SIZE sz = {};
-            if (GetTextExtentPoint32W(hdc, label.c_str(), (int)label.size(), &sz) && sz.cx + 24 > maxBW) maxBW = sz.cx + 24;
-        }
-    }
-    if (hOld) SelectObject(hdc, hOld);
-    ReleaseDC(hModel, hdc);
-    SendMessageW(hModel, CB_SETDROPPEDWIDTH, maxMW, 0);
-    SendMessageW(hBase, CB_SETDROPPEDWIDTH, maxBW, 0);
+    SetEditText(hDlg, IDC_AI_MODEL, utf8_to_wstring(g_cfg.aiModel));
+    SetEditText(hDlg, IDC_AI_BASEURL, utf8_to_wstring(g_cfg.aiBaseUrl));
 }
 
 // 让输入框宽度随文本字节长度自适应（minDlu~maxDlu，DLU 单位），宽度不足自动截断滚动
@@ -2903,50 +2879,118 @@ static void AutoFitEditWidth(HWND hDlg, int id, int minDlu, int maxDlu)
         SetWindowPos(he, nullptr, 0, 0, w, wr.bottom - wr.top, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
-// 把已保存的 Key 列表填入「API Key」下拉框（项文本 = 备注（完整 Key），下拉宽度按最长项自适应）
+// API Key 已改为普通输入框（无下拉列表），这里只负责回填当前 Key
 static void FillAIKeyCombo(HWND hDlg)
 {
-    HWND hKey = GetDlgItem(hDlg, IDC_AI_KEY);
-    if (!hKey) return;
-    SendMessageW(hKey, CB_RESETCONTENT, 0, 0);
-    int sel = -1;
-    int maxW = 240;
-    HDC hdc = GetDC(hKey);
-    HFONT hf = (HFONT)SendMessageW(hKey, WM_GETFONT, 0, 0);
-    HFONT hOld = hf ? (HFONT)SelectObject(hdc, hf) : nullptr;
-    for (size_t i = 0; i < g_cfg.aiKeys.size(); ++i) {
-        std::wstring label = utf8_to_wstring(g_cfg.aiKeys[i].name);
-        std::wstring k = utf8_to_wstring(g_cfg.aiKeys[i].key);
-        label += L"（" + k + L"）"; // 完整 Key
-        int idx = (int)SendMessageW(hKey, CB_ADDSTRING, 0, (LPARAM)label.c_str());
-        SendMessageW(hKey, CB_SETITEMDATA, idx, (LPARAM)i);
-        if (g_cfg.aiKeyName == g_cfg.aiKeys[i].name) sel = idx;
-        SIZE sz = {};
-        if (GetTextExtentPoint32W(hdc, label.c_str(), (int)label.size(), &sz))
-            if (sz.cx + 24 > maxW) maxW = sz.cx + 24;
-    }
-    if (hOld) SelectObject(hdc, hOld);
-    ReleaseDC(hKey, hdc);
-    SendMessageW(hKey, CB_SETDROPPEDWIDTH, maxW, 0);
-    if (sel >= 0) SendMessageW(hKey, CB_SETCURSEL, sel, 0);
-    // 编辑框显示完整 Key（与下拉项文本不同）
     SetEditText(hDlg, IDC_AI_KEY, utf8_to_wstring(g_cfg.aiApiKey));
 }
 
-// 切换 API Key 输入框的密码掩码（Key 现在是下拉框内的编辑框，需运行时设置样式）
+// 切换 API Key 输入框的密码掩码。
+// 运行时改 ES_PASSWORD 样式对「已创建」的编辑框不生效，必须用 EM_SETPASSWORDCHAR：
+// 传 0 = 取消掩码（明文）；传掩码字符 = 隐藏
 static void ApplyKeyPasswordStyle(HWND hDlg)
 {
-    HWND hCombo = GetDlgItem(hDlg, IDC_AI_KEY);
-    if (!hCombo) return;
-    COMBOBOXINFO cbi = {};
-    cbi.cbSize = sizeof(cbi);
-    SendMessageW(hCombo, CB_GETCOMBOBOXINFO, 0, (LPARAM)&cbi);
-    HWND he = cbi.hwndItem;
+    HWND he = GetDlgItem(hDlg, IDC_AI_KEY);
     if (!he) return;
-    LONG_PTR st = GetWindowLongPtrW(he, GWL_STYLE);
-    if (g_keyVisible) st &= ~ES_PASSWORD; else st |= ES_PASSWORD;
-    SetWindowLongPtrW(he, GWL_STYLE, st);
+    if (g_keyVisible)
+        SendMessageW(he, EM_SETPASSWORDCHAR, 0, 0);                 // 明文
+    else
+        SendMessageW(he, EM_SETPASSWORDCHAR, (WPARAM)L'\u25CF', 0); // 圆点掩码
     InvalidateRect(he, nullptr, TRUE);
+}
+
+// ------------------------------------------------------------------
+// AI 配置选择窗口：列出内置预设 + 用户自定义保存，勾选后整套套用
+// ------------------------------------------------------------------
+struct AICfgItem {
+    std::string name;
+    std::string key;
+    std::string model;
+    std::string baseUrl;
+    std::string note;
+};
+static std::vector<AICfgItem> g_aiSelItems;
+static int g_aiSelResult = -1;
+
+static INT_PTR CALLBACK SelectAICfgDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
+{
+    switch (message) {
+    case WM_INITDIALOG: {
+        g_aiSelResult = -1;
+        HWND hList = GetDlgItem(hDlg, IDC_AI_SELECT_LIST);
+        if (!hList) return TRUE;
+        ListView_SetExtendedListViewStyle(hList, LVS_EX_CHECKBOXES | LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES);
+        LVCOLUMNW col = {};
+        col.mask = LVCF_TEXT | LVCF_WIDTH | LVCF_FMT;
+        col.fmt = LVCFMT_LEFT;
+        struct ColDef { LPCWSTR t; int w; } cols[] = {
+            { L"名称", 100 }, { L"API Key", 130 }, { L"模型名", 110 }, { L"API 地址", 160 }, { L"说明", 70 }
+        };
+        for (const auto& c : cols) {
+            col.pszText = (LPWSTR)c.t;
+            col.cx = c.w;
+            ListView_InsertColumn(hList, 9999, &col);
+        }
+        // 数据：内置预设（无 Key）+ 用户自定义保存（带 Key）
+        g_aiSelItems.clear();
+        for (const auto& p : g_cfg.aiPresets)
+            g_aiSelItems.push_back({ p.name, "", p.model, p.baseUrl, p.note.empty() ? std::string("内置预设") : p.note });
+        for (const auto& e : g_cfg.customSaves)
+            g_aiSelItems.push_back({ e.name, e.key, e.model, e.baseUrl, e.note.empty() ? std::string("自定义") : e.note });
+
+        for (size_t i = 0; i < g_aiSelItems.size(); ++i) {
+            const auto& it = g_aiSelItems[i];
+            std::wstring wName = utf8_to_wstring(it.name);
+            std::wstring wKey = it.key.empty() ? L"（沿用当前）" : utf8_to_wstring(it.key);
+            std::wstring wModel = utf8_to_wstring(it.model);
+            std::wstring wBase = utf8_to_wstring(it.baseUrl);
+            std::wstring wNote = utf8_to_wstring(it.note);
+            LVITEMW item = {};
+            item.mask = LVIF_TEXT;
+            item.iItem = (int)i;
+            item.pszText = (LPWSTR)wName.c_str();
+            int idx = (int)ListView_InsertItem(hList, &item);
+            ListView_SetItemText(hList, idx, 1, (LPWSTR)wKey.c_str());
+            ListView_SetItemText(hList, idx, 2, (LPWSTR)wModel.c_str());
+            ListView_SetItemText(hList, idx, 3, (LPWSTR)wBase.c_str());
+            ListView_SetItemText(hList, idx, 4, (LPWSTR)wNote.c_str());
+        }
+        return TRUE;
+    }
+    case WM_NOTIFY: {
+        NMHDR* nm = (NMHDR*)lParam;
+        if (nm->idFrom == IDC_AI_SELECT_LIST && nm->code == LVN_ITEMCHANGED) {
+            NMLISTVIEW* nmlv = (NMLISTVIEW*)lParam;
+            bool changed = (nmlv->uChanged & LVIF_STATE) &&
+                ((nmlv->uNewState & LVIS_STATEIMAGEMASK) != (nmlv->uOldState & LVIS_STATEIMAGEMASK));
+            if (changed) {
+                // 单选：勾选某项时自动取消其它项
+                if (ListView_GetCheckState(nm->hwndFrom, nmlv->iItem)) {
+                    for (int i = 0; i < ListView_GetItemCount(nm->hwndFrom); ++i)
+                        if (i != nmlv->iItem) ListView_SetCheckState(nm->hwndFrom, i, FALSE);
+                    g_aiSelResult = nmlv->iItem;
+                } else if (g_aiSelResult == nmlv->iItem) {
+                    g_aiSelResult = -1;
+                }
+            }
+        }
+        break;
+    }
+    case WM_COMMAND: {
+        WORD id = LOWORD(wParam);
+        if (id == IDOK || id == IDC_AI_SELECT_OK) {
+            if (g_aiSelResult < 0) {
+                MessageBoxW(hDlg, L"请先勾选一条配置，再点确定。", L"提示", MB_OK | MB_ICONINFORMATION);
+                return TRUE;
+            }
+            EndDialog(hDlg, IDOK);
+            return TRUE;
+        }
+        if (id == IDCANCEL || id == IDC_AI_SELECT_CANCEL) { EndDialog(hDlg, IDCANCEL); return TRUE; }
+        break;
+    }
+    }
+    return FALSE;
 }
 
 void RefreshConfigUI()
@@ -3669,23 +3713,9 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
             break;
         // AI 翻译设置同步到配置
         case IDC_AI_KEY:
-            if (wmEvent == CBN_SELCHANGE) {
-                HWND hKey = GetDlgItem(hDlg, IDC_AI_KEY);
-                int sel = (int)SendMessageW(hKey, CB_GETCURSEL, 0, 0);
-                if (sel >= 0) {
-                    size_t idx = (size_t)SendMessageW(hKey, CB_GETITEMDATA, sel, 0);
-                    if (idx < g_cfg.aiKeys.size()) {
-                        g_cfg.aiKeyName = g_cfg.aiKeys[idx].name;
-                        g_cfg.aiApiKey = g_cfg.aiKeys[idx].key;
-                        SetEditText(hDlg, IDC_AI_KEY, utf8_to_wstring(g_cfg.aiApiKey)); // 编辑框显示完整 Key
-                        SetEditText(hDlg, IDC_AI_KEY_NAME, utf8_to_wstring(g_cfg.aiKeyName));
-                        SaveConfig();
-                    }
-                }
-            } else if (wmEvent == CBN_EDITCHANGE) {
-                // 手动输入/修改：作为当前 Key 使用（保存为条目需点「保存Key」）
+            // 手动输入/修改：作为当前 Key 使用（保存为条目需点「保存」）
+            if (wmEvent == EN_CHANGE)
                 g_cfg.aiApiKey = wstring_to_utf8(GetEditText(hDlg, IDC_AI_KEY));
-            }
             break;
         case IDC_AI_KEY_NAME:
             if (wmEvent == EN_CHANGE) {
@@ -3698,37 +3728,31 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
             if (wmEvent == BN_CLICKED) SaveCustomSaves(hDlg);
             break;
         case IDC_AI_MODEL:
-            // 模型名与 API 地址完全独立：选择/输入模型名只更新模型名，不联动地址
-            if (wmEvent == CBN_SELCHANGE) {
-                int sel = (int)SendMessageW(GetDlgItem(hDlg, IDC_AI_MODEL), CB_GETCURSEL, 0, 0);
-                if (sel >= 0) {
-                    size_t idx = (size_t)SendMessageW(GetDlgItem(hDlg, IDC_AI_MODEL), CB_GETITEMDATA, sel, 0);
-                    if (idx < g_cfg.aiPresets.size()) {
-                        g_cfg.aiModel = g_cfg.aiPresets[idx].model;
-                        SetEditText(hDlg, IDC_AI_MODEL, utf8_to_wstring(g_cfg.aiModel)); // 编辑框回填纯模型名
-                        SaveConfig();
-                    }
-                }
-            } else if (wmEvent == CBN_EDITCHANGE) {
+            // 模型名与 API 地址完全独立：输入模型名只更新模型名，不联动地址
+            if (wmEvent == EN_CHANGE)
                 g_cfg.aiModel = wstring_to_utf8(GetEditText(hDlg, IDC_AI_MODEL));
-            }
             break;
         case IDC_AI_BASEURL:
-            // 地址与模型名完全独立：选择/输入地址只更新地址，不联动模型名
-            if (wmEvent == CBN_SELCHANGE) {
-                int sel = (int)SendMessageW(GetDlgItem(hDlg, IDC_AI_BASEURL), CB_GETCURSEL, 0, 0);
-                if (sel >= 0) {
-                    size_t idx = (size_t)SendMessageW(GetDlgItem(hDlg, IDC_AI_BASEURL), CB_GETITEMDATA, sel, 0);
-                    if (idx < g_cfg.aiPresets.size()) {
-                        g_cfg.aiBaseUrl = g_cfg.aiPresets[idx].baseUrl;
-                        SetEditText(hDlg, IDC_AI_BASEURL, utf8_to_wstring(g_cfg.aiBaseUrl)); // 编辑框回填纯地址
-                        SaveConfig();
-                    }
-                }
-            } else if (wmEvent == CBN_EDITCHANGE) {
+            // 地址与模型名完全独立：输入地址只更新地址，不联动模型名
+            if (wmEvent == EN_CHANGE)
                 g_cfg.aiBaseUrl = wstring_to_utf8(GetEditText(hDlg, IDC_AI_BASEURL));
+            break;
+        case IDC_BTN_AI_SELECT: {
+            // 打开配置选择窗口：勾选内置预设 / 自定义记录后整套套用
+            if (wmEvent != BN_CLICKED || g_busy) break;
+            if (DialogBoxW(hInst, MAKEINTRESOURCEW(IDD_AI_SELECT_DIALOG), hDlg, SelectAICfgDlgProc) == IDOK) {
+                if (g_aiSelResult >= 0 && g_aiSelResult < (int)g_aiSelItems.size()) {
+                    const auto& it = g_aiSelItems[g_aiSelResult];
+                    if (!it.key.empty()) { g_cfg.aiApiKey = it.key; g_cfg.aiKeyName = it.name; }
+                    if (!it.model.empty()) g_cfg.aiModel = it.model;
+                    if (!it.baseUrl.empty()) g_cfg.aiBaseUrl = it.baseUrl;
+                    RefreshConfigUI();
+                    SaveConfig();
+                    Log("[完成] 已套用配置「" + it.name + "」：模型 " + g_cfg.aiModel + "，地址 " + g_cfg.aiBaseUrl);
+                }
             }
             break;
+        }
         case IDC_AI_BATCH: {
             if (wmEvent == EN_CHANGE) {
                 int b = _wtoi(GetEditText(hDlg, IDC_AI_BATCH).c_str());
