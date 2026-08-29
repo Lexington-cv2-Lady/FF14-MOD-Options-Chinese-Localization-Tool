@@ -2825,6 +2825,21 @@ static void SaveCustomSaves(HWND hDlg)
 }
 
 // 把预设列表填入「模型名」「API 地址」两个下拉框
+// 用系统默认关联程序打开用户配置文件 config.user.json（不存在时提示先保存）
+static void OpenUserConfigFile()
+{
+    fs::path p = UserConfigPath();
+    std::error_code ec;
+    if (!fs::exists(p, ec)) {
+        MessageBoxW(g_hMainWnd, L"尚未保存过用户配置（config.user.json）。\n请先点「保存」按钮生成配置文件。", L"提示", MB_OK | MB_ICONINFORMATION);
+        return;
+    }
+    HINSTANCE hi = ShellExecuteW(g_hMainWnd, L"open", p.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+    if ((intptr_t)hi <= 32) {
+        MessageBoxW(g_hMainWnd, L"打开 config.user.json 失败，请检查文件是否被占用或系统是否有关联的编辑器。", L"提示", MB_OK | MB_ICONWARNING);
+    }
+}
+
 static void FillAIPresetCombos(HWND hDlg)
 {
     HWND hModel = GetDlgItem(hDlg, IDC_AI_MODEL);
@@ -2832,20 +2847,16 @@ static void FillAIPresetCombos(HWND hDlg)
     if (!hModel || !hBase) return;
     SendMessageW(hModel, CB_RESETCONTENT, 0, 0);
     SendMessageW(hBase, CB_RESETCONTENT, 0, 0);
-    // 下拉项显示「值　（备注）」，选中后用预设索引取真实值回填编辑框（与 Key 下拉同理）；
+    // 下拉项只显示纯模型名 / 纯 API 地址，不拼接备注，避免编辑框被污染（note 仍可显示在 AI 服务商预设列表中）
     // 仅填充非空项，避免保存了单侧值的预设在下拉里出现空行
     for (size_t i = 0; i < g_cfg.aiPresets.size(); ++i) {
         const auto& p = g_cfg.aiPresets[i];
         if (!p.model.empty()) {
-            std::wstring m = utf8_to_wstring(p.model);
-            if (!p.note.empty()) m += L"　（" + utf8_to_wstring(p.note) + L"）";
-            int mi = (int)SendMessageW(hModel, CB_ADDSTRING, 0, (LPARAM)m.c_str());
+            int mi = (int)SendMessageW(hModel, CB_ADDSTRING, 0, (LPARAM)utf8_to_wstring(p.model).c_str());
             SendMessageW(hModel, CB_SETITEMDATA, mi, (LPARAM)i);
         }
         if (!p.baseUrl.empty()) {
-            std::wstring b = utf8_to_wstring(p.baseUrl);
-            if (!p.note.empty()) b += L"　（" + utf8_to_wstring(p.note) + L"）";
-            int bi = (int)SendMessageW(hBase, CB_ADDSTRING, 0, (LPARAM)b.c_str());
+            int bi = (int)SendMessageW(hBase, CB_ADDSTRING, 0, (LPARAM)utf8_to_wstring(p.baseUrl).c_str());
             SendMessageW(hBase, CB_SETITEMDATA, bi, (LPARAM)i);
         }
     }
@@ -3709,6 +3720,10 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
             g_keyVisible = !g_keyVisible;
             ApplyKeyPasswordStyle(hDlg);
             SetDlgItemTextW(hDlg, IDC_BTN_SHOW_KEY, g_keyVisible ? L"隐藏" : L"显示");
+            break;
+        }
+        case IDC_BTN_OPEN_USER_CFG: {
+            if (wmEvent == BN_CLICKED) OpenUserConfigFile();
             break;
         }
         case IDC_CHK_SWAP:

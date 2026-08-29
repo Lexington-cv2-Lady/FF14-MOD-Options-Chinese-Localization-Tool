@@ -110,3 +110,5 @@
 #define IDC_EDIT_FONT_SIZE      1339
 #define IDC_BTN_APPLY_FONT      1340
 #define IDC_CHK_AUTO_FONT       1341
+
+#define IDC_BTN_OPEN_USER_CFG	1345

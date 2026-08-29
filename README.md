@@ -86,6 +86,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build_release.ps1 -Zip
 - 内部：清理死代码（`extract_terms_from_wikitext`、未使用的 Resource.h 宏、冗余 include），精简构建产物
 - 内部：打包 zip 时随包附带默认配置 `config.default.json`（解压即用，默认 AI 预设开箱可用）
 - 调整：AI 翻译设置界面的「Key 备注」标签改为「API Key」
+- 调整：AI 翻译设置区新增「打开配置」按钮，可直接用系统关联程序打开 `config.user.json`
+- 修复：模型名 / API 地址下拉框不再拼接预设 `note`，避免编辑框和保存值被污染
 
 ### v2.2.2
 
