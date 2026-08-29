@@ -1,6 +1,6 @@
 # FFXIV MOD 选项汉化工具
 
-一款面向《最终幻想 14》（FFXIV）MOD 作者的选项汉化辅助工具。自动提取 MOD 内的英文选项文本，调用 AI 批量翻译，并结合官方术语对照词典辅助人工校正，最终把汉化结果写回 MOD。
+一款面向《最终幻想 14》（FFXIV）MOD 作者的选项汉化辅助工具。自动提取penumbra MOD 内的英文选项文本，调用 AI 批量翻译，并结合官方术语对照词典辅助人工校正，最终把汉化结果写回 MOD。
 
 ![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)
 
