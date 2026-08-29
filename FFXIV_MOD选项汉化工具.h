@@ -219,6 +219,16 @@ inline bool contains_chinese(const std::string& s)
     return false;
 }
 
+// 是否包含英文字母（ASCII a-z/A-Z）。用于区分"纯数字/符号"与真正的英文残留
+inline bool contains_english_letter(const std::string& s)
+{
+    for (size_t i = 0; i < s.size(); ++i) {
+        unsigned char c = (unsigned char)s[i];
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')) return true;
+    }
+    return false;
+}
+
 // 从已翻译文本中还原英文原文。
 // 支持 "中文（英文）" 与 "英文（中文）" 两种格式；无法解析时返回空串。
 // 注意：全角括号 "（" "）" 在 UTF-8 中各占 3 字节。

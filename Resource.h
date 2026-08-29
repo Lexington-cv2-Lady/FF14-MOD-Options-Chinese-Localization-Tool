@@ -121,3 +121,5 @@
 #define IDC_AI_SELECT_DEL	1254
 
 #define IDC_BTN_AI_SELECT		1346
+
+#define IDC_BTN_CHECK			1347
