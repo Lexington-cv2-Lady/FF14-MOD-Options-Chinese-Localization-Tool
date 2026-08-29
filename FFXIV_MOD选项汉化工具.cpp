@@ -2228,6 +2228,7 @@ static bool AITranslateBatch(const std::vector<std::pair<std::string, std::strin
     req["messages"].push_back({ {"role","user"}, {"content", userMsg} });
     req["stream"] = false;
     req["temperature"] = 0.3;
+    req["max_tokens"] = 8192; // 推理模型（如 glm-4.7）思维链会占大量 token，防止 content 被截断/为空
     std::string body = req.dump();
 
     std::string url = g_cfg.aiBaseUrl.empty() ? "https://api.deepseek.com" : g_cfg.aiBaseUrl;
@@ -2430,6 +2431,71 @@ static bool AITranslateFile(const fs::path& inFile)
     }
     LogThread("[错误] 写入失败: " + wstring_to_utf8(outFile.filename().wstring()));
     return false;
+}
+
+std::wstring GetEditText(HWND hDlg, int id); // 前向声明（定义在文件后部）
+
+// ------------------------------------------------------------------
+// 测试 AI API 连接（工作线程）：用界面当前配置发一条最小请求
+// ------------------------------------------------------------------
+static void RunAITestThread()
+{
+    try {
+        g_busy = true;
+        std::string key = wstring_to_utf8(GetEditText(g_hMainWnd, IDC_AI_KEY));
+        std::string model = wstring_to_utf8(GetEditText(g_hMainWnd, IDC_AI_MODEL));
+        std::string base = wstring_to_utf8(GetEditText(g_hMainWnd, IDC_AI_BASEURL));
+        if (key.empty()) { Log("[错误] 未填写 API Key，请先在『AI 翻译设置』中填写。"); g_busy = false; PostMessageW(g_hMainWnd, WM_APP_DONE, 0, 0); return; }
+        if (model.empty()) { Log("[错误] 未填写模型名。"); g_busy = false; PostMessageW(g_hMainWnd, WM_APP_DONE, 0, 0); return; }
+        if (base.empty()) base = "https://api.deepseek.com";
+
+        json req;
+        req["model"] = model;
+        req["messages"] = json::array();
+        req["messages"].push_back({ {"role","user"}, {"content","请只回复四个字：连接成功"} });
+        req["stream"] = false;
+        req["max_tokens"] = 1024;
+        std::string body = req.dump();
+
+        std::string url = base;
+        while (!url.empty() && url.back() == '/') url.pop_back();
+        if (url.find("/chat/completions") == std::string::npos) url += "/chat/completions";
+
+        ULONGLONG t0 = GetTickCount64();
+        std::string respBody, err;
+        if (!HttpPostJson(url, key, body, respBody, err)) {
+            Log("[错误] AI 测试失败：" + err);
+            g_busy = false; PostMessageW(g_hMainWnd, WM_APP_DONE, 0, 0);
+            return;
+        }
+        int ms = (int)(GetTickCount64() - t0);
+
+        json resp;
+        try { resp = json::parse(clean_utf8(respBody)); }
+        catch (...) {
+            Log("[错误] AI 测试失败：响应不是合法 JSON：" + respBody.substr(0, 300));
+            g_busy = false; PostMessageW(g_hMainWnd, WM_APP_DONE, 0, 0);
+            return;
+        }
+        if (!resp.contains("choices") || resp["choices"].empty()) {
+            if (resp.contains("error"))
+                Log("[错误] AI 测试失败：" + resp["error"].dump().substr(0, 400));
+            else
+                Log("[错误] AI 测试失败：响应缺少 choices：" + respBody.substr(0, 300));
+            g_busy = false; PostMessageW(g_hMainWnd, WM_APP_DONE, 0, 0);
+            return;
+        }
+        std::string content;
+        try { content = resp["choices"][0]["message"]["content"].get<std::string>(); }
+        catch (...) { content = "(非文本回复)"; }
+        Log("[成功] AI 连接测试通过！模型 " + model + " 回复：" + content + "（耗时 " + std::to_string(ms) + " ms）");
+        g_busy = false;
+        PostMessageW(g_hMainWnd, WM_APP_DONE, 0, 0);
+    }
+    catch (const std::system_error& e) { Log(std::string("[错误] AI 测试线程系统异常: ") + e.what()); }
+    catch (const std::exception& e) { Log(std::string("[错误] AI 测试线程异常: ") + e.what()); }
+    catch (...) { Log("[错误] AI 测试线程未知异常"); }
+    PostMessageW(g_hMainWnd, WM_APP_DONE, 0, 0);
 }
 
 void RunAITranslateThread()
@@ -3181,6 +3247,7 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
         EnableWindow(GetDlgItem(hDlg, IDC_BTN_BLACKLIST), TRUE);
         EnableWindow(GetDlgItem(hDlg, IDC_BTN_WIKI), TRUE);
         EnableWindow(GetDlgItem(hDlg, IDC_BTN_AI_TRANSLATE), TRUE);
+        EnableWindow(GetDlgItem(hDlg, IDC_BTN_AI_TEST), TRUE);
         EnableWindow(GetDlgItem(hDlg, IDC_BTN_CANCEL), FALSE);
         g_cancel = false;
         // 操作结束：进度条归零
@@ -3365,6 +3432,7 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_BLACKLIST), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_WIKI), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_AI_TRANSLATE), FALSE);
+            EnableWindow(GetDlgItem(hDlg, IDC_BTN_AI_TEST), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_CANCEL), TRUE);
             Log("===== 开始提取英文 =====");
             LaunchWorker(RunExtractThread, "提取英文");
@@ -3385,6 +3453,7 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_BLACKLIST), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_WIKI), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_AI_TRANSLATE), FALSE);
+            EnableWindow(GetDlgItem(hDlg, IDC_BTN_AI_TEST), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_CANCEL), TRUE);
             Log("===== 开始导入翻译 =====");
             LaunchWorker(RunImportThread, "导入翻译");
@@ -3402,6 +3471,7 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_BLACKLIST), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_WIKI), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_AI_TRANSLATE), FALSE);
+            EnableWindow(GetDlgItem(hDlg, IDC_BTN_AI_TEST), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_CANCEL), TRUE);
             if (g_cfg.pureChinese)
                 Log("[提示] 当前为「纯中文」模式：应用后名称仅保留中文（去掉英文括号）。");
@@ -3458,6 +3528,29 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
             Log("已应用字体大小：" + std::to_string(size) + " 号");
             return TRUE;
         }
+        case IDC_BTN_AI_TEST: {
+            if (g_busy) break;
+            std::string testKey = wstring_to_utf8(GetEditText(hDlg, IDC_AI_KEY));
+            if (testKey.empty()) {
+                MessageBoxW(hDlg, L"尚未配置 AI API Key，请在上方『AI 翻译设置』中填写。", L"提示", MB_OK | MB_ICONINFORMATION);
+                break;
+            }
+            SaveConfig();
+            g_busy = true;
+            g_cancel = false;
+            EnableWindow(GetDlgItem(hDlg, IDC_BTN_EXTRACT), FALSE);
+            EnableWindow(GetDlgItem(hDlg, IDC_BTN_IMPORT), FALSE);
+            EnableWindow(GetDlgItem(hDlg, IDC_BTN_APPLY), FALSE);
+            EnableWindow(GetDlgItem(hDlg, IDC_BTN_RESTORE), FALSE);
+            EnableWindow(GetDlgItem(hDlg, IDC_BTN_BLACKLIST), FALSE);
+            EnableWindow(GetDlgItem(hDlg, IDC_BTN_WIKI), FALSE);
+            EnableWindow(GetDlgItem(hDlg, IDC_BTN_AI_TRANSLATE), FALSE);
+            EnableWindow(GetDlgItem(hDlg, IDC_BTN_AI_TEST), FALSE);
+            EnableWindow(GetDlgItem(hDlg, IDC_BTN_CANCEL), TRUE);
+            Log("===== 开始测试 AI 连接 =====");
+            LaunchWorker(RunAITestThread, "AI 测试");
+            break;
+        }
         case IDC_BTN_AI_TRANSLATE: {
             if (g_busy) break;
             if (g_cfg.aiApiKey.empty()) {
@@ -3474,6 +3567,7 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_BLACKLIST), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_WIKI), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_AI_TRANSLATE), FALSE);
+            EnableWindow(GetDlgItem(hDlg, IDC_BTN_AI_TEST), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_CANCEL), TRUE);
             Log("===== 开始 AI 自动翻译 =====");
             LaunchWorker(RunAITranslateThread, "AI 翻译");
