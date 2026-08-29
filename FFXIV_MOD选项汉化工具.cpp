@@ -2475,22 +2475,6 @@ std::wstring GetEditText(HWND hDlg, int id)
     return buf;
 }
 
-// 按模型名匹配预设下标，找不到返回 -1
-static int FindPresetByModel(const std::string& m)
-{
-    for (size_t i = 0; i < g_cfg.aiPresets.size(); ++i)
-        if (g_cfg.aiPresets[i].model == m) return (int)i;
-    return -1;
-}
-
-// 按 API 地址匹配预设下标，找不到返回 -1
-static int FindPresetByBaseUrl(const std::string& u)
-{
-    for (size_t i = 0; i < g_cfg.aiPresets.size(); ++i)
-        if (g_cfg.aiPresets[i].baseUrl == u) return (int)i;
-    return -1;
-}
-
 // 把预设列表填入「模型名」「API 地址」两个下拉框
 static void FillAIPresetCombos(HWND hDlg)
 {
@@ -3203,34 +3187,16 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
             if (wmEvent == EN_CHANGE) g_cfg.aiApiKey = wstring_to_utf8(GetEditText(hDlg, IDC_AI_KEY));
             break;
         case IDC_AI_MODEL:
-            // 下拉选中：联动填充该预设对应的 API 地址
-            if (wmEvent == CBN_SELCHANGE) {
+            // 模型名与 API 地址完全独立：选择/输入模型名只更新模型名，不联动地址
+            if (wmEvent == CBN_SELCHANGE || wmEvent == CBN_EDITCHANGE) {
                 g_cfg.aiModel = wstring_to_utf8(GetEditText(hDlg, IDC_AI_MODEL));
-                int idx = FindPresetByModel(g_cfg.aiModel);
-                if (idx >= 0) {
-                    const AIPreset& p = g_cfg.aiPresets[idx];
-                    g_cfg.aiPreset = p.name;
-                    g_cfg.aiBaseUrl = p.baseUrl;
-                    SetEditText(hDlg, IDC_AI_BASEURL, utf8_to_wstring(p.baseUrl));
-                    Log("已选择预设：" + p.name + "（模型 " + p.model + "，地址 " + p.baseUrl + "）");
-                    SaveConfig();
-                }
-            }
-            // 手动输入：更新模型名（允许留空，翻译时才用默认值），匹配得上就记住预设名
-            else if (wmEvent == CBN_EDITCHANGE) {
-                g_cfg.aiModel = wstring_to_utf8(GetEditText(hDlg, IDC_AI_MODEL));
-                int idx = FindPresetByModel(g_cfg.aiModel);
-                g_cfg.aiPreset = (idx >= 0) ? g_cfg.aiPresets[idx].name : "";
+                if (wmEvent == CBN_SELCHANGE) SaveConfig();
             }
             break;
         case IDC_AI_BASEURL:
-            // 地址变化（下拉选择或手动输入）：只更新地址，绝不反向改动模型名
+            // 地址与模型名完全独立：选择/输入地址只更新地址，不联动模型名
             if (wmEvent == CBN_SELCHANGE || wmEvent == CBN_EDITCHANGE) {
                 g_cfg.aiBaseUrl = wstring_to_utf8(GetEditText(hDlg, IDC_AI_BASEURL));
-                // 仅当模型与地址同属一个预设时才保留预设名，否则视为自定义组合
-                int mi = FindPresetByModel(g_cfg.aiModel);
-                int bi = FindPresetByBaseUrl(g_cfg.aiBaseUrl);
-                g_cfg.aiPreset = (mi >= 0 && mi == bi) ? g_cfg.aiPresets[mi].name : "";
                 if (wmEvent == CBN_SELCHANGE) SaveConfig();
             }
             break;
