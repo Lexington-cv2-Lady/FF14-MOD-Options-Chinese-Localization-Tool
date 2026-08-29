@@ -45,10 +45,26 @@ Write-Host "==> Copied exe to release folder."
 
 # Step 3 (optional): zip the release folder content, only with -Zip
 if ($Zip) {
-    $zip = Join-Path $root 'FFXIV_Mod_Hanhua_v1.0_Green.zip'
-    if (Test-Path $zip) { Remove-Item $zip -Force }
-    Compress-Archive -Path (Join-Path $pub '*') -DestinationPath $zip -CompressionLevel Optimal
-    Write-Host "==> Zip created: $zip  ($((Get-Item $zip).Length) bytes)"
+    # Resolve current version from README changelog (first "### vX.Y.Z" heading)
+    $readme = Join-Path $root 'README.md'
+    $ver = $null
+    if (Test-Path $readme) {
+        $m = Select-String -Path $readme -Pattern '###\s+v(\d+\.\d+(\.\d+)*)' | Select-Object -First 1
+        if ($m -and $m.Matches.Count -gt 0 -and $m.Matches[0].Groups[1]) { $ver = $m.Matches[0].Groups[1].Value }
+    }
+    if (-not $ver) {
+        Write-Host "[ERROR] Cannot resolve version from README.md changelog (expect '### vX.Y.Z')."
+        exit 1
+    }
+    # Output dir: D:\Fast folder\Downloads\压缩文件 (built via code points to avoid script-encoding issues)
+    $zipDirName = -join [char[]](0x538B, 0x7F29, 0x6587, 0x4EF6)
+    $zipDir = Join-Path 'D:\Fast folder\Downloads' $zipDirName
+    if (-not (Test-Path $zipDir)) { New-Item -ItemType Directory -Path $zipDir | Out-Null }
+    $zipName = "FFXIV_MOD_Options_Chinese_AI-Translated_v$ver.zip"
+    $zipFile = Join-Path $zipDir $zipName
+    if (Test-Path $zipFile) { Remove-Item $zipFile -Force }
+    Compress-Archive -Path (Join-Path $pub '*') -DestinationPath $zipFile -CompressionLevel Optimal
+    Write-Host "==> Zip created: $zipFile  ($((Get-Item $zipFile).Length) bytes)"
 }
 Write-Host "[DONE] All done."
 exit 0
