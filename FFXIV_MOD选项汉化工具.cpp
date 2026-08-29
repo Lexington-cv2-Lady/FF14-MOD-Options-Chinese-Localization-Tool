@@ -2246,7 +2246,7 @@ static bool AITranslateBatch(const std::vector<std::pair<std::string, std::strin
         "3. 去重：仅当括号内英文与括号外中文意思完全相同时，才可去掉括号只保留中文；若中英文意思不同（如版本区分），必须保留括号及英文。\n"
         "4. 严格保留列表（仅限以下情况）：纯数字（如75%）、版本号、MOD 专有名词 Yiggle、Rue、Bibo、EXQB、YAB、YANILLA。除此之外的任何英文单词或短语都必须翻译成中文。\n"
         "5. 形如「XXX - YYY」的英文（如 Connectors - Face）是普通选项名，应视为整体翻译，不得保留原文。\n"
-        "6. 遇到不确定含义的词汇，根据上下文推断其通用含义进行翻译，不得保留英文。\n"
+        "6. 遇到不确定含义的词汇，根据上下文推断其通用含义进行翻译，译文仍按第 2 条格式保留「中文（英文）」，括号内为原文英文。\n"
         "7. 只输出一个 JSON 对象：键为条目 id（字符串），值为译文。不要输出任何其他内容。";
     json arr = json::array();
     for (auto& it : items) arr.push_back({ {"id", it.first}, {"text", it.second} });
