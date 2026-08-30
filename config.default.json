@@ -15,7 +15,7 @@
     },
     {
       "name": "智谱 GLM",
-      "model": "glm-4.5-air",
+      "model": "GLM-4.5-Air",
       "baseUrl": "https://open.bigmodel.cn/api/paas/v4",
       "note": "智谱 AI 开放平台（OpenAI 兼容）"
     }

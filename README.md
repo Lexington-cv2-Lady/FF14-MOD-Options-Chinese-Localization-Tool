@@ -87,6 +87,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build_release.ps1 -Zip
 - 修复：AI 翻译规则第 7 条由"仅当中英文意思完全相同时才可去括号"改为"强制保留括号"，避免把 `None` 等译成不带括号的中文
 - 调整：AI 请求 `max_tokens` 由 8192 提高到 16384，给推理模型（大肥鱼 deepseek-v4-flash 等）的思维链与 JSON 输出留更多空间，降低长批次因 token 占满而失败的概率
 - 修复：AI 把无法翻译的专有名词/缩写（如 EXQB、Uranus）机械输出成「英文（英文）」重复格式的问题。已三处兜底——提示词明确禁止「英文（英文）」、AI 译文写入前自动把 `X（X）`（无中文）回退为原英文 `X`、词典填充时译名仍为英文则不再拼括号
+- 调整：内置预设「智谱 GLM」默认模型由 `glm-4.7-flash` 改为 `GLM-4.5-Air`（config.default.json 同步）
 
 ### v2.2.4
 

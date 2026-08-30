@@ -255,7 +255,7 @@ void SetProgress(int cur, int max)
 // ------------------------------------------------------------------
 static const std::vector<AIPreset> g_defaultAIPresets = {
     { "DeepSeek", "deepseek-v4-flash", "https://api.deepseek.com", "DeepSeek 官方 API" },
-    { "智谱 GLM", "glm-4.7-flash", "https://open.bigmodel.cn/api/paas/v4", "智谱 AI 开放平台（OpenAI 兼容）" },
+    { "智谱 GLM", "GLM-4.5-Air", "https://open.bigmodel.cn/api/paas/v4", "智谱 AI 开放平台（OpenAI 兼容）" },
 };
 
 // ------------------------------------------------------------------
