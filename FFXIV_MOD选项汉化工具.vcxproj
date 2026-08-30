@@ -158,8 +158,9 @@
     </Manifest>
     <PostBuildEvent>
       <Command>xcopy /Y /Q "$(ProjectDir)config.default.json" "$(OutDir)"
-xcopy /Y /Q /H "$(ProjectDir)内置wiki_术语对照.json" "$(OutDir)"
-xcopy /Y /Q /H "$(ProjectDir)内置个性翻译.json" "$(OutDir)"</Command>
+if not exist "$(OutDir)内置模板\" mkdir "$(OutDir)内置模板"
+xcopy /Y /Q /H "$(ProjectDir)内置wiki_术语对照.json" "$(OutDir)内置模板\"
+xcopy /Y /Q /H "$(ProjectDir)内置个性翻译.json" "$(OutDir)内置模板\"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>

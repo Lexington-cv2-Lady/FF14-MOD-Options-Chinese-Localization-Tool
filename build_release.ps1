@@ -52,23 +52,28 @@ if (Test-Path $cfgDefault) {
     Write-Host "[WARN] config.default.json not found in project root; zip will not ship default config."
 }
 
-# Step 2c: copy built-in wiki dictionary into release (first-run seed for dictionary folder)
+# v2.3.3: built-in seeds move into a visible sub-folder "内置模板" (zip does not
+# preserve hidden attributes, so a tidy sub-folder replaces the old hidden-file trick)
+$builtinDirName = -join [char[]](0x5185, 0x7F6E, 0x6A21, 0x677F)  # 内置模板
+$builtinDir = Join-Path $pub $builtinDirName
+New-Item -ItemType Directory -Path $builtinDir -Force | Out-Null
+
+# Step 2c: copy built-in wiki dictionary into release\内置模板 (first-run seed for dictionary folder)
 $wikiName = -join [char[]](0x5185, 0x7F6E, 0x77, 0x69, 0x6B, 0x69, 0x5F, 0x672F, 0x8BED, 0x5BF9, 0x7167, 0x2E, 0x6A, 0x73, 0x6F, 0x6E)  # 内置wiki_术语对照.json
 $builtinWiki = Join-Path $root $wikiName
 if (Test-Path $builtinWiki) {
-    Copy-Item $builtinWiki (Join-Path $pub $wikiName) -Force
-    Write-Host "==> Copied $wikiName to release folder."
+    Copy-Item $builtinWiki (Join-Path $builtinDir $wikiName) -Force
+    Write-Host "==> Copied $wikiName to $builtinDirName."
 } else {
     Write-Host "[WARN] Built-in wiki seed not found in project root; first-run wiki seed will be missing."
 }
 
-# Step 2c2: copy built-in custom-dict template into release, then hide both built-in seed files
-# (they are internal first-run seeds; hidden so they do not clutter the program folder)
+# Step 2c2: copy built-in custom-dict template into release\内置模板, then hide both built-in seed files
 $customName = -join [char[]](0x5185, 0x7F6E, 0x4E2A, 0x6027, 0x7FFB, 0x8BD1, 0x2E, 0x6A, 0x73, 0x6F, 0x6E)  # 内置个性翻译.json
 $builtinCustom = Join-Path $root $customName
 if (Test-Path $builtinCustom) {
-    Copy-Item $builtinCustom (Join-Path $pub $customName) -Force
-    Write-Host "==> Copied $customName to release folder."
+    Copy-Item $builtinCustom (Join-Path $builtinDir $customName) -Force
+    Write-Host "==> Copied $customName to $builtinDirName."
 } else {
     Write-Host "[WARN] Built-in custom template not found in project root; first-run custom seed will be missing."
 }
@@ -79,11 +84,11 @@ foreach ($n in @($wikiName, $customName)) {
         $item = Get-Item -LiteralPath $src -Force
         $item.Attributes = $item.Attributes -bor [IO.FileAttributes]::Hidden
     }
-    $f = Join-Path $pub $n
+    $f = Join-Path $builtinDir $n
     if (Test-Path -LiteralPath $f) {
         $item = Get-Item -LiteralPath $f -Force
         $item.Attributes = $item.Attributes -bor [IO.FileAttributes]::Hidden
-        Write-Host "==> Set hidden attribute on $n (release)."
+        Write-Host "==> Set hidden attribute on $n ($builtinDirName)."
     }
 }
 
@@ -120,6 +125,12 @@ if ($Zip) {
     $stage = Join-Path $env:TEMP ("ffxiv_mod_pkg_" + [guid]::NewGuid().ToString('N'))
     $inner = Join-Path $stage $innerName
     New-Item -ItemType Directory -Path $inner -Force | Out-Null
+    # v2.3.3: built-in seeds now live in 内置模板\ sub-folder only; remove any stale
+    # copies left at the release root by older builds so they do not enter the zip
+    foreach ($n in @($wikiName, $customName)) {
+        $stale = Join-Path $pub $n
+        if (Test-Path -LiteralPath $stale) { Remove-Item -LiteralPath $stale -Force }
+    }
     # v2.3.2 修复：用 Get-ChildItem -Force 收集再复制（通配符 $pub\* 会跳过隐藏的
     # 内置wiki/内置个性翻译模板，导致 zip 里缺这两个内置文件）
     Get-ChildItem -LiteralPath $pub -Force | Copy-Item -Destination $inner -Recurse -Force

@@ -1740,7 +1740,8 @@ static void EnsureCustomDictFile(const fs::path& dictDir)
     fs::path p = CustomDictPath(dictDir);
     if (fs::exists(p, ec) && !ec) return; // 已存在（含用户编辑过）：绝不覆盖
     if (fs::exists(dictDir, ec) && !ec) {
-        fs::path builtin = GetExeDir() / fs::u8path("内置个性翻译.json");
+        // v2.3.3：内置模板统一放在 exe 旁的「内置模板」子文件夹（zip 不保留隐藏属性）
+        fs::path builtin = GetExeDir() / fs::u8path("内置模板") / fs::u8path("内置个性翻译.json");
         std::error_code bec;
         if (fs::exists(builtin, bec) && !bec) {
             fs::copy_file(builtin, p, fs::copy_options::overwrite_existing, bec);
@@ -1832,7 +1833,8 @@ static bool ReleaseBuiltinWiki(const fs::path& dictDir)
     std::error_code ec;
     fs::path out = dictDir / fs::u8path("wiki_术语对照.json");
     if (fs::exists(out, ec) && !ec) return false; // 已有：不覆盖
-    fs::path builtin = GetExeDir() / fs::u8path("内置wiki_术语对照.json");
+    // v2.3.3：内置模板统一放在 exe 旁的「内置模板」子文件夹（zip 不保留隐藏属性）
+    fs::path builtin = GetExeDir() / fs::u8path("内置模板") / fs::u8path("内置wiki_术语对照.json");
     if (!fs::exists(builtin, ec) || ec) return false; // 未随程序打包：跳过
     std::error_code cc;
     fs::create_directories(dictDir, cc);
