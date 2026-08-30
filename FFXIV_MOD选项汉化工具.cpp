@@ -1107,6 +1107,8 @@ bool CheckTranslation()
 // 应用翻译
 // ------------------------------------------------------------------
 static void EnsureDictFile(); // 前向声明：唯一词典确保函数（定义见「词典工具与导入翻译」节）
+static fs::path MergedDictPath(const fs::path& dictDir); // 前向声明：汇总词典路径（含旧文件名迁移）
+static fs::path CustomDictPath(const fs::path& dictDir); // 前向声明：个性翻译.json 路径
 bool ApplyTranslation()
 {
     try {
@@ -1114,21 +1116,22 @@ bool ApplyTranslation()
     if (g_cfg.dictionaryDir.empty()) { Log("[错误] 未设置词典目录"); return false; }
 
     fs::path penRoot = fs::u8path(g_cfg.penumbraDir);
-    EnsureDictFile(); // 首次生成唯一词典 wiki_术语对照and个人填充.json
-    fs::path dictPath = fs::u8path(g_cfg.dictionaryDir) / fs::u8path("wiki_术语对照and个人填充.json");
+    fs::path dictDir = fs::u8path(g_cfg.dictionaryDir);
+    EnsureDictFile(); // 首次生成汇总词典 汇总词典.json + 个性翻译.json
+    fs::path dictPath = MergedDictPath(dictDir);
     std::error_code existEc;
     json dict;
     if (!fs::exists(dictPath, existEc) || existEc) {
         // 唯一词典不存在：从空对象开始，后面自动合并 *_已翻译.json 建立
         dict = json::object();
-        Log("[提示] wiki_术语对照and个人填充.json 不存在，将根据 *_已翻译.json 自动建立");
+        Log("[提示] 汇总词典.json 不存在，将根据 *_已翻译.json 自动建立");
     } else {
         std::string d;
         if (!read_binary_file(dictPath, d)) { Log("[错误] 无法读取词典"); return false; }
         try { dict = json::parse(clean_utf8(d)); }
         catch (...) {
             // 汇总词典损坏：备份后按「wiki 原典优先 + 汉化总词典补充」重建，避免整个流程卡死
-            Log("[错误] wiki_术语对照and个人填充.json 解析失败（可能损坏），已备份并从 wiki 原典重建");
+            Log("[错误] 汇总词典.json 解析失败（可能损坏），已备份并从 wiki 原典重建");
             std::error_code bec;
             fs::path bak = dictPath;
             bak += L".损坏备份";
@@ -1143,7 +1146,7 @@ bool ApplyTranslation()
     if (!dict.contains("terms")) dict["terms"] = json::object();
 
     // 自动扫描翻译目录下所有 *_已翻译.json：
-    // 1) 把没进唯一词典的条目编入 wiki_术语对照and个人填充.json（不覆盖已有非空翻译），并写回文件
+    // 1) 把没进唯一词典的条目编入 汇总词典.json（不覆盖已有非空翻译），并写回文件
     // 2) 同时载入内存作为备选翻译源（唯一词典优先，查不到再查 *_已翻译.json）
     int autoMerged = 0;
     json backupOpt = json::object();
@@ -1211,6 +1214,64 @@ bool ApplyTranslation()
     // 命中黑名单的英文原文在应用翻译时跳过；若之前已应用过翻译，则按
     // "当前翻译值 → 英文原文" 还原。唯一词典保持完整，不做清理。
     std::vector<std::string> blacklist = LoadBlacklistFile(g_cfg.blacklist);
+
+    // 个性翻译.json：用户手工修正的词汇/短语翻译（英文:中文）。
+    // 优先级：黑名单 > 个性翻译 > 汇总词典。命中黑名单的词条不覆盖，
+    // 保持汇总词典原样（应用时仍按黑名单逻辑还原为英文）。覆盖后不再写回文件，
+    // 汇总词典保持原样，只有写入 Mod 的文本以个性翻译为准。
+    int customApplied = 0, customSkipped = 0;
+    fs::path customPath = CustomDictPath(dictDir);
+    std::error_code cec;
+    if (fs::exists(customPath, cec) && !cec) {
+        std::string cd;
+        if (read_binary_file(customPath, cd)) {
+            try {
+                json custom = json::parse(clean_utf8(cd));
+                if (custom.is_object() && !custom.empty()) {
+                    for (auto& it : custom.items()) {
+                        if (!it.value().is_string()) continue;
+                        std::string key = it.key();
+                        std::string val = it.value().get<std::string>();
+                        if (key.empty() || val.empty()) continue;
+                        std::string en = key;
+                        auto kp = key.rfind("||");
+                        if (kp != std::string::npos) en = key.substr(kp + 2);
+                        if (is_blacklisted(en, blacklist)) { customSkipped++; continue; } // 黑名单 > 个性翻译
+                        if (kp == std::string::npos) {
+                            // 简单英文→中文：覆盖 terms，并覆盖 _options/_descriptions 中原文匹配的条目
+                            dict["terms"][key] = val;
+                            bool hitFull = false;
+                            for (auto& sec : { "_options", "_descriptions" }) {
+                                if (!dict.contains(sec) || !dict[sec].is_object()) continue;
+                                for (auto& e : dict[sec].items()) {
+                                    if (!e.value().is_string()) continue;
+                                    auto p = e.key().rfind("||");
+                                    if (p == std::string::npos) continue;
+                                    if (e.key().substr(p + 2) == key) { e.value() = val; hitFull = true; }
+                                }
+                            }
+                            if (hitFull) customApplied++;
+                        } else {
+                            // 完整 key（路径||Name||原文）：直接覆盖对应 section 的已有条目
+                            bool done = false;
+                            for (auto& sec : { "_options", "_descriptions" }) {
+                                if (dict.contains(sec) && dict[sec].is_object() && dict[sec].contains(key)) {
+                                    dict[sec][key] = val;
+                                    done = true;
+                                }
+                            }
+                            if (done) customApplied++;
+                        }
+                    }
+                    if (customApplied > 0)
+                        Log("[个性翻译] 已用 个性翻译.json 覆盖汇总词典 " + std::to_string(customApplied) + " 条");
+                    if (customSkipped > 0)
+                        Log("[个性翻译] " + std::to_string(customSkipped) + " 条命中黑名单未生效（黑名单 > 个性翻译）");
+                }
+            } catch (...) { Log("[错误] 个性翻译.json 解析失败，请检查 JSON 格式"); }
+        }
+    }
+
     std::map<std::string, std::string> rollbackMap; // key = relKey + '\0' + field + '\0' + translatedValue
     if (!blacklist.empty()) {
         auto collectSection = [&](const std::string& sec, const std::string& defaultField) {
@@ -1253,7 +1314,7 @@ bool ApplyTranslation()
     // 但还没进 _options/_descriptions 的翻译（例如 "Hrothgar" -> "硌狮族"）
     std::vector<std::pair<std::string, std::string>> wikiZhToEn; // (中文, 英文)，仅黑名单命中的术语
     if (!blacklist.empty()) {
-        fs::path wikiPath = fs::u8path(g_cfg.dictionaryDir) / fs::u8path("wiki_术语对照and个人填充.json");
+        fs::path wikiPath = MergedDictPath(dictDir);
         std::error_code wec;
         if (fs::exists(wikiPath, wec) && !wec) {
             std::string wd;
@@ -1623,6 +1684,45 @@ bool ApplyTranslation()
 // ------------------------------------------------------------------
 // 词典工具与导入翻译
 // ------------------------------------------------------------------
+// 汇总词典文件名（v2.2.7 起由「wiki_术语对照and个人填充.json」改名为「汇总词典.json」）。
+// 返回 dictDir 下汇总词典路径；若新文件名不存在而旧文件名存在，自动迁移（重命名），
+// 保证老用户升级后已有词典不丢失。迁移失败时退回旧文件名继续使用。
+static fs::path MergedDictPath(const fs::path& dictDir)
+{
+    fs::path p = dictDir / fs::u8path("汇总词典.json");
+    std::error_code ec;
+    if (!fs::exists(p, ec) || ec) {
+        fs::path old = dictDir / fs::u8path("wiki_术语对照and个人填充.json");
+        std::error_code oec;
+        if (fs::exists(old, oec) && !oec) {
+            fs::rename(old, p, ec);
+            if (ec) return old; // 迁移失败：退回旧名继续使用
+            LogThread("[提示] 已把旧词典 wiki_术语对照and个人填充.json 迁移为 汇总词典.json");
+        }
+    }
+    return p;
+}
+
+// 个性翻译.json：保存 AI 翻译不理想、用户想单独指定译法的词汇/短语（格式：英文:中文）。
+// 用户建立词典目录后即创建；点「3. 词典写入Mod」时，其内容会以"覆盖"方式压过
+// 汇总词典里的对应词条，再写入 Mod。命中黑名单的词条不生效（黑名单 > 个性翻译）。
+static fs::path CustomDictPath(const fs::path& dictDir)
+{
+    return dictDir / fs::u8path("个性翻译.json");
+}
+
+// 确保 个性翻译.json 存在（仅首次创建空对象，不覆盖用户已编辑内容）。
+static void EnsureCustomDictFile(const fs::path& dictDir)
+{
+    std::error_code ec;
+    fs::path p = CustomDictPath(dictDir);
+    if (fs::exists(p, ec) && !ec) return;
+    if (fs::exists(dictDir, ec) && !ec) {
+        write_binary_file(p, json::object().dump(2));
+        LogThread("[提示] 已创建 个性翻译.json（格式：英文:中文，一行一词；点『3. 词典写入Mod』时覆盖汇总词典对应词条，命中黑名单的词条不生效）");
+    }
+}
+
 // 词典目录没有 wiki_术语对照.json 时，从 exe 旁的内置文件释放一份（打包随程序发布的 wiki 原典）。
 // 已有文件则不覆盖（用户可能已自行导出更新）。返回是否成功释放。
 static bool ReleaseBuiltinWiki(const fs::path& dictDir)
@@ -1638,7 +1738,7 @@ static bool ReleaseBuiltinWiki(const fs::path& dictDir)
     return !cc;
 }
 
-// 确保唯一词典文件 wiki_术语对照and个人填充.json 存在（仅首次生成）。
+// 确保汇总词典 汇总词典.json 存在（仅首次生成）。
 // 该文件是程序唯一的词典，含三部分：
 //   terms         英文->中文 固定映射（wiki 原典 + 个人填充，先来后到），补全/回滚用
 //   _options      完整 key（路径||Name||原文）翻译，应用翻译用
@@ -1650,7 +1750,8 @@ static void EnsureDictFile()
 {
     if (g_cfg.dictionaryDir.empty()) return;
     fs::path dictDir = fs::u8path(g_cfg.dictionaryDir);
-    fs::path outPath = dictDir / fs::u8path("wiki_术语对照and个人填充.json");
+    EnsureCustomDictFile(dictDir); // 词典目录就绪即创建 个性翻译.json（已存在不覆盖）
+    fs::path outPath = MergedDictPath(dictDir); // 含旧文件名自动迁移
     std::error_code oec;
     if (fs::exists(outPath, oec) && !oec) return; // 已存在：不覆盖用户手动修改
 
@@ -1726,16 +1827,16 @@ static void EnsureDictFile()
     write_binary_file(outPath, merged.dump(2));
 }
 
-// Wiki 原典导出后，把新增词条同步进汇总词典 wiki_术语对照and个人填充.json：
+// Wiki 原典导出后，把新增词条同步进汇总词典 汇总词典.json：
 // - 汇总词典不存在 → 按 EnsureDictFile 规则从原典 + 汉化总词典 重新生成
 // - 已存在 → 只补入原典有而汇总没有的 terms（不覆盖已有，先来后到）
 static void SyncWikiToMerged(const fs::path& dictDir)
 {
     std::error_code ec;
-    fs::path mergedPath = dictDir / fs::u8path("wiki_术语对照and个人填充.json");
+    fs::path mergedPath = MergedDictPath(dictDir);
     if (!fs::exists(mergedPath, ec) || ec) {
         EnsureDictFile();
-        LogThread("[提示] 汇总词典 wiki_术语对照and个人填充.json 不存在，已按「wiki 原典优先 + 汉化总词典补充」重新生成");
+        LogThread("[提示] 汇总词典 汇总词典.json 不存在，已按「wiki 原典优先 + 汉化总词典补充」重新生成");
         return;
     }
     std::string d;
@@ -1779,7 +1880,7 @@ static void SyncWikiToMerged(const fs::path& dictDir)
 }
 
 // 加载词典 → 英文->中文 映射。
-// 唯一词典来源：wiki_术语对照and个人填充.json 的 terms 部分
+// 唯一词典来源：汇总词典.json 的 terms 部分
 // （wiki 固定优先 + 个人填充，先来后到；要修改词条请直接编辑该文件）。
 static bool LoadTermMap(std::unordered_map<std::string, std::string>& termMap, size_t& maxTermLen)
 {
@@ -1789,7 +1890,7 @@ static bool LoadTermMap(std::unordered_map<std::string, std::string>& termMap, s
     EnsureDictFile(); // 兜底：词典文件不存在时首次生成
 
     // 读唯一词典的 terms 构建映射
-    fs::path mergedPath = dictDir / fs::u8path("wiki_术语对照and个人填充.json");
+    fs::path mergedPath = MergedDictPath(dictDir);
     std::error_code gec;
     if (fs::exists(mergedPath, gec) && !gec) {
         auto loadInto = [&](const json& md) {
@@ -1797,7 +1898,7 @@ static bool LoadTermMap(std::unordered_map<std::string, std::string>& termMap, s
             for (auto& it : md["terms"].items()) {
                 if (!it.value().is_string()) continue;
                 std::string en = it.key(), zh = it.value().get<std::string>();
-                if (en.empty() || zh.empty() || en == zh) continue;
+                if (en.empty() || zh.empty()) continue; // 允许 en==zh 的"保英文"词条（如 Lava→Lava），保留原文不翻译
                 termMap[en] = zh;
                 // 同时存入小写 key：选项文本中常出现小写/首字母小写，避免大小写不一致导致漏翻
                 std::string enLower;
@@ -1815,7 +1916,7 @@ static bool LoadTermMap(std::unordered_map<std::string, std::string>& termMap, s
             }
             catch (...) {
                 // 汇总词典损坏：备份后按「wiki 原典优先 + 汉化总词典补充」重建，再读取
-                LogThread("[错误] wiki_术语对照and个人填充.json 解析失败（可能损坏），已备份并从 wiki 原典重建");
+                LogThread("[错误] 汇总词典.json 解析失败（可能损坏），已备份并从 wiki 原典重建");
                 std::error_code bec;
                 fs::path bak = mergedPath;
                 bak += L".损坏备份";
@@ -1826,6 +1927,37 @@ static bool LoadTermMap(std::unordered_map<std::string, std::string>& termMap, s
                     try { loadInto(json::parse(clean_utf8(d2))); } catch (...) {}
                 }
             }
+        }
+    }
+
+    // 原典兜底：唯一词典未收录的词条，再查 wiki 原典（wiki_术语对照.json），
+    // 不覆盖唯一词典已有词条（含个人填充），实现「词典 → 原典」的读取顺序
+    fs::path wikiPath = dictDir / fs::u8path("wiki_术语对照.json");
+    std::error_code wec;
+    if (fs::exists(wikiPath, wec) && !wec) {
+        std::string wd;
+        if (read_binary_file(wikiPath, wd)) {
+            try {
+                json wj = json::parse(clean_utf8(wd));
+                if (wj.is_object() && wj.contains("terms") && wj["terms"].is_object()) {
+                    int added = 0;
+                    for (auto& it : wj["terms"].items()) {
+                        if (!it.value().is_string()) continue;
+                        std::string en = it.key(), zh = it.value().get<std::string>();
+                        if (en.empty() || zh.empty()) continue;
+                        if (termMap.find(en) != termMap.end()) continue; // 唯一词典优先
+                        termMap[en] = zh;
+                        std::string enLower;
+                        enLower.reserve(en.size());
+                        for (unsigned char c : en) enLower += static_cast<char>(std::tolower(c));
+                        if (enLower != en && termMap.find(enLower) == termMap.end()) termMap[enLower] = zh;
+                        if (en.size() > maxTermLen) maxTermLen = en.size();
+                        added++;
+                    }
+                    if (added > 0)
+                        LogThread("[提示] 原典兜底补充 " + std::to_string(added) + " 条词条（wiki_术语对照.json）");
+                }
+            } catch (...) {}
         }
     }
     if (maxTermLen > 200) maxTermLen = 200;
@@ -1918,8 +2050,9 @@ static int AutoFillJsonWithDict(json& tj,
             auto kp = key.rfind("||");
             std::string orig = (kp == std::string::npos) ? key : key.substr(kp + 2);
             std::string tr = TranslateText(orig, termMap, maxTermLen);
-            // 有英文句子残留（如 "Required for 硌狮族 models."）视为未完成，留给后续处理
-            if (!tr.empty() && tr != orig && !hasEnglishWordResidue(tr)) { it.value() = dictFillDisplay(key, tr, orig); filled++; }
+            // 有英文句子残留（如 "Required for 硌狮族 models."）视为未完成，留给后续处理；
+            // tr==orig 的"保英文"词条（如 Lava→Lava）也视为命中，直接保留原文不翻译
+            if (!tr.empty() && !hasEnglishWordResidue(tr)) { it.value() = dictFillDisplay(key, tr, orig); filled++; }
             else missed++;
         }
     }
@@ -1975,7 +2108,7 @@ static std::vector<TransFileInfo> ScanTransFiles(const fs::path& transDir)
 }
 
 // 导入翻译：一个入口依次完成两个功能（执行时会在日志输出给用户的说明）：
-//   功能一：用唯一词典（wiki_术语对照and个人填充.json）补全未翻译项 → 生成/更新 *_已翻译.json
+//   功能一：用唯一词典（汇总词典.json）补全未翻译项 → 生成/更新 *_已翻译.json
 //   功能二：将已翻译文件的所有非空翻译编入唯一词典（不覆盖已有，先来后到）
 bool ImportTranslations(const fs::path& inFile, bool autoFill)
 {
@@ -2008,13 +2141,13 @@ bool ImportTranslations(const fs::path& inFile, bool autoFill)
         size_t maxTermLen = 0;
         if (LoadTermMap(termMap, maxTermLen)) {
             LogThread("[提示] 已加载唯一词典 " + std::to_string(termMap.size())
-                + " 条（wiki_术语对照and个人填充.json，wiki 固定优先、先来后到）");
+                + " 条（汇总词典.json，wiki 固定优先、先来后到）");
             int missed = 0, already = 0;
             int filled = AutoFillJsonWithDict(tj, termMap, maxTermLen, missed, already);
             LogThread("词典补全：本次补全 " + std::to_string(filled) + " 条，已有翻译保留 "
                 + std::to_string(already) + " 条，仍未命中 " + std::to_string(missed) + " 条");
         } else {
-            LogThread("[提示] 词典为空（未找到 wiki_术语对照and个人填充.json），跳过补全");
+            LogThread("[提示] 词典为空（未找到 汇总词典.json），跳过补全");
         }
     }
 
@@ -2061,9 +2194,9 @@ bool ImportTranslations(const fs::path& inFile, bool autoFill)
     // ── 功能二：编入唯一词典 ──────────────────────────────
     LogThread("[提示] 导入翻译·功能二：编入唯一词典 —— 把 "
         + wstring_to_utf8(outFile.filename().wstring())
-        + " 的非空翻译编入 wiki_术语对照and个人填充.json（已有翻译不覆盖，先来后到）");
+        + " 的非空翻译编入 汇总词典.json（已有翻译不覆盖，先来后到）");
     EnsureDictFile(); // 词典不存在时首次生成
-    fs::path dictPath = dictDir / fs::u8path("wiki_术语对照and个人填充.json");
+    fs::path dictPath = MergedDictPath(dictDir);
     json dict;
     if (fs::exists(dictPath)) {
         std::string d;
@@ -2071,7 +2204,7 @@ bool ImportTranslations(const fs::path& inFile, bool autoFill)
             try { dict = json::parse(clean_utf8(d)); }
             catch (...) {
                 // 汇总词典损坏：备份后从 wiki 原典重建，防止后续写入覆盖丢失全部数据
-                LogThread("[错误] wiki_术语对照and个人填充.json 解析失败（可能损坏），已备份并从 wiki 原典重建");
+                LogThread("[错误] 汇总词典.json 解析失败（可能损坏），已备份并从 wiki 原典重建");
                 std::error_code bec;
                 fs::path bak = dictPath;
                 bak += L".损坏备份";
@@ -2328,7 +2461,7 @@ void WikiImportThread()
         }
     }
     if (result["terms"].empty()) {
-        fs::path mergedPath = dictDir / fs::u8path("wiki_术语对照and个人填充.json");
+        fs::path mergedPath = MergedDictPath(dictDir);
         std::error_code mec;
         if (fs::exists(mergedPath, mec) && !mec) {
             std::string d;
@@ -2506,7 +2639,7 @@ void WikiImportThread()
                 + "，结果已写入 wiki 原典 wiki_术语对照.json 并同步进汇总词典");
         }
         LogThread("[提示] 原典：wiki_术语对照.json（纯 wiki 词条，防止汇总词典出错时丢失）；"
-            "程序实际使用：wiki_术语对照and个人填充.json（原典 + 个人填充）—— 个人词条请直接编辑汇总词典");
+            "程序实际使用：汇总词典.json（原典 + 个人填充 + 个性翻译.json 覆盖）—— 个人词条请直接编辑汇总词典，单独修正的词汇可写 个性翻译.json");
     }
     catch (const std::exception& e) {
         LogThread("[错误] Wiki 导出异常：" + std::string(e.what()));
@@ -2896,7 +3029,7 @@ static bool AITranslateBatch(const std::vector<std::pair<std::string, std::strin
 static bool AITranslateFile(const fs::path& inFile)
 {
     if (g_cfg.aiApiKey.empty()) {
-        LogThread("[错误] 未设置 AI API Key，请先点『AI 设置』配置");
+        LogThread("[错误] 未设置 AI API_Key，请先点『AI 设置』配置");
         return false;
     }
     std::string data;
@@ -2941,7 +3074,7 @@ static bool AITranslateFile(const fs::path& inFile)
     // 唯一词典预填：词典中已翻译的 key 直接填充，不再浪费 AI 额度
     int dictFilled = 0;
     if (!g_cfg.dictionaryDir.empty()) {
-        fs::path dictPath = fs::u8path(g_cfg.dictionaryDir) / fs::u8path("wiki_术语对照and个人填充.json");
+        fs::path dictPath = MergedDictPath(fs::u8path(g_cfg.dictionaryDir));
         std::error_code dec;
         if (fs::exists(dictPath, dec) && !dec) {
             std::string dd;
@@ -2977,11 +3110,12 @@ static bool AITranslateFile(const fs::path& inFile)
                 std::vector<Item> rest;
                 for (auto& it : pending) {
                     std::string tr = TranslateText(it.english, termMap, maxTermLen);
-                    // 有英文句子残留（半翻译）时不给 AI 省额度，继续交给 AI 补全整句
-                    if (!tr.empty() && tr != it.english && !hasEnglishWordResidue(tr)) {
+                    // 有英文句子残留（半翻译）时不给 AI 省额度，继续交给 AI 补全整句；
+                    // tr==原文的"保英文"词条（如 Lava→Lava）视为命中，保留英文原样
+                    if (!tr.empty() && !hasEnglishWordResidue(tr)) {
                         tj[it.sec][it.key] = dictFillDisplay(it.key, tr, it.english);
                         dictFilled++;
-                        sessionTerms[it.english] = tr;
+                        if (tr != it.english) sessionTerms[it.english] = tr;
                     }
                     else rest.push_back(it);
                 }
@@ -3400,6 +3534,31 @@ void ApplyFontToDialog(HWND hDlg)
 // ------------------------------------------------------------------
 // UI 刷新
 // ------------------------------------------------------------------
+// 所有 Edit 填写框子类化：Ctrl+A 全选（Win32 Edit 默认不响应 Ctrl+A）
+LRESULT CALLBACK EditSelectAllProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam,
+                                   UINT_PTR /*uIdSubclass*/, DWORD_PTR /*dwRefData*/)
+{
+    if (msg == WM_CHAR && wParam == 1) { // 1 = Ctrl+A
+        SendMessageW(hwnd, EM_SETSEL, 0, -1);
+        return 0;
+    }
+    return DefSubclassProc(hwnd, msg, wParam, lParam);
+}
+
+BOOL CALLBACK SubclassEditForSelectAll(HWND hwnd, LPARAM /*lParam*/)
+{
+    wchar_t cls[32] = {};
+    if (GetClassNameW(hwnd, cls, 32) > 0 && _wcsicmp(cls, L"Edit") == 0)
+        SetWindowSubclass(hwnd, EditSelectAllProc, 0, 0);
+    return TRUE;
+}
+
+// 给对话框内所有 Edit 填写框启用 Ctrl+A 全选
+static void EnableEditSelectAll(HWND hDlg)
+{
+    EnumChildWindows(hDlg, SubclassEditForSelectAll, 0);
+}
+
 void SetEditText(HWND hDlg, int id, const std::wstring& text)
 {
     SetDlgItemTextW(hDlg, id, text.c_str());
@@ -3699,7 +3858,7 @@ static void BuildAISelectList(HWND hList)
     for (size_t i = 0; i < g_aiSelItems.size(); ++i) {
         const auto& it = g_aiSelItems[i];
         std::wstring wName = utf8_to_wstring(it.name);
-        std::wstring wKey = it.key.empty() ? L"（沿用当前）" : utf8_to_wstring(it.key);
+        std::wstring wKey = it.key.empty() ? L"" : L"******"; // 预设无 Key 显示空；有 Key 默认掩码隐藏
         std::wstring wModel = utf8_to_wstring(it.model);
         std::wstring wBase = utf8_to_wstring(it.baseUrl);
         std::wstring wNote = utf8_to_wstring(it.note);
@@ -3727,7 +3886,7 @@ static INT_PTR CALLBACK SelectAICfgDlgProc(HWND hDlg, UINT message, WPARAM wPara
         col.mask = LVCF_TEXT | LVCF_WIDTH | LVCF_FMT;
         col.fmt = LVCFMT_LEFT;
         struct ColDef { LPCWSTR t; int w; } cols[] = {
-            { L"名称", 100 }, { L"API Key", 130 }, { L"模型名", 110 }, { L"API 地址", 160 }, { L"说明", 70 }
+            { L"名称", 100 }, { L"API_Key", 130 }, { L"模型名", 110 }, { L"API 地址", 160 }, { L"说明", 70 }
         };
         for (const auto& c : cols) {
             col.pszText = (LPWSTR)c.t;
@@ -3761,6 +3920,20 @@ static INT_PTR CALLBACK SelectAICfgDlgProc(HWND hDlg, UINT message, WPARAM wPara
                         if (i != idx) ListView_SetCheckState(hList, i, FALSE);
                     ListView_SetCheckState(hList, idx, TRUE);
                 }
+                return TRUE;
+            }
+            if (nm->code == NM_DBLCLK) {
+                // 双击列表行 = 确认套用该配置（等同点「确定」）
+                NMITEMACTIVATE* nmia = (NMITEMACTIVATE*)lParam;
+                int idx = nmia->iItem;
+                if (idx < 0 || idx >= (int)g_aiSelItems.size()) break;
+                HWND hList = nm->hwndFrom;
+                ListView_SetItemState(hList, idx, LVIS_SELECTED, LVIS_SELECTED);
+                for (int i = 0; i < ListView_GetItemCount(hList); ++i)
+                    if (i != idx) ListView_SetCheckState(hList, i, FALSE);
+                ListView_SetCheckState(hList, idx, TRUE);
+                g_aiSelResult = idx;
+                EndDialog(hDlg, IDOK);
                 return TRUE;
             }
             if (nm->code == LVN_ITEMCHANGED) {
@@ -4097,6 +4270,7 @@ INT_PTR CALLBACK BlacklistDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM
             text += w;
         }
         SetDlgItemTextW(hDlg, IDC_BLACKLIST_EDIT, utf8_to_wstring(text).c_str());
+        EnableEditSelectAll(hDlg); // 黑名单填写框支持 Ctrl+A 全选
         return TRUE;
     }
     case WM_COMMAND: {
@@ -4392,6 +4566,7 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
         CreateUiFont();
         ApplyFontToDialog(hDlg);
         RefreshConfigUI();
+        EnableEditSelectAll(hDlg); // 所有填写框支持 Ctrl+A 全选
         Log("FFXIV 模组汉化工具已启动");
         {
             std::string names;
@@ -4403,18 +4578,18 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
         if (!g_cfg.penumbraDir.empty()) Log("Penumbra 目录：" + g_cfg.penumbraDir);
         if (g_cfg.dictionaryDir.empty())
             Log("[提示] 未找到 config.user.json（首次运行？）。请在『词典目录』处选择一次目录建立用户配置；旧版升级则选择原词典目录即可自动迁移已有设置");
-        // 创建初：若唯一词典 wiki_术语对照and个人填充.json 不存在，则从
+        // 创建初：若汇总词典 汇总词典.json 不存在，则从
         // wiki_术语对照.json + 汉化总词典.json 一次性合并生成（wiki 固定优先，先来后到）。
-        // 之后程序不再自动重写它，改已翻译的词条请直接编辑该文件。
+        // 之后程序不再自动重写它，改已翻译的词条请直接编辑该文件；单独修正的词汇可写 个性翻译.json。
         if (!g_cfg.dictionaryDir.empty()) {
-            fs::path dictFile = fs::u8path(g_cfg.dictionaryDir) / fs::u8path("wiki_术语对照and个人填充.json");
+            fs::path dictFile = MergedDictPath(fs::u8path(g_cfg.dictionaryDir));
             std::error_code dec0;
             bool dictExists = fs::exists(dictFile, dec0) && !dec0;
             EnsureDictFile();
             if (!dictExists) {
                 std::error_code dec1;
                 if (fs::exists(dictFile, dec1) && !dec1)
-                    Log("[提示] 已生成唯一词典 wiki_术语对照and个人填充.json（wiki 固定优先 + 个人填充，先来后到；改词请直接编辑该文件）");
+                    Log("[提示] 已生成唯一词典 汇总词典.json（wiki 固定优先 + 个人填充，先来后到；改词请直接编辑该文件）");
             }
         }
         LayoutMainDlg(hDlg);
@@ -4612,21 +4787,9 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
             if (DialogBoxW(hInst, MAKEINTRESOURCEW(IDD_AI_SELECT_DIALOG), hDlg, SelectAICfgDlgProc) == IDOK) {
                 if (g_aiSelResult >= 0 && g_aiSelResult < (int)g_aiSelItems.size()) {
                     const auto& it = g_aiSelItems[g_aiSelResult];
-                    std::string usedKey = it.key, usedName = it.name;
-                    // 内置预设可能不带 Key：按同名 / 同地址自动匹配用户自定义存档里的 Key
-                    // （避免选了「智谱 GLM」但 API Key 仍是大肥鱼的问题）
-                    if (usedKey.empty()) {
-                        for (const auto& s : g_cfg.customSaves) {
-                            bool nameMatch = !s.name.empty() && s.name == it.name;
-                            bool urlMatch  = !s.baseUrl.empty() && !it.baseUrl.empty() && s.baseUrl == it.baseUrl;
-                            if ((nameMatch || urlMatch) && !s.key.empty()) {
-                                usedKey = s.key;
-                                usedName = s.name;
-                                break;
-                            }
-                        }
-                    }
-                    if (!usedKey.empty()) { g_cfg.aiApiKey = usedKey; g_cfg.aiKeyName = usedName; }
+                    // 不再从用户自定义存档自动匹配 Key（用户要求：预设无 Key 就空着，不「沿用当前」）；
+                    // 预设自带 Key 则套用，否则保持当前已填的 Key 不变。
+                    if (!it.key.empty()) { g_cfg.aiApiKey = it.key; g_cfg.aiKeyName = it.name; }
                     if (!it.model.empty()) g_cfg.aiModel = it.model;
                     if (!it.baseUrl.empty()) g_cfg.aiBaseUrl = it.baseUrl;
                     RefreshConfigUI();
@@ -4814,7 +4977,7 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
             if (g_busy) break;
             SyncAISettingsFromUI(hDlg); // 界面即真值，先同步再测试
             if (g_cfg.aiApiKey.empty()) {
-                MessageBoxW(hDlg, L"尚未配置 AI API Key，请在上方『AI 翻译设置』中填写。", L"提示", MB_OK | MB_ICONINFORMATION);
+                MessageBoxW(hDlg, L"尚未配置 AI API_Key，请在上方『AI 翻译设置』中填写。", L"提示", MB_OK | MB_ICONINFORMATION);
                 break;
             }
             SaveConfig();
@@ -4838,7 +5001,7 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
             if (g_busy) break;
             SyncAISettingsFromUI(hDlg); // 界面即真值，先同步再翻译
             if (g_cfg.aiApiKey.empty()) {
-                MessageBoxW(hDlg, L"尚未配置 AI API Key，请在上方『AI 翻译设置』中填写。", L"提示", MB_OK | MB_ICONINFORMATION);
+                MessageBoxW(hDlg, L"尚未配置 AI API_Key，请在上方『AI 翻译设置』中填写。", L"提示", MB_OK | MB_ICONINFORMATION);
                 break;
             }
             std::string aiWarn = CheckAIMatch();

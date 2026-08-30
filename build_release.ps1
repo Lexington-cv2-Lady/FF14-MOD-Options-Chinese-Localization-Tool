@@ -88,10 +88,10 @@ if ($Zip) {
     $zipDir = Join-Path 'D:\Fast folder\Downloads' $zipDirName
     if (-not (Test-Path $zipDir)) { New-Item -ItemType Directory -Path $zipDir | Out-Null }
 
-    # Zip contains a top-level versioned folder, so extracting to any location
-    # yields a clean "FFXIV_MOD_Options_Chinese_AI-Translated_vX.Y.Z\" directory
-    # (instead of scattering the files into the current location).
-    $innerName = "FFXIV_MOD_Options_Chinese_AI-Translated_v$ver"
+    # Zip contains a top-level Chinese folder without version, so extracting to any
+    # location yields a clean "最终幻想14_mod选项汉化工具_AI翻译版\" directory.
+    # The name is built from code points because this script may be decoded as ANSI.
+    $innerName = -join [char[]](0x6700,0x7EC8,0x5E7B,0x60F3,0x31,0x34,0x5F,0x6D,0x6F,0x64,0x9009,0x9879,0x6C49,0x5316,0x5DE5,0x5177,0x5F,0x41,0x49,0x7FFB,0x8BD1,0x7248)
     $stage = Join-Path $env:TEMP ("ffxiv_mod_pkg_" + [guid]::NewGuid().ToString('N'))
     $inner = Join-Path $stage $innerName
     New-Item -ItemType Directory -Path $inner -Force | Out-Null
