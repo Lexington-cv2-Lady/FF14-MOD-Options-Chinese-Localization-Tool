@@ -4554,6 +4554,8 @@ INT_PTR CALLBACK RestoreDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM l
 // 单词黑名单.json（词典目录）读写
 // ------------------------------------------------------------------
 // 从词典目录下的 单词黑名单.json 读取黑名单词（每行一个，或用逗号间隔），合并 defaults 后返回
+// v2.3.1：支持 # 注释——以 # 开头（trim 后）的整行为注释行；行内 # 及其之后内容也视为注释，
+// 方便在文件里写入使用说明而不被当作黑名单词。
 // 兼容旧版：词典目录没有该文件时，回退读取翻译目录下的旧文件
 std::vector<std::string> LoadBlacklistFile(const std::vector<std::string>& defaults)
 {
@@ -4577,9 +4579,14 @@ std::vector<std::string> LoadBlacklistFile(const std::vector<std::string>& defau
     std::string token;
     while (std::getline(ss, token, '\n')) {
         if (!token.empty() && token.back() == '\r') token.pop_back();
+        size_t ts = token.find_first_not_of(" \t");
+        if (ts == std::string::npos) continue;      // 空行
+        if (token[ts] == '#') continue;             // 整行注释
         std::stringstream ss2(token);
         std::string t;
         while (std::getline(ss2, t, ',')) {
+            size_t h = t.find('#');                 // 行内注释：# 及之后忽略
+            if (h != std::string::npos) t = t.substr(0, h);
             size_t s = t.find_first_not_of(" \t"); if (s != std::string::npos) t = t.substr(s);
             size_t e = t.find_last_not_of(" \t"); if (e != std::string::npos) t = t.substr(0, e + 1);
             if (!t.empty()) words.push_back(t);
@@ -4588,16 +4595,23 @@ std::vector<std::string> LoadBlacklistFile(const std::vector<std::string>& defau
     return words;
 }
 
-// 保存黑名单到词典目录下的 单词黑名单.json
+// 保存黑名单到词典目录下的 单词黑名单.json（v2.3.1：开头写入使用说明，# 注释行不会影响读取）
 void SaveBlacklistFile(const std::vector<std::string>& words)
 {
     std::string base = g_cfg.dictionaryDir.empty() ? g_cfg.translationDir : g_cfg.dictionaryDir;
     if (base.empty()) return;
     fs::path p = fs::u8path(base) / fs::u8path("单词黑名单.json");
-    std::string out;
+    std::string out =
+        "# 单词黑名单.json —— 使用方法\r\n"
+        "# 每行写一个英文单词/词组；同一行也可用英文逗号分隔多个词，例如：rue,bibo\r\n"
+        "# 以 # 开头的行（或行内 # 及之后的内容）是注释，不会被当作黑名单词\r\n"
+        "# 命中黑名单的词在 AI 翻译、词典写入Mod 时保留英文原文，不进行翻译\r\n"
+        "# 编辑保存后下次相关操作自动生效，无需重启程序\r\n"
+        "# 默认词（可增删，删掉即解除保护）：\r\n";
     for (size_t i = 0; i < words.size(); ++i) {
-        if (i) out += "\r\n";
+        if (words[i].empty()) continue;
         out += words[i];
+        out += "\r\n";
     }
     if (write_binary_file(p, out))
         Log("已写入 单词黑名单.json（" + std::to_string(words.size()) + " 个词，位于词典目录）");
