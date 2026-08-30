@@ -3358,6 +3358,9 @@ static std::string NextPresetName()
         bool used = false;
         for (const auto& p : g_cfg.aiPresets)
             if (p.name == name) { used = true; break; }
+        if (!used)
+            for (const auto& s : g_cfg.customSaves)
+                if (s.name == name) { used = true; break; }
         if (!used) return name;
     }
 }
@@ -3570,9 +3573,12 @@ static void BuildAISelectList(HWND hList)
         AICfgItem item{ p.name, "", p.model, p.baseUrl,
                         p.note.empty() ? std::string("内置预设") : p.note, false };
         for (const auto& s : g_cfg.customSaves) {
-            if (AISameEntry(s, p) && !s.key.empty()) {
+            if (AISameEntry(s, p)) {
                 item.key = s.key;
                 item.name = s.name.empty() ? p.name : s.name;
+                // 用户自定义的模型名 / API 地址优先，避免合并后自定义模型名被内置预设覆盖
+                if (!s.model.empty()) item.model = s.model;
+                if (!s.baseUrl.empty()) item.baseUrl = s.baseUrl;
                 item.note = (item.name == p.name)
                             ? std::string("自定义")
                             : ("源自：" + p.name);
@@ -3586,7 +3592,7 @@ static void BuildAISelectList(HWND hList)
     for (const auto& e : g_cfg.customSaves) {
         bool merged = false;
         for (const auto& p : g_cfg.aiPresets)
-            if (AISameEntry(e, p) && !e.key.empty()) { merged = true; break; }
+            if (AISameEntry(e, p)) { merged = true; break; }
         if (merged) continue;
         g_aiSelItems.push_back({ e.name, e.key, e.model, e.baseUrl,
                                  e.note.empty() ? std::string("自定义") : e.note, true });

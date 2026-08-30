@@ -88,6 +88,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build_release.ps1 -Zip
 - 调整：AI 请求 `max_tokens` 由 8192 提高到 16384，给推理模型（大肥鱼 deepseek-v4-flash 等）的思维链与 JSON 输出留更多空间，降低长批次因 token 占满而失败的概率
 - 修复：AI 把无法翻译的专有名词/缩写（如 EXQB、Uranus）机械输出成「英文（英文）」重复格式的问题。已三处兜底——提示词明确禁止「英文（英文）」、AI 译文写入前自动把 `X（X）`（无中文）回退为原英文 `X`、词典填充时译名仍为英文则不再拼括号
 - 调整：内置预设「智谱 GLM」默认模型由 `glm-4.7-flash` 改为 `GLM-4.5-Air`（config.default.json 同步）
+- 修复：自定义 AI 记录与内置预设合并时，自定义的模型名/API 地址被内置预设值覆盖导致"保存了却用不上"的问题（合并行优先采用自定义记录的值）；「自定义 N」自动命名不再与已保存的自定义记录重名
 
 ### v2.2.4
 
