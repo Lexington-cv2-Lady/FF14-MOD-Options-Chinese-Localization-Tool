@@ -682,12 +682,9 @@ bool ExtractEnglish()
     // 确保词典目录下存在 单词黑名单.json（v2.2.8 起目录确定时即建立，这里兜底再确认一次）
     EnsureBlacklistFile();
 
-    // 读取黑名单（默认内置跳过词 + 翻译目录下 单词黑名单.json + 配置）
+    // 提取英文不再跳过黑名单词（黑名单仅在 AI 翻译/词典写入Mod 时保留原文），
+    // 只跳过纯装饰分隔符 "---"、"-"，避免把非选项文本当词条提取。
     std::set<std::string> blacklist = { "---", "-" };
-    for (auto& w : LoadBlacklistFile(g_cfg.blacklist)) {
-        std::string t = w;
-        if (!t.empty()) blacklist.insert(t);
-    }
 
     // 扫描所有模组文件夹
     struct ModEntry { fs::path folder; std::vector<fs::path> files; bool hasPending = false; };
@@ -870,7 +867,7 @@ bool ExtractEnglish()
         }
     }
 
-    // 黑名单过滤（剔除含黑名单单词的词条，单词=子串包含匹配）
+    // 分隔符过滤（剔除纯装饰符词条，如 ---、-）
     std::vector<std::string> toRemove;
     for (auto& it : out["_options"].items()) {
         // key 形如 路径||Name||原文 或 路径||Opt||原文，取最后一个 || 之后的原文
@@ -2097,7 +2094,8 @@ static std::string dictFillDisplay(const std::string& fullKey, const std::string
 // 用词典补全 JSON 中空白项。返回补全条数；missed=仍未命中；already=已有翻译被保留数
 static int AutoFillJsonWithDict(json& tj,
     const std::unordered_map<std::string, std::string>& termMap,
-    size_t maxTermLen, int& missed, int& already)
+    size_t maxTermLen, int& missed, int& already,
+    const json* fullDict = nullptr)
 {
     int filled = 0;
     missed = 0;
@@ -2110,6 +2108,15 @@ static int AutoFillJsonWithDict(json& tj,
             std::string key = it.key();
             auto kp = key.rfind("||");
             std::string orig = (kp == std::string::npos) ? key : key.substr(kp + 2);
+            // 1. 汇总词典完整 key 命中：同源翻译直接复用
+            if (fullDict && fullDict->contains(sec) && (*fullDict)[sec].is_object()
+                && (*fullDict)[sec].contains(key) && (*fullDict)[sec][key].is_string()
+                && !(*fullDict)[sec][key].get<std::string>().empty()) {
+                it.value() = dictFillDisplay(key, (*fullDict)[sec][key].get<std::string>(), orig);
+                filled++;
+                continue;
+            }
+            // 2. 术语映射（wiki 术语 / 个人词条）
             std::string tr = TranslateText(orig, termMap, maxTermLen);
             // 有英文句子残留（如 "Required for 硌狮族 models."）视为未完成，留给后续处理；
             // tr==orig 的"保英文"词条（如 Lava→Lava）也视为命中，直接保留原文不翻译
@@ -2195,16 +2202,27 @@ bool ImportTranslations(const fs::path& inFile, bool autoFill)
         LogThread("[错误] 缺少 _options / _descriptions 字段"); return false;
     }
 
-    // ── 功能一：词典补全（仅当勾选「用词典补全空白项」时执行）────────
+    // ── 功能一：词典补全（仅当勾选「导入前用词典自动补全未翻译项」时执行）────────
     if (autoFill) {
         LogThread("[提示] 导入翻译·功能一：词典补全 —— 用唯一词典补全本文件空白项（不覆盖已有翻译）");
         std::unordered_map<std::string, std::string> termMap;
         size_t maxTermLen = 0;
-        if (LoadTermMap(termMap, maxTermLen)) {
-            LogThread("[提示] 已加载唯一词典 " + std::to_string(termMap.size())
-                + " 条（汇总词典.json，wiki 固定优先、先来后到）");
+        // 读取汇总词典完整内容，用于按完整 key 精确补全（不限于术语映射）
+        json fullDict = json::object();
+        fs::path fdPath = MergedDictPath(dictDir);
+        std::error_code fdec;
+        if (fs::exists(fdPath, fdec) && !fdec) {
+            std::string fd;
+            if (read_binary_file(fdPath, fd)) {
+                try { fullDict = json::parse(clean_utf8(fd)); }
+                catch (...) {}
+            }
+        }
+        if (LoadTermMap(termMap, maxTermLen) || fullDict.is_object()) {
+            LogThread("[提示] 已加载唯一词典（汇总词典.json，wiki 固定优先、先来后到）");
             int missed = 0, already = 0;
-            int filled = AutoFillJsonWithDict(tj, termMap, maxTermLen, missed, already);
+            int filled = AutoFillJsonWithDict(tj, termMap, maxTermLen, missed, already,
+                fullDict.is_object() && !fullDict.empty() ? &fullDict : nullptr);
             LogThread("词典补全：本次补全 " + std::to_string(filled) + " 条，已有翻译保留 "
                 + std::to_string(already) + " 条，仍未命中 " + std::to_string(missed) + " 条");
         } else {
@@ -2280,20 +2298,61 @@ bool ImportTranslations(const fs::path& inFile, bool autoFill)
     if (!dict.contains("_descriptions")) dict["_descriptions"] = json::object();
     if (!dict.contains("terms")) dict["terms"] = json::object();
 
-    int merged = 0;
+    // 个性翻译.json：命中词条以个性翻译为准（优先级：个性翻译 > 汇总词典，已有翻译不覆盖、先来后到）
+    std::unordered_map<std::string, std::string> customFull, customEn;
+    {
+        fs::path cp = CustomDictPath(dictDir);
+        std::error_code cec3;
+        if (fs::exists(cp, cec3) && !cec3) {
+            std::string cd;
+            if (read_binary_file(cp, cd)) {
+                try {
+                    json custom = json::parse(clean_utf8(cd));
+                    if (custom.is_object()) {
+                        for (auto& cit : custom.items()) {
+                            if (!cit.value().is_string() || cit.value().get<std::string>().empty()) continue;
+                            auto ckp = cit.key().rfind("||");
+                            if (ckp == std::string::npos) customEn[cit.key()] = cit.value().get<std::string>();
+                            else customFull[cit.key()] = cit.value().get<std::string>();
+                        }
+                    }
+                } catch (...) { LogThread("[错误] 个性翻译.json 解析失败，请检查 JSON 格式"); }
+            }
+        }
+    }
+
+    int merged = 0, customUsed = 0;
     for (auto& sec : { "_options", "_descriptions" }) {
         if (!tj.contains(sec) || !tj[sec].is_object()) continue;
         for (auto& it : tj[sec].items()) {
             if (!it.value().is_string()) continue;
             std::string val = it.value().get<std::string>();
             if (val.empty()) continue;
+            // 个性翻译优先：命中则用个性翻译的值（即使汇总词典已有翻译也覆盖）
+            std::string customVal;
+            auto kp = it.key().rfind("||");
+            if (kp == std::string::npos) {
+                auto ce = customEn.find(it.key());
+                if (ce != customEn.end()) customVal = ce->second;
+            } else {
+                auto cf = customFull.find(it.key());
+                auto ce = customEn.find(it.key().substr(kp + 2));
+                if (cf != customFull.end()) customVal = cf->second;
+                else if (ce != customEn.end()) customVal = ce->second;
+            }
+            if (!customVal.empty() && customVal != val) {
+                val = customVal;
+                customUsed++;
+            }
             std::string existing;
             if (dict[sec].contains(it.key()) && dict[sec][it.key()].is_string())
                 existing = dict[sec][it.key()].get<std::string>();
-            if (existing.empty()) {
+            bool writeIt = false;
+            if (existing.empty()) writeIt = true;
+            else if (!customVal.empty() && existing != customVal) writeIt = true; // 个性翻译覆盖已有
+            if (writeIt) {
                 dict[sec][it.key()] = val;
                 // 同步并入 terms（先来后到，不覆盖 wiki 固定词）
-                auto kp = it.key().rfind("||");
                 if (kp != std::string::npos) {
                     std::string en = it.key().substr(kp + 2);
                     std::string zh = val;
@@ -2308,6 +2367,8 @@ bool ImportTranslations(const fs::path& inFile, bool autoFill)
             }
         }
     }
+    if (customUsed > 0)
+        LogThread("[提示] 个性翻译命中 " + std::to_string(customUsed) + " 条，已以个性翻译为准写入汇总词典");
     write_binary_file(dictPath, dict.dump(2));
     LogThread("导入完成：本次编入唯一词典 " + std::to_string(merged) + " 条，词典位于 "
         + wstring_to_utf8(dictPath.wstring()));
@@ -3132,6 +3193,110 @@ static bool AITranslateFile(const fs::path& inFile)
     // 会话内术语记忆：英文原文 -> 固定中文译名（来自词典预填 + AI 已翻条目），保证同词同译
     std::unordered_map<std::string, std::string> sessionTerms;
 
+    // ① 黑名单跳过：命中黑名单的英文原文不翻译，原样保留英文（优先级：黑名单 > 个性翻译 > 词典）
+    int blackSkipped = 0;
+    {
+        std::vector<std::string> blacklist = LoadBlacklistFile(g_cfg.blacklist);
+        if (!blacklist.empty()) {
+            std::vector<Item> rest;
+            for (auto& it : pending) {
+                if (is_blacklisted(it.english, blacklist)) {
+                    tj[it.sec][it.key] = it.english;
+                    blackSkipped++;
+                }
+                else rest.push_back(it);
+            }
+            pending = std::move(rest);
+        }
+    }
+    if (blackSkipped > 0)
+        LogThread("[提示] 黑名单命中 " + std::to_string(blackSkipped) + " 条，原样保留英文跳过翻译");
+
+    // ② 个性翻译.json 预填：用户手工指定译法（英文:中文 或 完整key:中文），优先于词典
+    int customFilled = 0;
+    if (!g_cfg.dictionaryDir.empty()) {
+        fs::path cp = CustomDictPath(fs::u8path(g_cfg.dictionaryDir));
+        std::error_code ccec;
+        if (fs::exists(cp, ccec) && !ccec) {
+            std::string cd;
+            if (read_binary_file(cp, cd)) {
+                try {
+                    json custom = json::parse(clean_utf8(cd));
+                    if (custom.is_object() && !custom.empty()) {
+                        std::vector<Item> rest;
+                        for (auto& it : pending) {
+                            std::string cv;
+                            if (custom.contains(it.key) && custom[it.key].is_string())
+                                cv = custom[it.key].get<std::string>();
+                            else {
+                                auto kp = it.key.rfind("||");
+                                if (kp != std::string::npos) {
+                                    std::string en = it.key.substr(kp + 2);
+                                    if (custom.contains(en) && custom[en].is_string())
+                                        cv = custom[en].get<std::string>();
+                                }
+                            }
+                            if (cv.empty()) { rest.push_back(it); continue; }
+                            tj[it.sec][it.key] = cv;
+                            customFilled++;
+                            std::string zh = extractChineseTerm(cv);
+                            if (!zh.empty() && zh != it.english) sessionTerms[it.english] = zh;
+                        }
+                        pending = std::move(rest);
+                    }
+                } catch (...) { LogThread("[错误] 个性翻译.json 解析失败，请检查 JSON 格式"); }
+            }
+        }
+    }
+    if (customFilled > 0)
+        LogThread("[提示] 个性翻译命中 " + std::to_string(customFilled) + " 条，直接填充");
+
+    // ③ 翻译失败.json 重翻成功后：把成功条目合并进最新 *_已翻译.json（已有非空不覆盖）
+    auto mergeFailIntoTranslated = [&]() -> int {
+        int mergedN = 0;
+        std::wstring fn = inFile.filename().wstring();
+        if (fn.find(L"翻译失败") == std::wstring::npos) return 0;
+        if (g_cfg.translationDir.empty()) return 0;
+        fs::path tdir = fs::u8path(g_cfg.translationDir);
+        fs::path latest;
+        long long bestT = -1;
+        try {
+            for (fs::directory_iterator dit(tdir, fs::directory_options::skip_permission_denied); dit != fs::directory_iterator(); ++dit) {
+                std::error_code ec2;
+                auto& de = *dit;
+                if (!de.is_regular_file(ec2) || ec2) continue;
+                auto fname = de.path().filename().wstring();
+                if (fname.size() <= 5 || fname.substr(fname.size() - 5) != L".json") continue;
+                if (fname.find(L"_已翻译") == std::wstring::npos) continue;
+                auto t = fs::last_write_time(de.path(), ec2);
+                if (ec2) continue;
+                long long ts = t.time_since_epoch().count();
+                if (ts > bestT) { bestT = ts; latest = de.path(); }
+            }
+        } catch (const std::system_error&) {}
+        if (latest.empty()) return 0;
+        std::string ld;
+        if (!read_binary_file(latest, ld)) return 0;
+        json ej;
+        try { ej = json::parse(clean_utf8(ld)); } catch (...) { return 0; }
+        if (!ej.is_object()) return 0;
+        for (auto& sec : { "_options", "_descriptions" }) {
+            if (!tj.contains(sec) || !tj[sec].is_object()) continue;
+            for (auto& it : tj[sec].items()) {
+                if (!it.value().is_string() || it.value().get<std::string>().empty()) continue;
+                if (!ej.contains(sec) || !ej[sec].is_object()) ej[sec] = json::object();
+                if (ej[sec].contains(it.key()) && ej[sec][it.key()].is_string()
+                    && !ej[sec][it.key()].get<std::string>().empty()) continue; // 已有非空不覆盖
+                ej[sec][it.key()] = it.value().get<std::string>();
+                mergedN++;
+            }
+        }
+        if (mergedN > 0 && write_binary_file(latest, safeDump(ej, 2)))
+            LogThread("[提示] 翻译失败.json 重翻成功，已把 " + std::to_string(mergedN)
+                + " 条新增/补全进 " + wstring_to_utf8(latest.filename().wstring()));
+        return mergedN;
+    };
+
     // 唯一词典预填：词典中已翻译的 key 直接填充，不再浪费 AI 额度
     int dictFilled = 0;
     if (!g_cfg.dictionaryDir.empty()) {
@@ -3187,13 +3352,14 @@ static bool AITranslateFile(const fs::path& inFile)
     if (dictFilled > 0)
         LogThread("[提示] 唯一词典命中 " + std::to_string(dictFilled) + " 条，直接填充");
     if (pending.empty()) {
-        LogThread("[提示] 所有条目已由词典填充，无需调用 AI");
-        // 若输入是翻译失败.json，说明全部已由词典填满，清理掉残留清单
+        LogThread("[提示] 所有条目已由词典/个性翻译填充，无需调用 AI");
+        // 若输入是翻译失败.json：成功条目合并进 *_已翻译.json 后清理残留清单
         std::wstring fn = inFile.filename().wstring();
         if (fn.find(L"翻译失败") != std::wstring::npos) {
+            mergeFailIntoTranslated();
             std::error_code dec;
             fs::remove(inFile, dec);
-            LogThread("[提示] 翻译失败.json 已全部由词典填充，已自动删除");
+            LogThread("[提示] 翻译失败.json 已全部填充完成，已自动删除");
         }
         return false;
     }
@@ -3306,6 +3472,7 @@ static bool AITranslateFile(const fs::path& inFile)
     // 落盘：_未翻译 → _已翻译；同名已翻译含内容则另存 *_已翻译_AI.json
     fs::path outFile = inFile;
     std::wstring inName = inFile.filename().wstring();
+    bool isFailInput = (inName.find(L"翻译失败") != std::wstring::npos);
     size_t untrPos = inName.find(L"_未翻译");
     if (untrPos != std::wstring::npos) {
         std::wstring outName = inName;
@@ -3338,6 +3505,24 @@ static bool AITranslateFile(const fs::path& inFile)
                 LogThread("[提示] " + wstring_to_utf8(outName) + " 已存在且含翻译，本次输出为 " + wstring_to_utf8(alt));
             }
         }
+    } else if (isFailInput) {
+        // 翻译失败.json 重翻：成功条目合并进最新 *_已翻译.json，而不是覆盖失败清单
+        mergeFailIntoTranslated();
+        // 统计仍空白条目：还有则写回翻译失败.json，全部成功则删除残留清单
+        int stillEmpty = 0;
+        for (auto& sec : { "_options", "_descriptions" }) {
+            if (!tj.contains(sec) || !tj[sec].is_object()) continue;
+            for (auto& it : tj[sec].items())
+                if (it.value().is_string() && it.value().get<std::string>().empty()) stillEmpty++;
+        }
+        if (stillEmpty == 0) {
+            std::error_code fec;
+            fs::remove(inFile, fec);
+            LogThread("[提示] 翻译失败.json 已全部翻译完成，已自动删除");
+            outFile.clear();
+        } else {
+            outFile = inFile; // 更新翻译失败.json，保留剩余空白条目下次重试
+        }
     }
     // 统计仍未翻译的条目（AI 漏掉 / 返回为空的），方便用户定位后手动补翻或重跑
     {
@@ -3361,6 +3546,7 @@ static bool AITranslateFile(const fs::path& inFile)
             LogThread(msg);
         }
     }
+    if (outFile.empty()) return true; // 翻译失败.json 已全部完成并删除，无需落盘
     if (write_binary_file(outFile, safeDump(tj, 2))) {
         LogThread("[提示] 已写入 " + wstring_to_utf8(outFile.filename().wstring()));
         return true;
