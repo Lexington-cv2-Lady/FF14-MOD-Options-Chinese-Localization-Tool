@@ -82,10 +82,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build_release.ps1 -Zip
 
 ## 更新日志
 
-### v2.2.13
+### v2.3
 
 - 新增：主界面辅助区新增「个性翻译」按钮（位于「单词黑名单」旁）——点击直接用系统默认程序打开词典目录下的「个性翻译.json」，编辑保存后点「3. 词典写入Mod」即可生效
 - 调整：「单词黑名单」按钮取消原编辑二级窗口，改为直接打开词典目录下的「单词黑名单.json」编辑保存（一行一个词，或用逗号间隔）
+- 调整：内置个性翻译模板补充近期确认的常用词译法（Buff=健壮、Cellulite=皮下脂肪团、miqote 猫魅族系列、No highlights=无高光、No Collisions=无碰撞），新建词典目录时自动带入
 
 ### v2.2.12
 

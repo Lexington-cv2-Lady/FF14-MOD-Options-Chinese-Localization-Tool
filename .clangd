@@ -1,0 +1,20 @@
+# clangd 配置：让 IDE 代码分析正确解析本 MSVC C++20 项目（消除误报）
+# 仅作用于 clangd（lint/补全），不影响 MSVC 编译（编译器仍为 cl.exe）
+CompileFlags:
+  Compiler: clang-cl
+  Add:
+    - "--target=x86_64-pc-windows-msvc"
+    - "-std=c++20"
+    - "-DUNICODE"
+    - "-D_UNICODE"
+    - "-DWIN32"
+    - "-D_WINDOWS"
+    - "-D_WIN32_WINNT=0x0A00"
+    - "-D_CRT_SECURE_NO_WARNINGS"
+    - "-D_WIN32_LEAN_AND_MEAN"
+  Remove:
+    - "-m*"
+    - "-f*"
+
+Diagnostics:
+  UnusedIncludes: None
