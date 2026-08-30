@@ -82,6 +82,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build_release.ps1 -Zip
 
 ## 更新日志
 
+### v2.2.10
+
+- 调整：黑名单命中规则由「子串包含」改为「整词完全匹配」——单独的 Lavabod、Rue 等专名仍原样保留英文，但「Lavabod Teardrop」这类组合词条不再整条被拦，可以正常翻译其余部分（专名由 AI 按规则保留，如 Lavabod 泪滴）；同时消除 rue→true、masc→masculine 等子串误伤
+- 新增：命中黑名单词的组合词条现在可以写入「个性翻译.json」手动指定译法（此前含黑名单子串的词条在个性翻译中不生效）
+
 ### v2.2.9
 
 - 调整：提取英文不再跳过黑名单词——所有英文词条（包括体型 mod 专名等黑名单词）都会进入 *_未翻译.json；黑名单只在 AI 翻译（原样保留英文）和「3. 词典写入Mod」（还原英文）时生效

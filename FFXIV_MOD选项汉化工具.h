@@ -266,17 +266,27 @@ inline std::string extract_english_from_translated(const std::string& v)
     return "";
 }
 
-// 判断文本是否命中黑名单（子串匹配，忽略大小写）
+// 判断文本是否命中黑名单（整词完全匹配：trim 后与黑名单词完全相同才命中，忽略大小写）。
+// v2.2.10：由子串匹配改为整词匹配——"Lavabod" 只保护 Lavabod 本身，
+// 不再拦截 "Lavabod Teardrop" 这类组合（组合条目可正常翻译其余部分，专名交给 AI 按提示词保留），
+// 同时消除 rue→true、masc→masculine 之类的子串误伤。
 inline bool is_blacklisted(const std::string& text, const std::vector<std::string>& blacklist)
 {
     if (text.empty() || blacklist.empty()) return false;
-    std::string lower = text;
-    std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
-    for (const auto& b : blacklist) {
-        if (b.empty()) continue;
-        std::string bl = b;
+    size_t a = text.find_first_not_of(" \t\r\n");
+    if (a == std::string::npos) return false;
+    size_t b = text.find_last_not_of(" \t\r\n");
+    std::string t = text.substr(a, b - a + 1);
+    std::transform(t.begin(), t.end(), t.begin(), ::tolower);
+    for (const auto& w : blacklist) {
+        if (w.empty()) continue;
+        std::string bl = w;
+        size_t ba = bl.find_first_not_of(" \t\r\n");
+        if (ba == std::string::npos) continue;
+        size_t bb = bl.find_last_not_of(" \t\r\n");
+        bl = bl.substr(ba, bb - ba + 1);
         std::transform(bl.begin(), bl.end(), bl.begin(), ::tolower);
-        if (lower.find(bl) != std::string::npos) return true;
+        if (t == bl) return true;
     }
     return false;
 }
