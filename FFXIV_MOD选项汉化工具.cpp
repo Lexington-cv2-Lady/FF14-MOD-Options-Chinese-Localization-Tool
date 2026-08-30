@@ -13,6 +13,11 @@
 #define WM_APP_DONE      (WM_APP + 2)
 #define WM_APP_PROGRESS  (WM_APP + 3)
 
+// 「个性翻译」按钮 ID：.rc 里控件直接使用数字 1348，避免 IDE 资源编辑器回滚 Resource.h 手加宏
+#ifndef IDC_BTN_CUSTOM
+#define IDC_BTN_CUSTOM  1348
+#endif
+
 AppConfig g_cfg;
 HINSTANCE hInst = nullptr;
 HWND g_hMainWnd = nullptr;
@@ -81,7 +86,6 @@ INT_PTR CALLBACK MainDlgProc(HWND, UINT, WPARAM, LPARAM);
 INT_PTR CALLBACK WikiCatsDlgProc(HWND, UINT, WPARAM, LPARAM);
 INT_PTR CALLBACK ImportTransDlgProc(HWND, UINT, WPARAM, LPARAM);
 INT_PTR CALLBACK RestoreDlgProc(HWND, UINT, WPARAM, LPARAM);
-INT_PTR CALLBACK BlacklistDlgProc(HWND, UINT, WPARAM, LPARAM);
 INT_PTR CALLBACK About(HWND, UINT, WPARAM, LPARAM);
 
 void Log(const std::string& utf8Msg);
@@ -94,6 +98,7 @@ bool LoadConfig();
 bool SaveConfig();
 bool SelectDirDialog(HWND parent, std::wstring& out);
 void OpenExplorer(HWND parent, const std::wstring& path);
+void OpenDictJson(HWND parent, const char* fname);
 std::vector<fs::path> ScanGroupFiles(const fs::path& root);
 bool ExtractEnglish();
 bool CheckTranslation();
@@ -567,6 +572,34 @@ void OpenExplorer(HWND parent, const std::wstring& path)
     sei.lpFile = p.c_str();
     if (!ShellExecuteExW(&sei)) {
         LogW(L"[提示] 无法打开文件夹: " + path);
+    }
+}
+
+// 用系统默认程序打开词典目录下的指定 json 文件（如 个性翻译.json / 单词黑名单.json）
+void OpenDictJson(HWND parent, const char* fname)
+{
+    if (g_cfg.dictionaryDir.empty()) {
+        Log(std::string("[提示] 未设置词典目录，无法打开 ") + fname);
+        return;
+    }
+    fs::path p = fs::u8path(g_cfg.dictionaryDir) / fs::u8path(fname);
+    std::error_code ec;
+    if (!fs::exists(p, ec) || ec) {
+        Log(std::string("[提示] 文件不存在（设置词典目录时程序会自动创建）: ") + fname);
+        return;
+    }
+    SHELLEXECUTEINFOW sei = {};
+    sei.cbSize = sizeof(sei);
+    sei.hwnd = parent;
+    sei.nShow = SW_SHOWNORMAL;
+    sei.fMask = SEE_MASK_FLAG_NO_UI;
+    sei.lpVerb = L"open";
+    sei.lpFile = p.wstring().c_str();
+    if (!ShellExecuteExW(&sei)) {
+        Log(std::string("[提示] 无法打开文件: ") + fname);
+    }
+    else {
+        Log(std::string("[提示] 已用默认程序打开 ") + fname);
     }
 }
 
@@ -4571,63 +4604,8 @@ void SaveBlacklistFile(const std::vector<std::string>& words)
 }
 
 // ------------------------------------------------------------------
-// 黑名单对话框
+// 黑名单编辑：v2.2.13 起取消二级窗口，直接打开词典目录下的 单词黑名单.json 编辑保存
 // ------------------------------------------------------------------
-INT_PTR CALLBACK BlacklistDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
-{
-    switch (message) {
-    case WM_INITDIALOG: {
-        // 显示：配置文件 + 单词黑名单.json 合并去重
-        std::set<std::string> uniq;
-        for (auto& w : LoadBlacklistFile(g_cfg.blacklist))
-            if (!w.empty()) uniq.insert(w);
-        std::string text;
-        size_t i = 0;
-        for (auto& w : uniq) {
-            if (i++) text += "\r\n";
-            text += w;
-        }
-        SetDlgItemTextW(hDlg, IDC_BLACKLIST_EDIT, utf8_to_wstring(text).c_str());
-        EnableEditSelectAll(hDlg); // 黑名单填写框支持 Ctrl+A 全选
-        return TRUE;
-    }
-    case WM_COMMAND: {
-        int id = LOWORD(wParam);
-        if (id == IDC_BLACKLIST_OK) {
-            wchar_t buf[8192] = {};
-            GetDlgItemTextW(hDlg, IDC_BLACKLIST_EDIT, buf, 8192);
-            std::string utf8 = wstring_to_utf8(buf);
-            std::vector<std::string> words;
-            std::stringstream ss(utf8);
-            std::string token;
-            while (std::getline(ss, token, '\n')) {
-                // 移除 \r
-                if (!token.empty() && token.back() == '\r') token.pop_back();
-                // 按逗号分隔
-                std::stringstream ss2(token);
-                std::string t;
-                while (std::getline(ss2, t, ',')) {
-                    size_t s = t.find_first_not_of(" \t"); if (s != std::string::npos) t = t.substr(s);
-                    size_t e = t.find_last_not_of(" \t"); if (e != std::string::npos) t = t.substr(0, e + 1);
-                    if (!t.empty()) words.push_back(t);
-                }
-            }
-            g_cfg.blacklist = words;
-            SaveBlacklistFile(words);
-            SaveConfig();
-            EndDialog(hDlg, IDOK);
-            Log("已保存 " + std::to_string(words.size()) + " 个黑名单词（写入词典目录 单词黑名单.json）");
-            return TRUE;
-        }
-        if (id == IDC_BLACKLIST_CANCEL || id == IDCANCEL) {
-            EndDialog(hDlg, IDCANCEL);
-            return TRUE;
-        }
-        break;
-    }
-    }
-    return FALSE;
-}
 
 // ------------------------------------------------------------------
 // Wiki 分类选择对话框
@@ -4961,6 +4939,7 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
         EnableWindow(GetDlgItem(hDlg, IDC_BTN_APPLY), TRUE);
         EnableWindow(GetDlgItem(hDlg, IDC_BTN_RESTORE), TRUE);
         EnableWindow(GetDlgItem(hDlg, IDC_BTN_BLACKLIST), TRUE);
+        EnableWindow(GetDlgItem(hDlg, IDC_BTN_CUSTOM), TRUE);
         EnableWindow(GetDlgItem(hDlg, IDC_BTN_WIKI), TRUE);
         EnableWindow(GetDlgItem(hDlg, IDC_BTN_AI_TRANSLATE), TRUE);
         EnableWindow(GetDlgItem(hDlg, IDC_BTN_AI_TEST), TRUE);
@@ -5191,6 +5170,7 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_APPLY), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_RESTORE), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_BLACKLIST), FALSE);
+            EnableWindow(GetDlgItem(hDlg, IDC_BTN_CUSTOM), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_WIKI), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_AI_TRANSLATE), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_AI_TEST), FALSE);
@@ -5213,6 +5193,7 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_APPLY), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_RESTORE), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_BLACKLIST), FALSE);
+            EnableWindow(GetDlgItem(hDlg, IDC_BTN_CUSTOM), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_WIKI), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_AI_TRANSLATE), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_AI_TEST), FALSE);
@@ -5232,6 +5213,7 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_APPLY), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_RESTORE), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_BLACKLIST), FALSE);
+            EnableWindow(GetDlgItem(hDlg, IDC_BTN_CUSTOM), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_WIKI), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_AI_TRANSLATE), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_AI_TEST), FALSE);
@@ -5257,6 +5239,7 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_APPLY), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_RESTORE), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_BLACKLIST), FALSE);
+            EnableWindow(GetDlgItem(hDlg, IDC_BTN_CUSTOM), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_WIKI), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_AI_TRANSLATE), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_AI_TEST), FALSE);
@@ -5273,7 +5256,12 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
         }
         case IDC_BTN_BLACKLIST: {
             if (g_busy) break;
-            DialogBoxW(hInst, MAKEINTRESOURCEW(IDD_BLACKLIST_DIALOG), hDlg, BlacklistDlgProc);
+            OpenDictJson(hDlg, "单词黑名单.json");
+            break;
+        }
+        case IDC_BTN_CUSTOM: { // 个性翻译：直接打开词典目录下的 个性翻译.json
+            if (g_busy) break;
+            OpenDictJson(hDlg, "个性翻译.json");
             break;
         }
         case IDC_BTN_WIKI: {
@@ -5289,6 +5277,7 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_APPLY), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_RESTORE), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_BLACKLIST), FALSE);
+            EnableWindow(GetDlgItem(hDlg, IDC_BTN_CUSTOM), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_WIKI), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_AI_TRANSLATE), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_CHECK), FALSE);
@@ -5327,6 +5316,7 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_APPLY), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_RESTORE), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_BLACKLIST), FALSE);
+            EnableWindow(GetDlgItem(hDlg, IDC_BTN_CUSTOM), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_WIKI), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_AI_TRANSLATE), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_AI_TEST), FALSE);
@@ -5353,6 +5343,7 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_APPLY), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_RESTORE), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_BLACKLIST), FALSE);
+            EnableWindow(GetDlgItem(hDlg, IDC_BTN_CUSTOM), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_WIKI), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_AI_TRANSLATE), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_AI_TEST), FALSE);
