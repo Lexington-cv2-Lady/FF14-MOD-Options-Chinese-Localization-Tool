@@ -116,7 +116,7 @@ BEGIN
 
     GROUPBOX        "操作",IDC_GRP_OP,7,241,566,108
     PUSHBUTTON      "1. 提取英文",IDC_BTN_EXTRACT,10,256,130,22
-    PUSHBUTTON      "已翻译的文件，写入词典",IDC_BTN_IMPORT,150,256,130,22
+    PUSHBUTTON      "2. 已翻译的文件，写入词典",IDC_BTN_IMPORT,150,256,130,22
     PUSHBUTTON      "3. 词典写入Mod",IDC_BTN_APPLY,290,256,130,22
     PUSHBUTTON      "4. 恢复备份",IDC_BTN_RESTORE,430,256,130,22
     PUSHBUTTON      "单词黑名单",IDC_BTN_BLACKLIST,10,284,100,22
@@ -125,7 +125,7 @@ BEGIN
     PUSHBUTTON      "检查翻译",IDC_BTN_CHECK,300,284,150,22
     CONTROL         "",IDC_PROGRESS,"msctls_progress32",WS_BORDER | PBS_MARQUEE,15,316,552,12
     LTEXT           "流程：1 提取英文 → AI/外部翻译 → 2 已翻译的文件写入词典 → 3 词典写入Mod（『4 恢复备份』可撤销）",IDC_STATIC,15,330,552,12
-    LTEXT           "辅助：Wiki 导出（补充词典术语）/ 单词黑名单（提取应用时跳过）/ 检查翻译（残留）",IDC_STATIC,15,344,552,12
+    LTEXT           "辅助：Wiki导出（补词典）/ 单词黑名单（保留英文）/ 检查翻译（查残留）/ 个性翻译（定译法）",IDC_STATIC,15,344,552,12
     GROUPBOX        "日志",IDC_GRP_LOG,7,356,566,114
     CONTROL         "",IDC_LOG_EDIT,"RichEdit20W",WS_BORDER | WS_VSCROLL | WS_TABSTOP | ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY,15,368,552,102
 END

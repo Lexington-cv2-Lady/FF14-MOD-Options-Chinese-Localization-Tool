@@ -710,10 +710,11 @@ bool ExtractEnglish()
         {"4. 括号与专名", "能译出中文的短名称用「中文（英文）」格式，如 无（None）；无法翻译的专有名词/缩写/品牌名（如 EXQB、Uranus）原样保留英文，禁止输出「英文（英文）」重复格式。"},
         {"5. 专有名词", "人名、品牌名、作者名等专有名词（如 Yiggle、Lavabod、YAB）可原样保留在译文中，作为专名的一部分，不强求翻译。"},
         {"6. 翻译指令", "对于任何英文短语，即使带有连字符（如 Connectors - Face），也应将其视为一个整体进行翻译，而不是保留原文。带「└─」「├─」等层级装饰符的名字忽略装饰符整体翻译，括号内只放最简英文，禁止嵌套重复。绝对禁止输出\"英文 / 中文\"或\"英文换行中文\"这类双语拼接。"},
-        {"7. 文件命名", "翻译完成后，将文件名中的\"_未翻译\"改为\"_已翻译\"。"},
-        {"8. 交付方式", "每次修改后，请直接提供完整的 JSON 文件内容。"},
-        {"9. 3D 建模术语", "poly 是 polygon（多边形）的缩写，higher poly 指模型面数更高，译为「高多边形」；texture=纹理、mesh=网格、rig=骨骼绑定。例如 Fuzzy layer (higher poly) 译为 毛绒层（高多边形），不得按字面硬译或编造。"},
-        {"10. 无歧义固定词", "身体部位等没有歧义（多义词）的固定名词必须按通用中文直译，不得保留英文：Feet=脚部、Legs=腿部、Hands=手部、Chest=胸部、Belly=腹部、Thighs=大腿、Back=背部、Arms=手臂、Shoulders=肩部。例如 Feet 只译作「脚部」，不要译成其它生僻说法。"},
+        {"7. 同组一致性", "同一文件内的选项通常属于同一维度（体型/尺寸/颜色/材质等），译文应统一语义、用词一致；无法确定通用含义的 mod 自造词/作者专名（如 Masc、Lava、Rue、Lavabod、Yanilla、EXQB、Uranus 这类体型名）优先原样保留英文，不要硬译或编造。"},
+        {"8. 3D 建模术语", "poly 是 polygon（多边形）的缩写，higher poly 指模型面数更高，译为「高多边形」；texture=纹理、mesh=网格、rig=骨骼绑定。例如 Fuzzy layer (higher poly) 译为 毛绒层（高多边形），不得按字面硬译或编造。"},
+        {"9. 无歧义固定词", "身体部位等没有歧义（多义词）的固定名词必须按通用中文直译，不得保留英文：Feet=脚部、Legs=腿部、Hands=手部、Chest=胸部、Belly=腹部、Thighs=大腿、Back=背部、Arms=手臂、Shoulders=肩部。例如 Feet 只译作「脚部」，不要译成其它生僻说法。"},
+        {"10. 文件命名", "翻译完成后，将文件名中的\"_未翻译\"改为\"_已翻译\"。"},
+        {"11. 交付方式", "每次修改后，请直接提供完整的 JSON 文件内容。"},
         {"说明", "将英文翻译为中文。请保持 JSON 结构，仅填写 _options 和 _descriptions 的翻译。"},
         {"格式提示", "短名称按 中文（英文） 格式填写，例如 发型1（Hairstyle 1）；长描述直接填中文句子，不要保留英文，也不要输出\"英文 / 中文\"拼接。"}
     };
@@ -1697,13 +1698,24 @@ static fs::path CustomDictPath(const fs::path& dictDir)
     return dictDir / fs::u8path("个性翻译.json");
 }
 
-// 确保 个性翻译.json 存在（仅首次创建空对象，不覆盖用户已编辑内容）。
+// 确保 个性翻译.json 存在（仅首次创建，绝不覆盖用户已编辑内容——含未来版本更新）。
+// 首次创建时：若 exe 旁存在内置模板 内置个性翻译.json（预填 FF14 种族名译法作格式参考，
+// 随程序打包、隐藏属性），复制其内容作为起点；否则退回创建空对象。
 static void EnsureCustomDictFile(const fs::path& dictDir)
 {
     std::error_code ec;
     fs::path p = CustomDictPath(dictDir);
-    if (fs::exists(p, ec) && !ec) return;
+    if (fs::exists(p, ec) && !ec) return; // 已存在（含用户编辑过）：绝不覆盖
     if (fs::exists(dictDir, ec) && !ec) {
+        fs::path builtin = GetExeDir() / fs::u8path("内置个性翻译.json");
+        std::error_code bec;
+        if (fs::exists(builtin, bec) && !bec) {
+            fs::copy_file(builtin, p, fs::copy_options::overwrite_existing, bec);
+            if (!bec) {
+                LogThread("[提示] 已创建 个性翻译.json（内置模板：预填 FF14 种族名译法作格式参考，可编辑增删；点『3. 词典写入Mod』时覆盖汇总词典对应词条，命中黑名单的词条不生效）");
+                return;
+            }
+        }
         write_binary_file(p, json::object().dump(2));
         LogThread("[提示] 已创建 个性翻译.json（格式：英文:中文，一行一词；点『3. 词典写入Mod』时覆盖汇总词典对应词条，命中黑名单的词条不生效）");
     }
@@ -3062,9 +3074,13 @@ static std::string fixRepeatParen(const std::string& t)
     return a;                          // 英文（英文）→ 英文
 }
 
+// 单条 AI 翻译条目：id（批次内序号）+ 原文 text + 来源上下文 context
+// context 附带模组路径/文件名/同组选项，帮助 AI 理解词义（如 Masc 是体型专名而非"男性化"）
+struct AIItem { std::string id, text, context; };
+
 // 调用一次 AI 翻译一批词条，返回 条目 id -> 译文 的映射
 // glossary：会话内已确定的术语对照（英文 -> 固定中文译名），注入 prompt 保证同词同译
-static bool AITranslateBatch(const std::vector<std::pair<std::string, std::string>>& items,
+static bool AITranslateBatch(const std::vector<AIItem>& items,
                              std::map<std::string, std::string>& outMap, std::string& errMsg,
                              const std::vector<std::pair<std::string, std::string>>& glossary)
 {
@@ -3087,15 +3103,25 @@ static bool AITranslateBatch(const std::vector<std::pair<std::string, std::strin
         "11. 遇到不确定含义的词汇，根据上下文推断其通用含义进行翻译，译文仍按第 2 条格式保留「中文（英文）」，括号内为原文英文。\n"
         "12. 3D 建模/图形常用语按通用译法翻译：poly 是 polygon（多边形）的缩写，higher poly 指模型面数更高，译为「高多边形」；texture=纹理、mesh=网格、rig=骨骼绑定、LOD=细节层级。例如 Fuzzy layer (higher poly) 应译为 毛绒层（高多边形），不得按字面硬译或编造译名。\n"
         "13. 无歧义固定词：身体部位等没有歧义（多义词）的固定名词必须按通用中文直译，不得保留英文（如 Feet=脚部、Legs=腿部、Hands=手部、Chest=胸部、Belly=腹部、Thighs=大腿、Back=背部、Arms=手臂、Shoulders=肩部）。\n"
-        "14. 只输出一个 JSON 对象：键为条目 id（字符串），值为译文。不要输出任何其他内容。";
+        "14. 只输出一个 JSON 对象：键为条目 id（字符串），值为译文。不要输出任何其他内容。\n"
+        "15. 上下文参考：若条目附带 context 字段，它是该条目的来源上下文（所属模组、文件名、同组其他选项），"
+        "仅用于帮助你判断词义（如 Masc 出现在体型选项组中多为 mod 自造体型名）；只翻译 text 字段，禁止翻译、复述或输出 context 的内容。\n"
+        "16. 同一选项组（同一文件）内的选项通常属于同一维度（体型/尺寸/颜色/材质等），译文应保持统一语义；"
+        "无法确定通用含义的 mod 自造词/作者专名（如 Masc、Lava、Rue、Lavabod、Yanilla、EXQB、Uranus）优先原样保留英文，不要硬译或编造。";
     if (!glossary.empty()) {
         sysMsg +=
-            "\n13. 术语一致性：以下为本次翻译已确定的固定术语对照（英文 → 中文）。"
+            "\n17. 术语一致性：以下为本次翻译已确定的固定术语对照（英文 → 中文）。"
             "待翻译文本中出现这些英文词/短语时，必须原样套用固定中文译名，禁止另译或换说法：\n";
         for (const auto& g : glossary) sysMsg += "    " + g.first + " → " + g.second + "\n";
     }
     json arr = json::array();
-    for (auto& it : items) arr.push_back({ {"id", it.first}, {"text", it.second} });
+    for (auto& it : items) {
+        json obj;
+        obj["id"] = it.id;
+        obj["text"] = it.text;
+        if (!it.context.empty()) obj["context"] = it.context;
+        arr.push_back(std::move(obj));
+    }
     std::string userMsg = "请翻译以下 FFXIV 模组文本条目，输出 JSON 对象：\n" + safeDump(arr);
 
     json req;
@@ -3138,10 +3164,10 @@ static bool AITranslateBatch(const std::vector<std::pair<std::string, std::strin
         return false;
     }
     for (auto& it : items) {
-        auto found = result.find(it.first);
+        auto found = result.find(it.id);
         if (found != result.end() && found.value().is_string()) {
             std::string v = found.value().get<std::string>();
-            if (!v.empty()) outMap[it.first] = v;
+            if (!v.empty()) outMap[it.id] = v;
         }
     }
     return true;
@@ -3364,6 +3390,47 @@ static bool AITranslateFile(const fs::path& inFile)
         return false;
     }
 
+    // 来源上下文映射：完整 key -> "来源: <模组路径/文件名>（选项/描述） 同组选项: ..."
+    // 让 AI 知道每条的出处与同类选项，便于正确理解词义（如 Masc 是体型专名而非"男性化"）
+    std::unordered_map<std::string, std::string> ctxByKey;
+    {
+        std::unordered_map<std::string, std::vector<std::string>> fileOpts; // 文件路径 -> 该文件下所有选项原文
+        for (auto& sec : { "_options", "_descriptions" }) {
+            if (!tj.contains(sec) || !tj[sec].is_object()) continue;
+            for (auto& it : tj[sec].items()) {
+                auto p = it.key().rfind("||");
+                if (p == std::string::npos) continue;
+                std::string en = it.key().substr(p + 2);
+                std::string filePart = it.key().substr(0, p);
+                auto p2 = filePart.rfind("||");
+                if (p2 == std::string::npos) continue;
+                std::string fileRel = filePart.substr(0, p2);
+                if (sec == "_options") fileOpts[fileRel].push_back(en);
+            }
+        }
+        for (auto& it : pending) {
+            auto p = it.key.rfind("||");
+            if (p == std::string::npos) continue;
+            std::string filePart = it.key.substr(0, p);
+            auto p2 = filePart.rfind("||");
+            std::string fileRel = p2 == std::string::npos ? filePart : filePart.substr(0, p2);
+            std::string ctx = "来源: " + fileRel + (it.sec == "_descriptions" ? "（描述）" : "（选项）");
+            auto gl = fileOpts.find(fileRel);
+            if (gl != fileOpts.end()) {
+                std::string siblings;
+                int cnt = 0;
+                for (auto& s : gl->second) {
+                    if (s == it.english) continue;
+                    if (!siblings.empty()) siblings += ", ";
+                    siblings += s;
+                    if (++cnt >= 8) break;
+                }
+                if (!siblings.empty()) ctx += " 同组选项: " + siblings;
+            }
+            ctxByKey[it.key] = ctx;
+        }
+    }
+
     // 分批调用 AI（第一轮 + 最多 2 轮自动补翻，减少 AI 漏翻）
     int batch = g_cfg.aiBatchSize;
     if (batch < 1) batch = 1;
@@ -3385,9 +3452,13 @@ static bool AITranslateFile(const fs::path& inFile)
                 break;
             }
             size_t n = std::min<size_t>(batch, list.size() - i);
-            std::vector<std::pair<std::string, std::string>> items;
-            for (size_t k = 0; k < n; ++k)
-                items.emplace_back(std::to_string(i + k), list[i + k].english);
+            std::vector<AIItem> items;
+            for (size_t k = 0; k < n; ++k) {
+                std::string ctx;
+                auto cf = ctxByKey.find(list[i + k].key);
+                if (cf != ctxByKey.end()) ctx = cf->second;
+                items.emplace_back(AIItem{ std::to_string(i + k), list[i + k].english, ctx });
+            }
 
             // 会话术语：把与本批文本相关的已确定译法注入 prompt，保证同词同译
             std::vector<std::pair<std::string, std::string>> glossary;

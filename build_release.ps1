@@ -62,6 +62,31 @@ if (Test-Path $builtinWiki) {
     Write-Host "[WARN] Built-in wiki seed not found in project root; first-run wiki seed will be missing."
 }
 
+# Step 2c2: copy built-in custom-dict template into release, then hide both built-in seed files
+# (they are internal first-run seeds; hidden so they do not clutter the program folder)
+$customName = -join [char[]](0x5185, 0x7F6E, 0x4E2A, 0x6027, 0x7FFB, 0x8BD1, 0x2E, 0x6A, 0x73, 0x6F, 0x6E)  # 内置个性翻译.json
+$builtinCustom = Join-Path $root $customName
+if (Test-Path $builtinCustom) {
+    Copy-Item $builtinCustom (Join-Path $pub $customName) -Force
+    Write-Host "==> Copied $customName to release folder."
+} else {
+    Write-Host "[WARN] Built-in custom template not found in project root; first-run custom seed will be missing."
+}
+foreach ($n in @($wikiName, $customName)) {
+    # hide the source file in the project root too (requested default-hidden)
+    $src = Join-Path $root $n
+    if (Test-Path -LiteralPath $src) {
+        $item = Get-Item -LiteralPath $src -Force
+        $item.Attributes = $item.Attributes -bor [IO.FileAttributes]::Hidden
+    }
+    $f = Join-Path $pub $n
+    if (Test-Path -LiteralPath $f) {
+        $item = Get-Item -LiteralPath $f -Force
+        $item.Attributes = $item.Attributes -bor [IO.FileAttributes]::Hidden
+        Write-Host "==> Set hidden attribute on $n (release)."
+    }
+}
+
 # Step 2d: ensure an empty 日志.json template ships in the zip (the app auto-creates/overwrites it on every run)
 $logName = -join [char[]](0x65E5, 0x5FD7, 0x2E, 0x6A, 0x73, 0x6F, 0x6E)  # 日志.json
 $logTpl = Join-Path $pub $logName
