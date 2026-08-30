@@ -5119,9 +5119,10 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
             if (DialogBoxW(hInst, MAKEINTRESOURCEW(IDD_AI_SELECT_DIALOG), hDlg, SelectAICfgDlgProc) == IDOK) {
                 if (g_aiSelResult >= 0 && g_aiSelResult < (int)g_aiSelItems.size()) {
                     const auto& it = g_aiSelItems[g_aiSelResult];
-                    // 不再从用户自定义存档自动匹配 Key（用户要求：预设无 Key 就空着，不「沿用当前」）；
-                    // 预设自带 Key 则套用，否则保持当前已填的 Key 不变。
+                    // v2.3.2：预设/自定义记录自带 Key 则套用；无 Key 则清空 Key 与名称，
+                    // 避免切换预设后 API_Key 框仍保留上一个预设的 Key。
                     if (!it.key.empty()) { g_cfg.aiApiKey = it.key; g_cfg.aiKeyName = it.name; }
+                    else { g_cfg.aiApiKey.clear(); g_cfg.aiKeyName.clear(); }
                     if (!it.model.empty()) g_cfg.aiModel = it.model;
                     if (!it.baseUrl.empty()) g_cfg.aiBaseUrl = it.baseUrl;
                     RefreshConfigUI();

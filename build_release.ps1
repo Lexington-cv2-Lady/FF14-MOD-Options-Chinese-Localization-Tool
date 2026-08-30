@@ -120,7 +120,9 @@ if ($Zip) {
     $stage = Join-Path $env:TEMP ("ffxiv_mod_pkg_" + [guid]::NewGuid().ToString('N'))
     $inner = Join-Path $stage $innerName
     New-Item -ItemType Directory -Path $inner -Force | Out-Null
-    Copy-Item (Join-Path $pub '*') $inner -Recurse -Force
+    # v2.3.2 修复：用 Get-ChildItem -Force 收集再复制（通配符 $pub\* 会跳过隐藏的
+    # 内置wiki/内置个性翻译模板，导致 zip 里缺这两个内置文件）
+    Get-ChildItem -LiteralPath $pub -Force | Copy-Item -Destination $inner -Recurse -Force
 
     # Pick a zip file name; if it already exists, append _0/_1/... instead of overwriting
     $zipFile = Join-Path $zipDir "FFXIV_MOD_Options_Chinese_AI-Translated_v$ver.zip"
@@ -132,7 +134,10 @@ if ($Zip) {
     }
     $zipFile = $cand
 
-    Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $zipFile -CompressionLevel Optimal
+    # v2.3.2 修复：用 .NET ZipFile 打包——PowerShell 的 Compress-Archive 无论传目录
+    # 还是通配符都会跳过隐藏的内置wiki/内置个性翻译模板文件，导致 zip 缺内置文件
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    [IO.Compression.ZipFile]::CreateFromDirectory($stage, $zipFile, [IO.Compression.CompressionLevel]::Optimal, $false)
     Remove-Item $stage -Recurse -Force
     Write-Host "==> Zip created: $zipFile  ($((Get-Item $zipFile).Length) bytes)"
 }

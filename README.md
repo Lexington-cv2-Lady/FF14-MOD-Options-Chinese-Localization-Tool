@@ -82,6 +82,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build_release.ps1 -Zip
 
 ## 更新日志
 
+### v2.3.2
+
+- 修复：切换 AI 预设后「API_Key」框仍保留上一个预设的 Key——现在预设/自定义记录自带 Key 才套用，无 Key 则清空，避免串 Key
+- 修复：压缩包漏装隐藏的内置模板（内置wiki_术语对照.json、内置个性翻译.json），导致清空/更换词典目录后 wiki 对照表和个性翻译模板无法自动恢复——重新打包后 zip 已完整
+- 调整：内置个性翻译模板补全近期确认译法（Skull Crushers、Watermelon Crushers、Ballerina、Reaper、Viper 等 14 条）
+
 ### v2.3.1
 
 - 调整：「单词黑名单.json」自动写入使用方法说明（`#` 注释行 + 格式示例）——打开文件即可看到用法
