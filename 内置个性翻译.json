@@ -1,5 +1,5 @@
 {
-  "格式参考": "本文件为 个性翻译.json 的模板：格式为「中文（英文）」，一行一词。点『3. 词典写入Mod』时，这里每一条会覆盖 汇总词典.json 中对应的英文词条（命中单词黑名单的词条不生效）。下方已预填 FF14 官方种族名的译法作为格式参考，可保留、修改或删除；新增词条请保持此格式。",
+  "格式参考": "本文件为 个性翻译.json 的模板：格式为「中文（英文）」，一行一词。点『3. 词典写入Mod』时，这里每一条会覆盖 汇总词典.json 中对应的英文词条（命中单词黑名单的词条不生效）。下方已预填 FF14 官方种族名译法与近期讨论确认的常见词译法作为格式参考，可保留、修改或删除；新增词条请保持此格式。",
   "Hyur": "人族(Hyur)",
   "Elezen": "精灵族(Elezen)",
   "Lalafell": "拉拉菲尔族(Lalafell)",
@@ -7,5 +7,11 @@
   "Roegadyn": "鲁加族(Roegadyn)",
   "Au Ra": "敖龙族(Au Ra)",
   "Hrothgar": "硌狮族(Hrothgar)",
-  "Viera": "维埃拉族(Viera)"
+  "Viera": "维埃拉族(Viera)",
+  "Buff": "健壮(Buff)",
+  "Cellulite": "皮下脂肪团(Cellulite)",
+  "miqote [earless]": "猫魅族 [无耳](miqote [earless])",
+  "miqote [vanilla ears]": "猫魅族 [原版耳朵](miqote [vanilla ears])",
+  "No highlights": "无高光(No highlights)",
+  "No Collisions": "无碰撞(No Collisions)"
 }
