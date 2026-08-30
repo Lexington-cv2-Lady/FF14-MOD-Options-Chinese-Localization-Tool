@@ -103,6 +103,10 @@ static void FillAIKeyCombo(HWND hDlg);
 bool ImportTranslations(const fs::path& inFile, bool autoFill);
 std::vector<std::string> LoadBlacklistFile(const std::vector<std::string>& defaults);
 void SaveBlacklistFile(const std::vector<std::string>& words);
+static void EnsureBlacklistFile(); // v2.2.8：词典目录确定即确保 单词黑名单.json 存在
+static void MigrateDirFiles(const fs::path& srcDir, const fs::path& dstDir,
+                            const std::vector<std::wstring>& exactNames,
+                            const std::vector<std::wstring>& substrNames = {}); // 目录变更时迁移程序文件
 void WikiImportThread();
 void RunExtractThread();
 void RunImportThread();
@@ -675,23 +679,8 @@ bool ExtractEnglish()
         if (ec) { Log("[错误] 无法创建翻译目录"); return false; }
     }
 
-    // 确保词典目录下存在 单词黑名单.json（不存在则自动导出创建，方便用户直接查看/编辑）
-    {
-        std::string base = g_cfg.dictionaryDir.empty() ? g_cfg.translationDir : g_cfg.dictionaryDir;
-        if (!base.empty()) {
-            fs::path blPath = fs::u8path(base) / fs::u8path("单词黑名单.json");
-            std::error_code bec;
-            if (!fs::exists(blPath, bec) || bec) {
-                std::error_code dec;
-                fs::create_directories(fs::u8path(base), dec);
-                std::vector<std::string> merged = LoadBlacklistFile(g_cfg.blacklist);
-                SaveBlacklistFile(merged);
-                std::string list;
-                for (size_t i = 0; i < merged.size(); ++i) { if (i) list += "、"; list += merged[i]; }
-                Log("[提示] 单词黑名单.json 不存在，已自动导出创建（词典目录），当前黑名单 = " + list);
-            }
-        }
-    }
+    // 确保词典目录下存在 单词黑名单.json（v2.2.8 起目录确定时即建立，这里兜底再确认一次）
+    EnsureBlacklistFile();
 
     // 读取黑名单（默认内置跳过词 + 翻译目录下 单词黑名单.json + 配置）
     std::set<std::string> blacklist = { "---", "-" };
@@ -1723,6 +1712,77 @@ static void EnsureCustomDictFile(const fs::path& dictDir)
     }
 }
 
+// 确保词典目录下存在 单词黑名单.json（不存在则自动导出创建，方便用户直接查看/编辑）。
+// v2.2.8 起：只要词典目录路径确定（选择/手输/启动加载）就建立，不再依赖点「1. 提取英文」。
+static void EnsureBlacklistFile()
+{
+    std::string base = g_cfg.dictionaryDir.empty() ? g_cfg.translationDir : g_cfg.dictionaryDir;
+    if (base.empty()) return;
+    fs::path blPath = fs::u8path(base) / fs::u8path("单词黑名单.json");
+    std::error_code bec;
+    if (!fs::exists(blPath, bec) || bec) {
+        std::error_code dec;
+        fs::create_directories(fs::u8path(base), dec);
+        std::vector<std::string> merged = LoadBlacklistFile(g_cfg.blacklist);
+        SaveBlacklistFile(merged);
+        std::string list;
+        for (size_t i = 0; i < merged.size(); ++i) { if (i) list += "、"; list += merged[i]; }
+        LogThread("[提示] 单词黑名单.json 不存在，已自动导出创建（词典目录），当前黑名单 = " + list);
+    }
+}
+
+// 目录变更时把程序相关文件从旧目录迁移到新目录（仅当新目录还没有同名文件，避免覆盖用户数据）。
+// exactNames：精确文件名；substrNames：文件名包含子串即迁移。
+// 同盘用 rename，跨盘回退 copy + remove。
+static void MigrateDirFiles(const fs::path& srcDir, const fs::path& dstDir,
+                            const std::vector<std::wstring>& exactNames,
+                            const std::vector<std::wstring>& substrNames)
+{
+    if (srcDir.empty() || dstDir.empty() || srcDir == dstDir) return;
+    std::error_code dec;
+    if (!fs::exists(dstDir, dec) || dec) fs::create_directories(dstDir, dec);
+    int moved = 0;
+    auto tryMove = [&](const fs::path& src, const fs::path& dst) {
+        std::error_code e1, e2;
+        if (!(fs::exists(src, e1) && !e1)) return;  // 旧目录无此文件
+        if (fs::exists(dst, e2) && !e2) return;     // 新目录已有同名文件：不覆盖
+        std::error_code mec;
+        fs::rename(src, dst, mec);                  // 同盘：直接移动
+        if (mec) {                                  // 跨盘：复制后删除
+            std::error_code cec, rec;
+            fs::copy_file(src, dst, fs::copy_options::overwrite_existing, cec);
+            if (!cec) { fs::remove(src, rec); moved++; }
+        } else { moved++; }
+    };
+    for (auto& n : exactNames) tryMove(srcDir / n, dstDir / n);
+    for (auto& sub : substrNames) {
+        std::error_code sec;
+        fs::directory_iterator dit(srcDir, sec);
+        for (; dit != fs::directory_iterator(); dit.increment(sec)) {
+            if (!dit->is_regular_file(sec)) continue;
+            std::wstring fn = dit->path().filename().wstring();
+            if (fn.find(sub) != std::wstring::npos)
+                tryMove(dit->path(), dstDir / dit->path().filename());
+        }
+    }
+    if (moved > 0)
+        LogThread("[提示] 已把目录变更前生成的 " + std::to_string(moved) + " 个程序文件迁移到新目录");
+}
+
+// 词典目录变更统一处理：旧目录的词典文件迁移到新目录，并在新目录确保 汇总词典.json /
+// 个性翻译.json / 单词黑名单.json / wiki_术语对照.json 全部就位。
+static void OnDictionaryDirChanged(const std::string& newDir, bool doSave)
+{
+    if (newDir.empty()) return;
+    std::string old = g_cfg.dictionaryDir;
+    if (old == newDir) { EnsureDictFile(); return; }
+    MigrateDirFiles(fs::u8path(old), fs::u8path(newDir),
+        { L"汇总词典.json", L"个性翻译.json", L"单词黑名单.json", L"wiki_术语对照.json" });
+    g_cfg.dictionaryDir = newDir;
+    EnsureDictFile();
+    if (doSave) SaveConfig();
+}
+
 // 词典目录没有 wiki_术语对照.json 时，从 exe 旁的内置文件释放一份（打包随程序发布的 wiki 原典）。
 // 已有文件则不覆盖（用户可能已自行导出更新）。返回是否成功释放。
 static bool ReleaseBuiltinWiki(const fs::path& dictDir)
@@ -1751,6 +1811,7 @@ static void EnsureDictFile()
     if (g_cfg.dictionaryDir.empty()) return;
     fs::path dictDir = fs::u8path(g_cfg.dictionaryDir);
     EnsureCustomDictFile(dictDir); // 词典目录就绪即创建 个性翻译.json（已存在不覆盖）
+    EnsureBlacklistFile();         // v2.2.8：词典目录就绪即创建 单词黑名单.json
     fs::path outPath = MergedDictPath(dictDir); // 含旧文件名自动迁移
     std::error_code oec;
     if (fs::exists(outPath, oec) && !oec) return; // 已存在：不覆盖用户手动修改
@@ -4701,7 +4762,15 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
         case IDC_BTN_BROWSE_TRANS: {
             std::wstring dir;
             if (SelectDirDialog(hDlg, dir)) {
-                g_cfg.translationDir = wstring_to_utf8(dir);
+                std::string newT = wstring_to_utf8(dir);
+                if (newT != g_cfg.translationDir) {
+                    // v2.2.8：翻译目录变更，把旧目录的翻译产物迁移过去（新目录有同名则保留新目录）
+                    MigrateDirFiles(fs::u8path(g_cfg.translationDir), fs::u8path(newT),
+                        { L"翻译失败.json" }, { L"_未翻译", L"_已翻译", L"_翻译检查报告" });
+                    g_cfg.translationDir = newT;
+                }
+                std::error_code dec;
+                fs::create_directories(fs::u8path(newT), dec); // 确定路径即建立目录
                 SetEditText(hDlg, IDC_EDIT_TRANSLATION, dir);
             }
             break;
@@ -4709,13 +4778,13 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
         case IDC_BTN_BROWSE_DICT: {
             std::wstring dir;
             if (SelectDirDialog(hDlg, dir)) {
-                g_cfg.dictionaryDir = wstring_to_utf8(dir);
-                SetEditText(hDlg, IDC_EDIT_DICTIONARY, dir);
+                std::string oldDict = g_cfg.dictionaryDir;   // 记住旧目录（LoadConfigFrom 可能覆盖 g_cfg）
+                std::string newDir = wstring_to_utf8(dir);
                 // 兼容旧版：程序目录还没有用户配置时，若所选词典目录里有旧版 config.json，读取并迁移
                 fs::path exeCfg = GetExeDir() / "config.user.json";
                 std::error_code eec;
                 if (!fs::exists(exeCfg, eec)) {
-                    fs::path legacy = fs::u8path(g_cfg.dictionaryDir) / "config.json";
+                    fs::path legacy = fs::u8path(oldDict) / "config.json";
                     std::error_code lec;
                     if (fs::exists(legacy, lec) && !lec) {
                         if (LoadConfigFrom(legacy, true))
@@ -4723,9 +4792,11 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
                         else
                             Log("[提示] 检测到词典目录有旧 config.json，但读取失败");
                     }
-                    g_cfg.dictionaryDir = wstring_to_utf8(dir); // 以用户刚选的目录为准
+                    g_cfg.dictionaryDir = oldDict; // 用户尚未确认前保持旧值，保证迁移源正确
                 }
-                SaveConfig();
+                // v2.2.8：确定目录即把旧目录的词典文件迁移过来，并确保 汇总词典/个性翻译/单词黑名单 建立
+                OnDictionaryDirChanged(newDir, true);
+                SetEditText(hDlg, IDC_EDIT_DICTIONARY, dir); // g_cfg 已更新，EN_CHANGE 不会重复处理
                 RefreshConfigUI();
             }
             break;
@@ -4752,9 +4823,20 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
         case IDC_EDIT_TRANSLATION:
             if (wmEvent == EN_CHANGE) g_cfg.translationDir = wstring_to_utf8(GetEditText(hDlg, IDC_EDIT_TRANSLATION));
             break;
-        case IDC_EDIT_DICTIONARY:
-            if (wmEvent == EN_CHANGE) g_cfg.dictionaryDir = wstring_to_utf8(GetEditText(hDlg, IDC_EDIT_DICTIONARY));
+        case IDC_EDIT_DICTIONARY: {
+            std::string v = wstring_to_utf8(GetEditText(hDlg, IDC_EDIT_DICTIONARY));
+            if (wmEvent == EN_CHANGE) {
+                if (!v.empty() && v != g_cfg.dictionaryDir) {
+                    std::error_code ve;
+                    // v2.2.8：输入的是已存在目录即视为「确定」，立即迁移并建立词典文件
+                    if (fs::is_directory(fs::u8path(v), ve) && !ve)
+                        OnDictionaryDirChanged(v, false);
+                    else
+                        g_cfg.dictionaryDir = v; // 仍在输入/目录尚不存在，先记录
+                }
+            }
             break;
+        }
         // AI 翻译设置同步到配置
         case IDC_AI_KEY:
             // 手动输入/修改：作为当前 Key 使用（保存为条目需点「保存」）
