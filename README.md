@@ -86,6 +86,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build_release.ps1 -Zip
 - 修复：AI 返回的 UTF-8 若含过编码、代理区等"伪合法"序列，会被程序解析但 dump 时触发 json.exception.type_error.316 导致翻译线程崩溃。现严格化 `clean_utf8` 校验，并给所有 JSON 写盘/发请求的 `dump()` 加 replace 兜底，避免崩溃
 - 修复：AI 翻译规则第 7 条由"仅当中英文意思完全相同时才可去括号"改为"强制保留括号"，避免把 `None` 等译成不带括号的中文
 - 调整：AI 请求 `max_tokens` 由 8192 提高到 16384，给推理模型（大肥鱼 deepseek-v4-flash 等）的思维链与 JSON 输出留更多空间，降低长批次因 token 占满而失败的概率
+- 修复：AI 把无法翻译的专有名词/缩写（如 EXQB、Uranus）机械输出成「英文（英文）」重复格式的问题。已三处兜底——提示词明确禁止「英文（英文）」、AI 译文写入前自动把 `X（X）`（无中文）回退为原英文 `X`、词典填充时译名仍为英文则不再拼括号
 
 ### v2.2.4
 

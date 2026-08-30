@@ -649,7 +649,7 @@ bool ExtractEnglish()
         {"1. 翻译范围", "无论是 _descriptions（描述）还是 _options（选项），都必须翻译，一视同仁。"},
         {"2. 格式要求", "短名称（选项/组名）统一为\"中文（英文）\"格式，如\"治疗（Cure）\"，括号一律用全角（）且括号内必须原样保留英文原文，禁止翻译或改写括号内的英文；长描述（Description）直接翻译成通顺的中文句子，不套括号，也不得保留英文原文。"},
         {"3. 禁止半翻译", "每条文本必须整体完整翻译，绝对禁止输出\"中文 + 残留英文\"的混合半成品（例如\"隐遁 short boots\"、\"Medium 钻石 Patch\"均为错误）。遇到无法确认的词汇，按上下文推断其通用含义并翻译，不许跳过或保留英文。"},
-        {"4. 保留规则", "短名称（选项/组名）的括号及括号内英文必须保留，不得省略；例如 None 必须译为 无（None），禁止只输出 无。"},
+        {"4. 括号与专名", "能译出中文的短名称用「中文（英文）」格式，如 无（None）；无法翻译的专有名词/缩写/品牌名（如 EXQB、Uranus）原样保留英文，禁止输出「英文（英文）」重复格式。"},
         {"5. 专有名词", "人名、品牌名、作者名等专有名词（如 Yiggle、Lavabod、YAB）可原样保留在译文中，作为专名的一部分，不强求翻译。"},
         {"6. 翻译指令", "对于任何英文短语，即使带有连字符（如 Connectors - Face），也应将其视为一个整体进行翻译，而不是保留原文。带「└─」「├─」等层级装饰符的名字忽略装饰符整体翻译，括号内只放最简英文，禁止嵌套重复。绝对禁止输出\"英文 / 中文\"或\"英文换行中文\"这类双语拼接。"},
         {"7. 文件命名", "翻译完成后，将文件名中的\"_未翻译\"改为\"_已翻译\"。"},
@@ -1804,6 +1804,7 @@ static std::string dictFillDisplay(const std::string& fullKey, const std::string
     size_t a = zh.find_first_not_of(" \t\r\n");
     size_t b = zh.find_last_not_of(" \t\r\n");
     std::string z = (a == std::string::npos) ? zh : zh.substr(a, b - a + 1);
+    if (!contains_chinese(z)) return z; // 词典译名仍是英文（专名等）时原样保留，不拼括号
     if (g_cfg.swapWordOrder) return z + "（" + english + "）";
     return english + "（" + z + "）";
 }
@@ -2678,6 +2679,24 @@ static std::string safeDump(const json& j, int indent = -1)
     }
 }
 
+// 修正 AI 输出的「英文（英文）」无效格式：括号内外完全一致且不含中文时，回退为原英文
+static std::string fixRepeatParen(const std::string& t)
+{
+    auto trim = [](std::string s) {
+        size_t x = s.find_first_not_of(" \t\r\n");
+        size_t y = s.find_last_not_of(" \t\r\n");
+        return (x == std::string::npos) ? std::string() : s.substr(x, y - x + 1);
+    };
+    size_t open = t.find("（");
+    size_t close = t.rfind("）");
+    if (open == std::string::npos || close == std::string::npos || close != t.size() - 1) return t;
+    std::string a = trim(t.substr(0, open));
+    std::string b = trim(t.substr(open + 1, close - open - 1));
+    if (a.empty() || b.empty() || a != b) return t;
+    if (contains_chinese(a)) return t; // 中文（中文）例外情况不处理
+    return a;                          // 英文（英文）→ 英文
+}
+
 // 调用一次 AI 翻译一批词条，返回 条目 id -> 译文 的映射
 // glossary：会话内已确定的术语对照（英文 -> 固定中文译名），注入 prompt 保证同词同译
 static bool AITranslateBatch(const std::vector<std::pair<std::string, std::string>>& items,
@@ -2696,7 +2715,7 @@ static bool AITranslateBatch(const std::vector<std::pair<std::string, std::strin
         "4. 禁止半翻译：每条文本必须整体完整翻译，绝对禁止输出「中文 + 残留英文」的混合半成品（如「隐遁 short boots」「Medium 钻石 Patch」均为错误）；不确定的词按上下文推断通用含义翻译，不许跳过。\n"
         "5. 禁止双语拼接：绝对禁止输出「英文 / 中文」或「英文 换行 中文」这类把原文与译文并排的文本。\n"
         "6. 禁止嵌套与重复：原名形如「└─ animation (cure&haelan(pvp) / 治疗&治愈(pvp))」时，忽略「└─」「├─」等层级装饰符，把整串名字作为一个整体翻译成一对「中文（英文）」；括号内只放一个最简英文，禁止输出「中文（半截原文）（另半截原文）」或重复原名。示例：应输出 角色动作（Animation），而不是 角色动作 (Cure&Haelan(PVP) / 治疗&治愈(PVP))（└─ Animation）。\n"
-        "7. 强制保留括号：短名称（选项名/组名）必须严格使用「中文（英文）」格式，括号内原样保留英文原文，不得省略；例如 None 必须译为 无（None），禁止只输出 无。\n"
+        "7. 括号规则：能译出中文的短名称用「中文（英文）」格式，例如 治疗（Cure）、无（None）；若某词确为无法翻译的专有名词/缩写/品牌名（如 EXQB、Uranus），则原样保留英文本身，禁止输出「英文（英文）」（禁止 EXQB（EXQB）这类重复）。\n"
         "8. 形如「XXX - YYY」的英文（如 Connectors - Face）是普通选项名，应视为整体翻译，不得保留原文。\n"
         "9. 原文拼写错误（如 devine caress、care ii）按正确词义理解翻译，括号内英文保留原文拼写。\n"
         "10. 专有名词：人名、品牌名、作者名（如 Yiggle、Lavabod、YAB）可原样保留在译文中，作为专名的一部分，不强求翻译。\n"
@@ -2926,10 +2945,12 @@ static bool AITranslateFile(const fs::path& inFile)
                 for (size_t k = 0; k < n; ++k) {
                     auto f = got.find(std::to_string(i + k));
                     if (f != got.end()) {
-                        tj[list[i + k].sec][list[i + k].key] = f->second;
+                        // 兜底修正：AI 把无法翻译的专名输出成「英文（英文）」时回退为原英文
+                        std::string trans = fixRepeatParen(f->second);
+                        tj[list[i + k].sec][list[i + k].key] = trans;
                         okCount++;
                         // 记录会话术语：同词后续批次强制统一译法
-                        std::string zh = extractChineseTerm(f->second);
+                        std::string zh = extractChineseTerm(trans);
                         if (!zh.empty() && zh != list[i + k].english)
                             sessionTerms[list[i + k].english] = zh;
                     }
