@@ -52,7 +52,17 @@ if (Test-Path $cfgDefault) {
     Write-Host "[WARN] config.default.json not found in project root; zip will not ship default config."
 }
 
-# Step 2c: ensure an empty 日志.json template ships in the zip (the app auto-creates/overwrites it on every run)
+# Step 2c: copy built-in wiki dictionary into release (first-run seed for dictionary folder)
+$wikiName = -join [char[]](0x5185, 0x7F6E, 0x77, 0x69, 0x6B, 0x69, 0x5F, 0x672F, 0x8BED, 0x5BF9, 0x7167, 0x2E, 0x6A, 0x73, 0x6F, 0x6E)  # 内置wiki_术语对照.json
+$builtinWiki = Join-Path $root $wikiName
+if (Test-Path $builtinWiki) {
+    Copy-Item $builtinWiki (Join-Path $pub $wikiName) -Force
+    Write-Host "==> Copied $wikiName to release folder."
+} else {
+    Write-Host "[WARN] Built-in wiki seed not found in project root; first-run wiki seed will be missing."
+}
+
+# Step 2d: ensure an empty 日志.json template ships in the zip (the app auto-creates/overwrites it on every run)
 $logName = -join [char[]](0x65E5, 0x5FD7, 0x2E, 0x6A, 0x73, 0x6F, 0x6E)  # 日志.json
 $logTpl = Join-Path $pub $logName
 if (-not (Test-Path $logTpl)) {
@@ -77,10 +87,28 @@ if ($Zip) {
     $zipDirName = -join [char[]](0x538B, 0x7F29, 0x6587, 0x4EF6)
     $zipDir = Join-Path 'D:\Fast folder\Downloads' $zipDirName
     if (-not (Test-Path $zipDir)) { New-Item -ItemType Directory -Path $zipDir | Out-Null }
-    $zipName = "FFXIV_MOD_Options_Chinese_AI-Translated_v$ver.zip"
-    $zipFile = Join-Path $zipDir $zipName
-    if (Test-Path $zipFile) { Remove-Item $zipFile -Force }
-    Compress-Archive -Path (Join-Path $pub '*') -DestinationPath $zipFile -CompressionLevel Optimal
+
+    # Zip contains a top-level versioned folder, so extracting to any location
+    # yields a clean "FFXIV_MOD_Options_Chinese_AI-Translated_vX.Y.Z\" directory
+    # (instead of scattering the files into the current location).
+    $innerName = "FFXIV_MOD_Options_Chinese_AI-Translated_v$ver"
+    $stage = Join-Path $env:TEMP ("ffxiv_mod_pkg_" + [guid]::NewGuid().ToString('N'))
+    $inner = Join-Path $stage $innerName
+    New-Item -ItemType Directory -Path $inner -Force | Out-Null
+    Copy-Item (Join-Path $pub '*') $inner -Recurse -Force
+
+    # Pick a zip file name; if it already exists, append _0/_1/... instead of overwriting
+    $zipFile = Join-Path $zipDir "FFXIV_MOD_Options_Chinese_AI-Translated_v$ver.zip"
+    $cand = $zipFile
+    $n = 0
+    while (Test-Path $cand) {
+        $cand = Join-Path $zipDir "FFXIV_MOD_Options_Chinese_AI-Translated_v${ver}_${n}.zip"
+        $n++
+    }
+    $zipFile = $cand
+
+    Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $zipFile -CompressionLevel Optimal
+    Remove-Item $stage -Recurse -Force
     Write-Host "==> Zip created: $zipFile  ($((Get-Item $zipFile).Length) bytes)"
 }
 Write-Host "[DONE] All done."

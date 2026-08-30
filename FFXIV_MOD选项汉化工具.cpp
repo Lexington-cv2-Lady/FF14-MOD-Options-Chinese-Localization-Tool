@@ -26,7 +26,7 @@ std::vector<std::wstring> g_logBuffer; // 日志缓冲：改字号后重放，�
 std::vector<std::wstring> g_logTopBuffer; // 日志置顶区：写入日志.json 时始终置于文件最前（如命中词条汇总）
 std::string g_workerName;
 std::vector<std::string> g_wikiPrefixes; // Wiki 导出当前选中的分类
-fs::path g_importFile;   // 导入翻译：选定的文件
+std::vector<fs::path> g_importFiles; // 导入翻译：选定的文件（可多选，点中即勾选）
 bool g_importAutoFill = true; // 导入翻译：是否先用词典补全空白项
 bool g_keyVisible = false;    // AI API Key 是否明文显示
 static int g_dlgW0 = 0, g_dlgH0 = 0; // 主窗口 .rc 设计尺寸对应客户区像素（缩放布局基准）
@@ -256,6 +256,19 @@ void SetProgress(int cur, int max)
 static const std::vector<AIPreset> g_defaultAIPresets = {
     { "DeepSeek", "deepseek-v4-flash", "https://api.deepseek.com", "DeepSeek 官方 API" },
     { "智谱 GLM", "GLM-4.5-Air", "https://open.bigmodel.cn/api/paas/v4", "智谱 AI 开放平台（OpenAI 兼容）" },
+    { "通义千问", "qwen-plus", "https://dashscope.aliyuncs.com/compatible-mode/v1", "阿里云百炼（OpenAI 兼容，需先开通百炼）" },
+    { "Kimi", "kimi-latest", "https://api.moonshot.cn/v1", "月之暗面 Kimi 开放平台" },
+    { "豆包", "doubao-1-5-pro-32k-250115", "https://ark.cn-beijing.volces.com/api/v3", "火山方舟（模型名以控制台为准）" },
+    { "腾讯混元", "hunyuan-turbo", "https://api.hunyuan.cloud.tencent.com/v1", "腾讯云大模型（OpenAI 兼容）" },
+    { "百度千帆", "ernie-4.0-turbo-8k", "https://qianfan.baidubce.com/v2", "百度智能云千帆（OpenAI 兼容）" },
+    { "硅基流动", "Qwen/Qwen2.5-7B-Instruct", "https://api.siliconflow.cn/v1", "开源模型聚合平台，一个 Key 调多家开源模型" },
+    { "OpenRouter", "openai/gpt-4o-mini", "https://openrouter.ai/api/v1", "海外聚合中转，可调 GPT/Claude/Gemini" },
+    { "Groq", "llama-3.3-70b-versatile", "https://api.groq.com/openai/v1", "开源模型超高速推理（海外）" },
+    { "OpenAI（GPT）", "gpt-4o-mini", "https://api.openai.com/v1", "官方接口：国内网络不可直连，需代理或中转" },
+    { "Google Gemini", "gemini-2.0-flash", "https://generativelanguage.googleapis.com/v1beta/openai", "谷歌官方 OpenAI 兼容端点：国内不可直连，需代理" },
+    { "Anthropic Claude", "claude-sonnet-4-20250514", "https://api.anthropic.com/v1", "Anthropic 官方 OpenAI 兼容端点：国内不可直连，需代理" },
+    { "xAI Grok", "grok-2-latest", "https://api.x.ai/v1", "马斯克 xAI 官方（OpenAI 兼容）：国内不可直连，需代理" },
+    { "Mistral", "mistral-small-latest", "https://api.mistral.ai/v1", "法国 Mistral 官方（OpenAI 兼容）：国内不可直连，需代理" },
 };
 
 // ------------------------------------------------------------------
@@ -368,7 +381,11 @@ bool LoadConfigFrom(const fs::path& cfgPath, bool asUserLayer)
         g_cfg.swapWordOrder = j.value("swapWordOrder", g_cfg.swapWordOrder);
         g_cfg.autoBackup = j.value("autoBackup", g_cfg.autoBackup);
         g_cfg.pureChinese = j.value("pureChinese", g_cfg.pureChinese);
-        if (j.contains("blacklist")) g_cfg.blacklist = j["blacklist"].get<std::vector<std::string>>();
+        // 黑名单：默认层整体覆盖；用户层仅非空时覆盖（空数组=用户未设置过，保留默认专名）
+        if (j.contains("blacklist") && j["blacklist"].is_array()) {
+            auto bl = j["blacklist"].get<std::vector<std::string>>();
+            if (!asUserLayer || !bl.empty()) g_cfg.blacklist = bl;
+        }
         if (j.contains("wikiCategories")) g_cfg.wikiCategories = j["wikiCategories"].get<std::vector<std::string>>();
         g_cfg.aiApiKey = j.value("aiApiKey", g_cfg.aiApiKey);
         g_cfg.aiKeyName = j.value("aiKeyName", g_cfg.aiKeyName);
@@ -448,6 +465,43 @@ bool LoadConfigFrom(const fs::path& cfgPath, bool asUserLayer)
         return true;
     }
     catch (...) { return false; }
+}
+
+// 启动时自动清理 Penumbra 父目录（递归）、翻译目录、词典目录下残留的
+// *.json.bak / *.json.bak2 手动备份文件（程序自身的备份是 *.zip，不受影响）
+static void CleanupJsonBakFiles()
+{
+    auto endsWith = [](const std::wstring& s, const std::wstring& suf) {
+        return s.size() >= suf.size() && s.compare(s.size() - suf.size(), suf.size(), suf) == 0;
+    };
+    std::string dirs[3] = { g_cfg.penumbraDir, g_cfg.translationDir, g_cfg.dictionaryDir };
+    const char* names[3] = { "Penumbra", "翻译目录", "词典目录" };
+    bool rec[3] = { true, false, false };
+    for (int i = 0; i < 3; ++i) {
+        if (dirs[i].empty()) continue;
+        fs::path root = fs::u8path(dirs[i]);
+        std::error_code ec;
+        if (!fs::exists(root, ec)) continue;
+        int n = 0;
+        auto process = [&](const fs::path& p) {
+            if (!fs::is_regular_file(p, ec)) return;
+            std::wstring fn = p.filename().wstring();
+            if (endsWith(fn, L".json.bak") || endsWith(fn, L".json.bak2")) {
+                fs::remove(p, ec);
+                if (!ec) n++;
+            }
+        };
+        if (rec[i]) {
+            for (fs::recursive_directory_iterator it(root, ec), end; it != end && !ec; it.increment(ec))
+                process(it->path());
+        }
+        else {
+            for (fs::directory_iterator it(root, ec), end; it != end && !ec; it.increment(ec))
+                process(it->path());
+        }
+        if (n > 0)
+            Log("[清理] 已自动删除 " + std::string(names[i]) + " 下 " + std::to_string(n) + " 个 .json.bak 备份文件");
+    }
 }
 
 // 加载配置：先读默认配置 config.default.json（zip 自带，更新时覆盖），再叠加用户配置
@@ -621,6 +675,24 @@ bool ExtractEnglish()
         if (ec) { Log("[错误] 无法创建翻译目录"); return false; }
     }
 
+    // 确保词典目录下存在 单词黑名单.json（不存在则自动导出创建，方便用户直接查看/编辑）
+    {
+        std::string base = g_cfg.dictionaryDir.empty() ? g_cfg.translationDir : g_cfg.dictionaryDir;
+        if (!base.empty()) {
+            fs::path blPath = fs::u8path(base) / fs::u8path("单词黑名单.json");
+            std::error_code bec;
+            if (!fs::exists(blPath, bec) || bec) {
+                std::error_code dec;
+                fs::create_directories(fs::u8path(base), dec);
+                std::vector<std::string> merged = LoadBlacklistFile(g_cfg.blacklist);
+                SaveBlacklistFile(merged);
+                std::string list;
+                for (size_t i = 0; i < merged.size(); ++i) { if (i) list += "、"; list += merged[i]; }
+                Log("[提示] 单词黑名单.json 不存在，已自动导出创建（词典目录），当前黑名单 = " + list);
+            }
+        }
+    }
+
     // 读取黑名单（默认内置跳过词 + 翻译目录下 单词黑名单.json + 配置）
     std::set<std::string> blacklist = { "---", "-" };
     for (auto& w : LoadBlacklistFile(g_cfg.blacklist)) {
@@ -654,6 +726,8 @@ bool ExtractEnglish()
         {"6. 翻译指令", "对于任何英文短语，即使带有连字符（如 Connectors - Face），也应将其视为一个整体进行翻译，而不是保留原文。带「└─」「├─」等层级装饰符的名字忽略装饰符整体翻译，括号内只放最简英文，禁止嵌套重复。绝对禁止输出\"英文 / 中文\"或\"英文换行中文\"这类双语拼接。"},
         {"7. 文件命名", "翻译完成后，将文件名中的\"_未翻译\"改为\"_已翻译\"。"},
         {"8. 交付方式", "每次修改后，请直接提供完整的 JSON 文件内容。"},
+        {"9. 3D 建模术语", "poly 是 polygon（多边形）的缩写，higher poly 指模型面数更高，译为「高多边形」；texture=纹理、mesh=网格、rig=骨骼绑定。例如 Fuzzy layer (higher poly) 译为 毛绒层（高多边形），不得按字面硬译或编造。"},
+        {"10. 无歧义固定词", "身体部位等没有歧义（多义词）的固定名词必须按通用中文直译，不得保留英文：Feet=脚部、Legs=腿部、Hands=手部、Chest=胸部、Belly=腹部、Thighs=大腿、Back=背部、Arms=手臂、Shoulders=肩部。例如 Feet 只译作「脚部」，不要译成其它生僻说法。"},
         {"说明", "将英文翻译为中文。请保持 JSON 结构，仅填写 _options 和 _descriptions 的翻译。"},
         {"格式提示", "短名称按 中文（英文） 格式填写，例如 发型1（Hairstyle 1）；长描述直接填中文句子，不要保留英文，也不要输出\"英文 / 中文\"拼接。"}
     };
@@ -1549,6 +1623,21 @@ bool ApplyTranslation()
 // ------------------------------------------------------------------
 // 词典工具与导入翻译
 // ------------------------------------------------------------------
+// 词典目录没有 wiki_术语对照.json 时，从 exe 旁的内置文件释放一份（打包随程序发布的 wiki 原典）。
+// 已有文件则不覆盖（用户可能已自行导出更新）。返回是否成功释放。
+static bool ReleaseBuiltinWiki(const fs::path& dictDir)
+{
+    std::error_code ec;
+    fs::path out = dictDir / fs::u8path("wiki_术语对照.json");
+    if (fs::exists(out, ec) && !ec) return false; // 已有：不覆盖
+    fs::path builtin = GetExeDir() / fs::u8path("内置wiki_术语对照.json");
+    if (!fs::exists(builtin, ec) || ec) return false; // 未随程序打包：跳过
+    std::error_code cc;
+    fs::create_directories(dictDir, cc);
+    fs::copy_file(builtin, out, fs::copy_options::overwrite_existing, cc);
+    return !cc;
+}
+
 // 确保唯一词典文件 wiki_术语对照and个人填充.json 存在（仅首次生成）。
 // 该文件是程序唯一的词典，含三部分：
 //   terms         英文->中文 固定映射（wiki 原典 + 个人填充，先来后到），补全/回滚用
@@ -1571,8 +1660,11 @@ static void EnsureDictFile()
     merged["_descriptions"] = json::object();
 
     // 1) wiki 术语对照（固定优先，先来后到）
+    // 词典目录没有原典时，先从 exe 旁的内置 wiki_术语对照.json 释放一份（打包随程序发布），保证首次即有词条
     fs::path wikiPath = dictDir / fs::u8path("wiki_术语对照.json");
     std::error_code wec;
+    if ((!fs::exists(wikiPath, wec) || wec) && ReleaseBuiltinWiki(dictDir))
+        LogThread("[提示] 词典目录无 wiki 原典，已释放内置 wiki_术语对照.json 作为初始原典");
     if (fs::exists(wikiPath, wec) && !wec) {
         std::string d;
         if (read_binary_file(wikiPath, d)) {
@@ -2219,7 +2311,22 @@ void WikiImportThread()
     if (!result.is_object()) result = json::object();
     if (!result.contains("terms")) result["terms"] = json::object();
     if (!result["terms"].is_object()) result["terms"] = json::object();
-    // 原典不存在时：以现有汇总词典的 terms 作为初始基线，避免首次导出全量重抓
+    // 原典不存在时：优先释放内置 wiki 原典作为基线（最完整）；否则以现有汇总词典的 terms 兜底
+    if (result["terms"].empty() && !wikiExists) {
+        if (ReleaseBuiltinWiki(dictDir)) {
+            std::string bd;
+            if (read_binary_file(wikiPath, bd)) {
+                try {
+                    json bj = json::parse(clean_utf8(bd));
+                    if (bj.is_object() && bj.contains("terms") && bj["terms"].is_object()) {
+                        result["terms"] = bj["terms"];
+                        LogThread("[提示] 词典目录无 wiki 原典，已释放内置 wiki_术语对照.json（"
+                            + std::to_string(result["terms"].size()) + " 条）作为初始原典");
+                    }
+                } catch (...) {}
+            }
+        }
+    }
     if (result["terms"].empty()) {
         fs::path mergedPath = dictDir / fs::u8path("wiki_术语对照and个人填充.json");
         std::error_code mec;
@@ -2435,7 +2542,8 @@ void RunImportThread()
 {
     try {
         g_busy = true;
-        bool ok = ImportTranslations(g_importFile, g_importAutoFill);
+        for (const auto& f : g_importFiles)
+            ImportTranslations(f, g_importAutoFill);
         Log("导入翻译流程结束");
         g_busy = false;
     }
@@ -2688,10 +2796,12 @@ static std::string fixRepeatParen(const std::string& t)
         return (x == std::string::npos) ? std::string() : s.substr(x, y - x + 1);
     };
     size_t open = t.find("（");
+    if (open == std::string::npos) return t;
     size_t close = t.rfind("）");
-    if (open == std::string::npos || close == std::string::npos || close != t.size() - 1) return t;
+    // 全角括号 UTF-8 占 3 字节，必须按「起始字节 + 3」判断右括号是否在末尾
+    if (close == std::string::npos || close + 3 != t.size()) return t;
     std::string a = trim(t.substr(0, open));
-    std::string b = trim(t.substr(open + 1, close - open - 1));
+    std::string b = trim(t.substr(open + 3, close - open - 3));
     if (a.empty() || b.empty() || a != b) return t;
     if (contains_chinese(a)) return t; // 中文（中文）例外情况不处理
     return a;                          // 英文（英文）→ 英文
@@ -2720,7 +2830,9 @@ static bool AITranslateBatch(const std::vector<std::pair<std::string, std::strin
         "9. 原文拼写错误（如 devine caress、care ii）按正确词义理解翻译，括号内英文保留原文拼写。\n"
         "10. 专有名词：人名、品牌名、作者名（如 Yiggle、Lavabod、YAB）可原样保留在译文中，作为专名的一部分，不强求翻译。\n"
         "11. 遇到不确定含义的词汇，根据上下文推断其通用含义进行翻译，译文仍按第 2 条格式保留「中文（英文）」，括号内为原文英文。\n"
-        "12. 只输出一个 JSON 对象：键为条目 id（字符串），值为译文。不要输出任何其他内容。";
+        "12. 3D 建模/图形常用语按通用译法翻译：poly 是 polygon（多边形）的缩写，higher poly 指模型面数更高，译为「高多边形」；texture=纹理、mesh=网格、rig=骨骼绑定、LOD=细节层级。例如 Fuzzy layer (higher poly) 应译为 毛绒层（高多边形），不得按字面硬译或编造译名。\n"
+        "13. 无歧义固定词：身体部位等没有歧义（多义词）的固定名词必须按通用中文直译，不得保留英文（如 Feet=脚部、Legs=腿部、Hands=手部、Chest=胸部、Belly=腹部、Thighs=大腿、Back=背部、Arms=手臂、Shoulders=肩部）。\n"
+        "14. 只输出一个 JSON 对象：键为条目 id（字符串），值为译文。不要输出任何其他内容。";
     if (!glossary.empty()) {
         sysMsg +=
             "\n13. 术语一致性：以下为本次翻译已确定的固定术语对照（英文 → 中文）。"
@@ -3473,21 +3585,6 @@ static void SaveCustomSaves(HWND hDlg)
 }
 
 // 把预设列表填入「模型名」「API 地址」两个下拉框
-// 用系统默认关联程序打开用户配置文件 config.user.json（不存在时提示先保存）
-static void OpenUserConfigFile()
-{
-    fs::path p = UserConfigPath();
-    std::error_code ec;
-    if (!fs::exists(p, ec)) {
-        MessageBoxW(g_hMainWnd, L"尚未保存过用户配置（config.user.json）。\n请先点「保存」按钮生成配置文件。", L"提示", MB_OK | MB_ICONINFORMATION);
-        return;
-    }
-    HINSTANCE hi = ShellExecuteW(g_hMainWnd, L"open", p.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
-    if ((intptr_t)hi <= 32) {
-        MessageBoxW(g_hMainWnd, L"打开 config.user.json 失败，请检查文件是否被占用或系统是否有关联的编辑器。", L"提示", MB_OK | MB_ICONWARNING);
-    }
-}
-
 // 模型名 / API 地址已改为普通输入框（无下拉列表），这里只负责回填当前值
 static void FillAIPresetCombos(HWND hDlg)
 {
@@ -4137,6 +4234,16 @@ INT_PTR CALLBACK WikiCatsDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM 
 // ------------------------------------------------------------------
 // 导入翻译对话框：选择文件 + 是否用词典补全空白项
 // ------------------------------------------------------------------
+
+// 子类化文件列表：禁止 Ctrl+A 全选（用户要求点中即勾选、无全选，避免误操作批量写入）
+static LRESULT CALLBACK ImportListSubclassProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
+{
+    if (msg == WM_KEYDOWN && wParam == 'A' && (GetKeyState(VK_CONTROL) & 0x8000))
+        return 0;
+    WNDPROC oldProc = (WNDPROC)GetWindowLongPtrW(hWnd, GWLP_USERDATA);
+    return CallWindowProcW(oldProc, hWnd, msg, wParam, lParam);
+}
+
 INT_PTR CALLBACK ImportTransDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
 {
     UNREFERENCED_PARAMETER(lParam);
@@ -4163,20 +4270,27 @@ INT_PTR CALLBACK ImportTransDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPAR
             int idx = (int)SendMessageW(hList, LB_ADDSTRING, 0, (LPARAM)line.c_str());
             SendMessageW(hList, LB_SETITEMDATA, (WPARAM)idx, (LPARAM) new fs::path(f.path));
         }
-        SendMessageW(hList, LB_SETCURSEL, 0, 0);
+        // 挂上子类化，拦截 Ctrl+A 全选
+        SetWindowLongPtrW(hList, GWLP_USERDATA, (LONG_PTR)GetWindowLongPtrW(hList, GWLP_WNDPROC));
+        SetWindowLongPtrW(hList, GWLP_WNDPROC, (LONG_PTR)ImportListSubclassProc);
         CheckDlgButton(hDlg, IDC_IMPORT_AUTOFILL, BST_CHECKED);
         return TRUE;
     }
     case WM_COMMAND: {
         int id = LOWORD(wParam);
         if (id == IDC_IMPORT_OK || id == IDOK) {
-            int idx = (int)SendMessageW(hList, LB_GETCURSEL, 0, 0);
-            if (idx < 0) {
-                MessageBoxW(hDlg, L"请选择一个文件。", L"提示", MB_OK | MB_ICONINFORMATION);
+            int cnt = (int)SendMessageW(hList, LB_GETCOUNT, 0, 0);
+            g_importFiles.clear();
+            for (int i = 0; i < cnt; ++i) {
+                if (SendMessageW(hList, LB_GETSEL, (WPARAM)i, 0) > 0) {
+                    fs::path* p = (fs::path*)SendMessageW(hList, LB_GETITEMDATA, (WPARAM)i, 0);
+                    if (p) g_importFiles.push_back(*p);
+                }
+            }
+            if (g_importFiles.empty()) {
+                MessageBoxW(hDlg, L"请至少勾选一个文件（点行即勾选，可多选）。", L"提示", MB_OK | MB_ICONINFORMATION);
                 return TRUE;
             }
-            fs::path* p = (fs::path*)SendMessageW(hList, LB_GETITEMDATA, (WPARAM)idx, 0);
-            if (p) g_importFile = *p;
             g_importAutoFill = (IsDlgButtonChecked(hDlg, IDC_IMPORT_AUTOFILL) == BST_CHECKED);
             EndDialog(hDlg, IDOK);
             return TRUE;
@@ -4234,6 +4348,7 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
         EnableWindow(GetDlgItem(hDlg, IDC_BTN_CANCEL), FALSE);
         LoadConfig();
         LoadCustomSaves(); // 读取用户配置 config.user.json 的 customSaves，用户自定义的 Key/模型/地址优先并入
+        CleanupJsonBakFiles(); // 自动清理各目录残留的 .json.bak 手动备份
 
         // 记录 .rc 设计尺寸对应的客户区像素，作为等比缩放基准（必须在 SetWindowPos 之前）
         RECT rc0;
@@ -4534,18 +4649,14 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
             SetDlgItemTextW(hDlg, IDC_BTN_SHOW_KEY, g_keyVisible ? L"隐藏" : L"显示");
             break;
         }
-        case IDC_BTN_OPEN_USER_CFG: {
-            if (wmEvent == BN_CLICKED) OpenUserConfigFile();
-            break;
-        }
         case IDC_CHK_SWAP:
             if (wmEvent == BN_CLICKED) {
                 g_cfg.swapWordOrder = (IsDlgButtonChecked(hDlg, IDC_CHK_SWAP) == BST_CHECKED);
                 SaveConfig();
                 if (g_cfg.swapWordOrder)
-                    Log("[提示] 已开启「词序调换」：应用翻译后名称显示为『中文（英文）』。直接点『3. 应用翻译』即可生效，无需重新提取/导入。");
+                    Log("[提示] 已开启「词序调换」：应用翻译后名称显示为『中文（英文）』。直接点『3. 词典写入Mod』即可生效，无需重新提取/导入。");
                 else
-                    Log("[提示] 已关闭「词序调换」：应用翻译恢复为『英文（中文）』格式。直接点『3. 应用翻译』即可生效。");
+                    Log("[提示] 已关闭「词序调换」：应用翻译恢复为『英文（中文）』格式。直接点『3. 词典写入Mod』即可生效。");
             }
             break;
         case IDC_CHK_BACKUP:

@@ -143,7 +143,7 @@ struct AppConfig {
     bool swapWordOrder = true;        // 词序调换（默认勾选：显示「中文（英文）」）
     bool autoBackup = true;           // 自动备份
     bool pureChinese = false;         // 纯中文模式
-    std::vector<std::string> blacklist; // 黑名单
+    std::vector<std::string> blacklist = { "Uranus", "EXQB", "Yanilla", "Rue", "Lavabod" }; // 黑名单（默认含体型 mod 专名，可在黑名单界面自行增删）
     std::vector<std::string> wikiCategories; // Wiki 导出选中的分类 prefix
     std::string aiApiKey;      // AI 翻译 API Key（当前选中项，OpenAI 兼容）
     std::string aiKeyName;     // 当前选中 Key 的备注名（空 = 自定义输入未保存）

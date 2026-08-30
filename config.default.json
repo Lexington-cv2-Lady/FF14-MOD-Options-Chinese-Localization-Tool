@@ -18,11 +18,89 @@
       "model": "GLM-4.5-Air",
       "baseUrl": "https://open.bigmodel.cn/api/paas/v4",
       "note": "智谱 AI 开放平台（OpenAI 兼容）"
+    },
+    {
+      "name": "通义千问",
+      "model": "qwen-plus",
+      "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "note": "阿里云百炼（OpenAI 兼容，需先开通百炼）"
+    },
+    {
+      "name": "Kimi",
+      "model": "kimi-latest",
+      "baseUrl": "https://api.moonshot.cn/v1",
+      "note": "月之暗面 Kimi 开放平台"
+    },
+    {
+      "name": "豆包",
+      "model": "doubao-1-5-pro-32k-250115",
+      "baseUrl": "https://ark.cn-beijing.volces.com/api/v3",
+      "note": "火山方舟（模型名以控制台为准）"
+    },
+    {
+      "name": "腾讯混元",
+      "model": "hunyuan-turbo",
+      "baseUrl": "https://api.hunyuan.cloud.tencent.com/v1",
+      "note": "腾讯云大模型（OpenAI 兼容）"
+    },
+    {
+      "name": "百度千帆",
+      "model": "ernie-4.0-turbo-8k",
+      "baseUrl": "https://qianfan.baidubce.com/v2",
+      "note": "百度智能云千帆（OpenAI 兼容）"
+    },
+    {
+      "name": "硅基流动",
+      "model": "Qwen/Qwen2.5-7B-Instruct",
+      "baseUrl": "https://api.siliconflow.cn/v1",
+      "note": "开源模型聚合平台，一个 Key 调多家开源模型"
+    },
+    {
+      "name": "OpenRouter",
+      "model": "openai/gpt-4o-mini",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "note": "海外聚合中转，可调 GPT/Claude/Gemini"
+    },
+    {
+      "name": "Groq",
+      "model": "llama-3.3-70b-versatile",
+      "baseUrl": "https://api.groq.com/openai/v1",
+      "note": "开源模型超高速推理（海外）"
+    },
+    {
+      "name": "OpenAI（GPT）",
+      "model": "gpt-4o-mini",
+      "baseUrl": "https://api.openai.com/v1",
+      "note": "官方接口：国内网络不可直连，需代理或中转"
+    },
+    {
+      "name": "Google Gemini",
+      "model": "gemini-2.0-flash",
+      "baseUrl": "https://generativelanguage.googleapis.com/v1beta/openai",
+      "note": "谷歌官方 OpenAI 兼容端点：国内不可直连，需代理"
+    },
+    {
+      "name": "Anthropic Claude",
+      "model": "claude-sonnet-4-20250514",
+      "baseUrl": "https://api.anthropic.com/v1",
+      "note": "Anthropic 官方 OpenAI 兼容端点：国内不可直连，需代理"
+    },
+    {
+      "name": "xAI Grok",
+      "model": "grok-2-latest",
+      "baseUrl": "https://api.x.ai/v1",
+      "note": "马斯克 xAI 官方（OpenAI 兼容）：国内不可直连，需代理"
+    },
+    {
+      "name": "Mistral",
+      "model": "mistral-small-latest",
+      "baseUrl": "https://api.mistral.ai/v1",
+      "note": "法国 Mistral 官方（OpenAI 兼容）：国内不可直连，需代理"
     }
   ],
   "autoBackup": true,
   "autoFontSize": true,
-  "blacklist": [],
+  "blacklist": ["Uranus", "EXQB", "Yanilla", "Rue", "Lavabod"],
   "customSaves": [],
   "dictionaryDir": "",
   "fontSize": 11,
