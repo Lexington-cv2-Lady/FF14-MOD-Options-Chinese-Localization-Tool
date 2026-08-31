@@ -43,12 +43,6 @@ static fs::path g_aiTargetFile; // 「翻译缺失」生成的 _未翻译.json�
 #define IDC_EXTRACT_BTN 1264
 #define IDC_EXTRACT_CLOSE 1265
 #define IDC_EXTRACT_NONE 1266
-#define IDC_EXTRACT_RIGHTALL 1267
-#define IDC_EXTRACT_RIGHTNONE 1268
-#endif
-#ifndef IDC_RESTORE_RIGHTALL
-#define IDC_RESTORE_RIGHTALL 1207
-#define IDC_RESTORE_RIGHTNONE 1208
 #endif
 #ifndef IDD_MISSING_DIALOG
 #define IDD_MISSING_DIALOG 1270
@@ -58,8 +52,6 @@ static fs::path g_aiTargetFile; // 「翻译缺失」生成的 _未翻译.json�
 #define IDC_MISS_BTN 1274
 #define IDC_MISS_CLOSE 1275
 #define IDC_MISS_RIGHTLIST 1276
-#define IDC_MISS_RIGHTALL 1277
-#define IDC_MISS_RIGHTNONE 1278
 #endif
 #ifndef IDC_RESTORE_NONE
 #define IDC_RESTORE_NONE 1206
@@ -4547,34 +4539,28 @@ INT_PTR CALLBACK RestoreDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM l
             return TRUE;
         }
         if (id == IDC_RESTORE_ALL) {
-            // 全选：勾选左侧所有模组文件夹
+            // 全选：左侧所有模组文件夹 + 右侧所有备份包（先全选左侧以刷新右侧，再全选右侧）
             HWND left = GetDlgItem(hDlg, IDC_RESTORE_LEFTLIST);
-            int count = ListView_GetItemCount(left);
-            for (int i = 0; i < count; ++i) ListView_SetCheckState(left, i, TRUE);
+            HWND right = GetDlgItem(hDlg, IDC_RESTORE_RIGHTLIST);
+            int lc = ListView_GetItemCount(left);
+            for (int i = 0; i < lc; ++i) ListView_SetCheckState(left, i, TRUE);
+            int rc = ListView_GetItemCount(right);
+            for (int i = 0; i < rc; ++i) ListView_SetCheckState(right, i, TRUE);
             return TRUE;
         }
         if (id == IDC_RESTORE_NONE) {
-            // 取消全选：取消选中 + 取消勾选
+            // 取消全选：右侧 + 左侧都取消选中 + 取消勾选
             HWND left = GetDlgItem(hDlg, IDC_RESTORE_LEFTLIST);
-            int count = ListView_GetItemCount(left);
-            for (int i = 0; i < count; ++i) {
-                ListView_SetItemState(left, i, 0, LVIS_SELECTED);
-                ListView_SetCheckState(left, i, FALSE);
-            }
-            return TRUE;
-        }
-        if (id == IDC_RESTORE_RIGHTALL) {
             HWND right = GetDlgItem(hDlg, IDC_RESTORE_RIGHTLIST);
-            int count = ListView_GetItemCount(right);
-            for (int i = 0; i < count; ++i) ListView_SetCheckState(right, i, TRUE);
-            return TRUE;
-        }
-        if (id == IDC_RESTORE_RIGHTNONE) {
-            HWND right = GetDlgItem(hDlg, IDC_RESTORE_RIGHTLIST);
-            int count = ListView_GetItemCount(right);
-            for (int i = 0; i < count; ++i) {
+            int rc = ListView_GetItemCount(right);
+            for (int i = 0; i < rc; ++i) {
                 ListView_SetItemState(right, i, 0, LVIS_SELECTED);
                 ListView_SetCheckState(right, i, FALSE);
+            }
+            int lc = ListView_GetItemCount(left);
+            for (int i = 0; i < lc; ++i) {
+                ListView_SetItemState(left, i, 0, LVIS_SELECTED);
+                ListView_SetCheckState(left, i, FALSE);
             }
             return TRUE;
         }
@@ -4760,33 +4746,28 @@ INT_PTR CALLBACK ExtractDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM l
             return TRUE;
         }
         if (id == IDC_EXTRACT_ALL) {
+            // 全选：左侧所有模组文件夹 + 右侧所有 group_*.json 文件（先全选左侧以刷新右侧，再全选右侧）
             HWND left = GetDlgItem(hDlg, IDC_EXTRACT_LEFTLIST);
-            int count = ListView_GetItemCount(left);
-            for (int i = 0; i < count; ++i) ListView_SetCheckState(left, i, TRUE);
+            HWND right = GetDlgItem(hDlg, IDC_EXTRACT_RIGHTLIST);
+            int lc = ListView_GetItemCount(left);
+            for (int i = 0; i < lc; ++i) ListView_SetCheckState(left, i, TRUE);
+            int rc = ListView_GetItemCount(right);
+            for (int i = 0; i < rc; ++i) ListView_SetCheckState(right, i, TRUE);
             return TRUE;
         }
         if (id == IDC_EXTRACT_NONE) {
-            // 取消全选：取消选中 + 取消勾选
+            // 取消全选：右侧 + 左侧都取消选中 + 取消勾选
             HWND left = GetDlgItem(hDlg, IDC_EXTRACT_LEFTLIST);
-            int count = ListView_GetItemCount(left);
-            for (int i = 0; i < count; ++i) {
-                ListView_SetItemState(left, i, 0, LVIS_SELECTED);
-                ListView_SetCheckState(left, i, FALSE);
-            }
-            return TRUE;
-        }
-        if (id == IDC_EXTRACT_RIGHTALL) {
             HWND right = GetDlgItem(hDlg, IDC_EXTRACT_RIGHTLIST);
-            int count = ListView_GetItemCount(right);
-            for (int i = 0; i < count; ++i) ListView_SetCheckState(right, i, TRUE);
-            return TRUE;
-        }
-        if (id == IDC_EXTRACT_RIGHTNONE) {
-            HWND right = GetDlgItem(hDlg, IDC_EXTRACT_RIGHTLIST);
-            int count = ListView_GetItemCount(right);
-            for (int i = 0; i < count; ++i) {
+            int rc = ListView_GetItemCount(right);
+            for (int i = 0; i < rc; ++i) {
                 ListView_SetItemState(right, i, 0, LVIS_SELECTED);
                 ListView_SetCheckState(right, i, FALSE);
+            }
+            int lc = ListView_GetItemCount(left);
+            for (int i = 0; i < lc; ++i) {
+                ListView_SetItemState(left, i, 0, LVIS_SELECTED);
+                ListView_SetCheckState(left, i, FALSE);
             }
             return TRUE;
         }
@@ -5051,28 +5032,24 @@ INT_PTR CALLBACK MissingDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM l
         HWND left = GetDlgItem(hDlg, IDC_MISS_LEFTLIST);
         HWND right = GetDlgItem(hDlg, IDC_MISS_RIGHTLIST);
         if (id == IDC_MISS_ALL) {
-            int count = ListView_GetItemCount(left);
-            for (int i = 0; i < count; ++i) ListView_SetCheckState(left, i, TRUE);
+            // 全选：左侧所有模组文件夹 + 右侧所有缺失条目（先全选左侧以刷新右侧，再全选右侧）
+            int lc = ListView_GetItemCount(left);
+            for (int i = 0; i < lc; ++i) ListView_SetCheckState(left, i, TRUE);
+            int rc = ListView_GetItemCount(right);
+            for (int i = 0; i < rc; ++i) ListView_SetCheckState(right, i, TRUE);
             return TRUE;
         }
         if (id == IDC_MISS_NONE) {
-            int count = ListView_GetItemCount(left);
-            for (int i = 0; i < count; ++i) {
-                ListView_SetItemState(left, i, 0, LVIS_SELECTED);
-                ListView_SetCheckState(left, i, FALSE);
-            }
-            return TRUE;
-        }
-        if (id == IDC_MISS_RIGHTALL) {
-            int count = ListView_GetItemCount(right);
-            for (int i = 0; i < count; ++i) ListView_SetCheckState(right, i, TRUE);
-            return TRUE;
-        }
-        if (id == IDC_MISS_RIGHTNONE) {
-            int count = ListView_GetItemCount(right);
-            for (int i = 0; i < count; ++i) {
+            // 取消全选：右侧 + 左侧都取消选中 + 取消勾选
+            int rc = ListView_GetItemCount(right);
+            for (int i = 0; i < rc; ++i) {
                 ListView_SetItemState(right, i, 0, LVIS_SELECTED);
                 ListView_SetCheckState(right, i, FALSE);
+            }
+            int lc = ListView_GetItemCount(left);
+            for (int i = 0; i < lc; ++i) {
+                ListView_SetItemState(left, i, 0, LVIS_SELECTED);
+                ListView_SetCheckState(left, i, FALSE);
             }
             return TRUE;
         }
