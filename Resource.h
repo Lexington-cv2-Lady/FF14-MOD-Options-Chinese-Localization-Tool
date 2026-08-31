@@ -54,6 +54,14 @@
 #define IDC_AI_OK				1245
 #define IDC_AI_CANCEL			1246
 
+// ---- Extract dialog (v2.3.4) ----
+#define IDD_EXTRACT_DIALOG		1260
+#define IDC_EXTRACT_LEFTLIST	1261
+#define IDC_EXTRACT_RIGHTLIST	1262
+#define IDC_EXTRACT_ALL			1263
+#define IDC_EXTRACT_BTN			1264
+#define IDC_EXTRACT_CLOSE		1265
+
 // ---- Main window controls ----
 #define IDC_EDIT_PENUMBRA		1300
 #define IDC_BTN_BROWSE_PENUMBRA	1301

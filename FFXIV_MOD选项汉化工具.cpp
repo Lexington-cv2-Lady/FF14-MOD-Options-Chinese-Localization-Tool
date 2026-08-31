@@ -26,6 +26,17 @@ HFONT g_hFont = nullptr;        // 主界面自定义字体（随字体大小重
 std::atomic<bool> g_busy{ false };
 std::atomic<bool> g_cancel{ false };
 volatile HINTERNET g_hActiveReq = nullptr; // 当前活动 HTTP 请求句柄（取消时立即打断，无需等超时）
+static std::vector<fs::path> g_extractFiles; // 提取英文对话框选中的文件集合（空 = 全量提取）
+
+// 提取英文对话框控件 ID（rc 中直接使用字面量数字，防止 IDE 资源编辑器回滚 Resource.h 宏）
+#ifndef IDD_EXTRACT_DIALOG
+#define IDD_EXTRACT_DIALOG 1260
+#define IDC_EXTRACT_LEFTLIST 1261
+#define IDC_EXTRACT_RIGHTLIST 1262
+#define IDC_EXTRACT_ALL 1263
+#define IDC_EXTRACT_BTN 1264
+#define IDC_EXTRACT_CLOSE 1265
+#endif
 std::mutex g_logMutex;
 std::vector<std::wstring> g_logBuffer; // 日志缓冲：改字号后重放，恢复各行的标签颜色
 std::vector<std::wstring> g_logTopBuffer; // 日志置顶区：写入日志.json 时始终置于文件最前（如命中词条汇总）
@@ -86,6 +97,7 @@ INT_PTR CALLBACK MainDlgProc(HWND, UINT, WPARAM, LPARAM);
 INT_PTR CALLBACK WikiCatsDlgProc(HWND, UINT, WPARAM, LPARAM);
 INT_PTR CALLBACK ImportTransDlgProc(HWND, UINT, WPARAM, LPARAM);
 INT_PTR CALLBACK RestoreDlgProc(HWND, UINT, WPARAM, LPARAM);
+INT_PTR CALLBACK ExtractDlgProc(HWND, UINT, WPARAM, LPARAM);
 INT_PTR CALLBACK About(HWND, UINT, WPARAM, LPARAM);
 
 void Log(const std::string& utf8Msg);
@@ -100,7 +112,7 @@ bool SelectDirDialog(HWND parent, std::wstring& out);
 void OpenExplorer(HWND parent, const std::wstring& path);
 void OpenDictJson(HWND parent, const char* fname);
 std::vector<fs::path> ScanGroupFiles(const fs::path& root);
-bool ExtractEnglish();
+bool ExtractEnglish(const std::vector<fs::path>* onlyFiles = nullptr);
 bool CheckTranslation();
 bool ApplyTranslation();
 static void FillAIPresetCombos(HWND hDlg);
@@ -696,7 +708,7 @@ bool ExtractZip(const fs::path& zipFile, const fs::path& destDir)
 // ------------------------------------------------------------------
 // 提取英文
 // ------------------------------------------------------------------
-bool ExtractEnglish()
+bool ExtractEnglish(const std::vector<fs::path>* onlyFiles)
 {
     try {
     if (g_cfg.penumbraDir.empty()) { Log("[错误] 未设置 Penumbra 目录"); return false; }
@@ -723,7 +735,13 @@ bool ExtractEnglish()
     struct ModEntry { fs::path folder; std::vector<fs::path> files; bool hasPending = false; };
     std::map<std::wstring, ModEntry> modMap; // key: 模组文件夹名
 
-    std::vector<fs::path> allFiles = ScanGroupFiles(penRoot);
+    // v2.3.4：支持只提取对话框选中的文件集合；空则全量扫描
+    std::vector<fs::path> allFiles;
+    if (onlyFiles && !onlyFiles->empty()) {
+        allFiles = *onlyFiles;
+    } else {
+        allFiles = ScanGroupFiles(penRoot);
+    }
     for (auto& p : allFiles) {
         auto parent = p.parent_path();
         std::wstring key = parent.filename().wstring();
@@ -2830,7 +2848,7 @@ void RunExtractThread()
 {
     try {
         g_busy = true;
-        bool ok = ExtractEnglish();
+        bool ok = ExtractEnglish(g_extractFiles.empty() ? nullptr : &g_extractFiles);
         Log("提取流程结束");
         g_busy = false;
     }
@@ -3469,7 +3487,7 @@ static bool AITranslateFile(const fs::path& inFile)
     // 分批调用 AI（第一轮 + 最多 2 轮自动补翻，减少 AI 漏翻）
     int batch = g_cfg.aiBatchSize;
     if (batch < 1) batch = 1;
-    if (batch > 100) batch = 100;
+    if (batch > 1000) batch = 1000; // v2.3.4：上限从 100 提高到 1000
     int total = (int)pending.size();
     int batches = (total + batch - 1) / batch;
     int okCount = 0;
@@ -4553,6 +4571,175 @@ INT_PTR CALLBACK RestoreDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM l
 }
 
 // ------------------------------------------------------------------
+// 提取英文对话框（v2.3.4）：左侧模组文件夹（勾选），右侧 group_*.json（多选）
+// ------------------------------------------------------------------
+INT_PTR CALLBACK ExtractDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
+{
+    switch (message) {
+    case WM_INITDIALOG: {
+        HWND left = GetDlgItem(hDlg, IDC_EXTRACT_LEFTLIST);
+        ListView_SetExtendedListViewStyle(left, LVS_EX_CHECKBOXES | LVS_EX_FULLROWSELECT);
+        LVCOLUMN col = {};
+        col.mask = LVCF_WIDTH;
+        col.cx = 1000;
+        ListView_InsertColumn(left, 0, &col);
+
+        // 填充左侧：所有含 group_*.json 的模组文件夹（按文件统计排序，多的在前方便优先）
+        std::map<std::wstring, int> modFiles; // 文件夹名 -> group_*.json 数量
+        try {
+            if (!g_cfg.penumbraDir.empty()) {
+                fs::path penRoot = fs::u8path(g_cfg.penumbraDir);
+                std::error_code ec;
+                if (fs::exists(penRoot, ec) && !ec) {
+                    for (auto& f : ScanGroupFiles(penRoot))
+                        modFiles[f.parent_path().filename().wstring()]++;
+                }
+            }
+        }
+        catch (...) {}
+        std::vector<std::pair<std::wstring, int>> mods(modFiles.begin(), modFiles.end());
+        std::sort(mods.begin(), mods.end(),
+            [](const auto& a, const auto& b) { return a.second > b.second; });
+        for (auto& m : mods) {
+            LVITEM item = {};
+            item.mask = LVIF_TEXT;
+            item.iItem = INT_MAX;
+            std::wstring label = m.first + L"  (" + std::to_wstring(m.second) + L")";
+            item.pszText = (LPWSTR)label.c_str();
+            ListView_InsertItem(left, &item);
+        }
+        if (mods.empty()) {
+            MessageBoxW(hDlg, L"未找到任何 group_*.json 文件", L"提示", MB_OK);
+            EndDialog(hDlg, IDCANCEL);
+        }
+        return TRUE;
+    }
+    case WM_NOTIFY: {
+        NMHDR* nm = (NMHDR*)lParam;
+        if (nm->idFrom == IDC_EXTRACT_LEFTLIST && nm->code == LVN_ITEMCHANGED) {
+            NMLISTVIEW* nmlv = (NMLISTVIEW*)lParam;
+            if ((nmlv->uChanged & LVIF_STATE)
+                && ((nmlv->uNewState & LVIS_SELECTED) != (nmlv->uOldState & LVIS_SELECTED))) {
+                HWND left = GetDlgItem(hDlg, IDC_EXTRACT_LEFTLIST);
+                // 高亮选中 ↔ 勾选同步（与恢复备份一致）
+                if (nmlv->uNewState & LVIS_SELECTED) {
+                    ListView_SetCheckState(left, nmlv->iItem, TRUE);
+                } else if (nmlv->uOldState & LVIS_SELECTED) {
+                    ListView_SetCheckState(left, nmlv->iItem, FALSE);
+                }
+                // 刷新右侧：当前选中文件夹的 group_*.json
+                HWND right = GetDlgItem(hDlg, IDC_EXTRACT_RIGHTLIST);
+                SendMessageW(right, LB_RESETCONTENT, 0, 0);
+                int sel = ListView_GetNextItem(left, -1, LVNI_SELECTED);
+                if (sel < 0) return TRUE;
+                wchar_t label[1100] = {};
+                ListView_GetItemText(left, sel, 0, label, 1100);
+                // 去掉行尾的 "  (N)" 统计后缀，还原真实文件夹名
+                std::wstring name = label;
+                size_t pos = name.rfind(L"  (");
+                if (pos != std::wstring::npos) name = name.substr(0, pos);
+                fs::path modDir = fs::u8path(g_cfg.penumbraDir) / name;
+                try {
+                    std::error_code ec;
+                    if (fs::exists(modDir, ec) && !ec) {
+                        for (auto& fe : fs::directory_iterator(modDir, fs::directory_options::skip_permission_denied, ec)) {
+                            if (ec) { ec.clear(); continue; }
+                            if (!fe.is_regular_file(ec) || ec) continue;
+                            std::wstring fn = fe.path().filename().wstring();
+                            if (fn.rfind(L"group_", 0) == 0 && fe.path().extension() == L".json")
+                                SendMessageW(right, LB_ADDSTRING, 0, (LPARAM)fn.c_str());
+                        }
+                    }
+                }
+                catch (...) {}
+            }
+        }
+        return TRUE;
+    }
+    case WM_COMMAND: {
+        int id = LOWORD(wParam);
+        if (id == IDC_EXTRACT_CLOSE || id == IDCANCEL) {
+            EndDialog(hDlg, IDCANCEL);
+            return TRUE;
+        }
+        if (id == IDC_EXTRACT_ALL) {
+            HWND left = GetDlgItem(hDlg, IDC_EXTRACT_LEFTLIST);
+            int count = ListView_GetItemCount(left);
+            for (int i = 0; i < count; ++i) ListView_SetCheckState(left, i, TRUE);
+            return TRUE;
+        }
+        if (id == IDC_EXTRACT_BTN) {
+            HWND left = GetDlgItem(hDlg, IDC_EXTRACT_LEFTLIST);
+            HWND right = GetDlgItem(hDlg, IDC_EXTRACT_RIGHTLIST);
+
+            // 收集左侧勾选的文件夹（未勾选时退回高亮选中项）
+            std::vector<int> checked;
+            int count = ListView_GetItemCount(left);
+            for (int i = 0; i < count; ++i)
+                if (ListView_GetCheckState(left, i)) checked.push_back(i);
+            if (checked.empty()) {
+                int s = -1;
+                while ((s = ListView_GetNextItem(left, s, LVNI_SELECTED)) != -1) checked.push_back(s);
+            }
+            if (checked.empty()) { MessageBoxW(hDlg, L"请勾选要提取的模组文件夹", L"提示", MB_OK); return TRUE; }
+
+            // 右侧当前选中的文件（仅对当前高亮文件夹生效；未选则取该文件夹全部）
+            int curSel = ListView_GetNextItem(left, -1, LVNI_SELECTED);
+            std::vector<int> selR;
+            int rcount = (int)SendMessageW(right, LB_GETCOUNT, 0, 0);
+            for (int ri = 0; ri < rcount; ++ri)
+                if (SendMessageW(right, LB_GETSEL, ri, 0)) selR.push_back(ri);
+
+            wchar_t curLabel[1100] = {};
+            std::wstring curName;
+            if (curSel >= 0) {
+                ListView_GetItemText(left, curSel, 0, curLabel, 1100);
+                curName = curLabel;
+                size_t pos = curName.rfind(L"  (");
+                if (pos != std::wstring::npos) curName = curName.substr(0, pos);
+            }
+
+            fs::path penRoot = fs::u8path(g_cfg.penumbraDir);
+            std::vector<fs::path> files;
+            for (int idx : checked) {
+                wchar_t label[1100] = {};
+                ListView_GetItemText(left, idx, 0, label, 1100);
+                std::wstring name = label;
+                size_t pos = name.rfind(L"  (");
+                if (pos != std::wstring::npos) name = name.substr(0, pos);
+                fs::path modDir = penRoot / name;
+                // 当前高亮文件夹且右侧选中了文件：只取选中文件；否则取文件夹全部 group_*.json
+                if (idx == curSel && !selR.empty()) {
+                    for (int ri : selR) {
+                        wchar_t fn[1024];
+                        SendMessageW(right, LB_GETTEXT, ri, (LPARAM)fn);
+                        files.push_back(modDir / fn);
+                    }
+                } else {
+                    std::error_code ec;
+                    if (fs::exists(modDir, ec) && !ec) {
+                        for (auto& fe : fs::directory_iterator(modDir, fs::directory_options::skip_permission_denied, ec)) {
+                            if (ec) { ec.clear(); continue; }
+                            if (!fe.is_regular_file(ec) || ec) continue;
+                            std::wstring fn = fe.path().filename().wstring();
+                            if (fn.rfind(L"group_", 0) == 0 && fe.path().extension() == L".json")
+                                files.push_back(fe.path());
+                        }
+                    }
+                }
+            }
+            if (files.empty()) { MessageBoxW(hDlg, L"选中的模组文件夹没有 group_*.json 文件", L"提示", MB_OK); return TRUE; }
+            g_extractFiles = files;
+            EndDialog(hDlg, IDOK);
+            return TRUE;
+        }
+        break;
+    }
+    }
+    return FALSE;
+}
+
+// ------------------------------------------------------------------
 // 单词黑名单.json（词典目录）读写
 // ------------------------------------------------------------------
 // 从词典目录下的 单词黑名单.json 读取黑名单词（每行一个，或用逗号间隔），合并 defaults 后返回
@@ -5137,7 +5324,7 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
         case IDC_AI_BATCH: {
             if (wmEvent == EN_CHANGE) {
                 int b = _wtoi(GetEditText(hDlg, IDC_AI_BATCH).c_str());
-                if (b >= 1 && b <= 100) g_cfg.aiBatchSize = b;
+                if (b >= 1 && b <= 1000) g_cfg.aiBatchSize = b; // v2.3.4：上限提高到 1000
             }
             break;
         }
@@ -5179,6 +5366,10 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
         // 动作
         case IDC_BTN_EXTRACT: {
             if (g_busy) break;
+            // v2.3.4：先弹二级窗口选择要提取的模组文件夹 / group_*.json 文件
+            g_extractFiles.clear();
+            INT_PTR extractRet = DialogBoxW(hInst, MAKEINTRESOURCEW(IDD_EXTRACT_DIALOG), hDlg, ExtractDlgProc);
+            if (extractRet != IDOK) break; // 未确认选择：不执行提取
             SaveConfig();
             g_busy = true;
             g_cancel = false;
