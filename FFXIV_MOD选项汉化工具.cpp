@@ -43,6 +43,12 @@ static fs::path g_aiTargetFile; // 「翻译缺失」生成的 _未翻译.json�
 #define IDC_EXTRACT_BTN 1264
 #define IDC_EXTRACT_CLOSE 1265
 #define IDC_EXTRACT_NONE 1266
+#define IDC_EXTRACT_RIGHTALL 1267
+#define IDC_EXTRACT_RIGHTNONE 1268
+#endif
+#ifndef IDC_RESTORE_RIGHTALL
+#define IDC_RESTORE_RIGHTALL 1207
+#define IDC_RESTORE_RIGHTNONE 1208
 #endif
 #ifndef IDD_MISSING_DIALOG
 #define IDD_MISSING_DIALOG 1270
@@ -4447,11 +4453,14 @@ INT_PTR CALLBACK RestoreDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM l
     case WM_INITDIALOG: {
         // 初始化左侧 ListView：单选高亮 + 复选框
         HWND left = GetDlgItem(hDlg, IDC_RESTORE_LEFTLIST);
+        HWND right = GetDlgItem(hDlg, IDC_RESTORE_RIGHTLIST);
         ListView_SetExtendedListViewStyle(left, LVS_EX_CHECKBOXES | LVS_EX_FULLROWSELECT);
+        ListView_SetExtendedListViewStyle(right, LVS_EX_CHECKBOXES | LVS_EX_FULLROWSELECT);
         LVCOLUMN col = {};
         col.mask = LVCF_WIDTH;
         col.cx = 1000; // 留足宽度，避免长文件名被截断
         ListView_InsertColumn(left, 0, &col);
+        ListView_InsertColumn(right, 0, &col);
 
         // 填充左侧：所有模组文件夹
         std::vector<std::wstring> mods;
@@ -4479,23 +4488,33 @@ INT_PTR CALLBACK RestoreDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM l
         return TRUE;
     }
     case WM_NOTIFY: {
-        // 左侧当前选中项变化时，刷新右侧备份列表
         NMHDR* nm = (NMHDR*)lParam;
+        // 左/右侧：单击行 = 勾选/取消勾选切换（toggle）；双击行 = 确认勾选。复选框区由原生处理
+        if ((nm->idFrom == IDC_RESTORE_LEFTLIST || nm->idFrom == IDC_RESTORE_RIGHTLIST)
+            && (nm->code == NM_CLICK || nm->code == NM_DBLCLK)) {
+            HWND hList = GetDlgItem(hDlg, (int)nm->idFrom);
+            LPNMITEMACTIVATE pnm = (LPNMITEMACTIVATE)lParam;
+            LVHITTESTINFO hti = {};
+            hti.pt = pnm->ptAction;
+            ListView_HitTest(hList, &hti);
+            if (hti.iItem >= 0 && !(hti.flags & LVHT_ONITEMSTATEICON)) {
+                if (nm->code == NM_DBLCLK) {
+                    ListView_SetCheckState(hList, hti.iItem, TRUE);
+                } else {
+                    ListView_SetCheckState(hList, hti.iItem, !ListView_GetCheckState(hList, hti.iItem));
+                }
+            }
+            return TRUE;
+        }
+        // 左侧当前选中项变化时，刷新右侧备份列表
         if (nm->idFrom == IDC_RESTORE_LEFTLIST && nm->code == LVN_ITEMCHANGED) {
             NMLISTVIEW* nmlv = (NMLISTVIEW*)lParam;
             if ((nmlv->uChanged & LVIF_STATE)
                 && ((nmlv->uNewState & LVIS_SELECTED) != (nmlv->uOldState & LVIS_SELECTED))) {
                 HWND left = GetDlgItem(hDlg, IDC_RESTORE_LEFTLIST);
-                // 高亮选中（点击 / Ctrl+A 全选）时自动同步勾选复选框，让「勾选」与「选中/全选」等效；
-                // 取消选中时同步取消勾选
-                if (nmlv->uNewState & LVIS_SELECTED) {
-                    ListView_SetCheckState(left, nmlv->iItem, TRUE);
-                } else if (nmlv->uOldState & LVIS_SELECTED) {
-                    ListView_SetCheckState(left, nmlv->iItem, FALSE);
-                }
                 HWND right = GetDlgItem(hDlg, IDC_RESTORE_RIGHTLIST);
                 int sel = ListView_GetNextItem(left, -1, LVNI_SELECTED);
-                SendMessageW(right, LB_RESETCONTENT, 0, 0);
+                ListView_DeleteAllItems(right);
                 if (sel < 0) return TRUE;
                 wchar_t name[1024] = {};
                 ListView_GetItemText(left, sel, 0, name, 1024);
@@ -4509,7 +4528,13 @@ INT_PTR CALLBACK RestoreDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM l
                             if (fe.is_regular_file(ec) && !ec && fe.path().extension() == L".zip")
                                 zips.push_back(fe.path().filename().wstring());
                         }
-                        for (auto& z : zips) SendMessageW(right, LB_ADDSTRING, 0, (LPARAM)z.c_str());
+                        for (auto& z : zips) {
+                            LVITEM item = {};
+                            item.mask = LVIF_TEXT;
+                            item.iItem = INT_MAX;
+                            item.pszText = (LPWSTR)z.c_str();
+                            ListView_InsertItem(right, &item);
+                        }
                     }
                 }
                 catch (...) {}
@@ -4540,6 +4565,21 @@ INT_PTR CALLBACK RestoreDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM l
             }
             return TRUE;
         }
+        if (id == IDC_RESTORE_RIGHTALL) {
+            HWND right = GetDlgItem(hDlg, IDC_RESTORE_RIGHTLIST);
+            int count = ListView_GetItemCount(right);
+            for (int i = 0; i < count; ++i) ListView_SetCheckState(right, i, TRUE);
+            return TRUE;
+        }
+        if (id == IDC_RESTORE_RIGHTNONE) {
+            HWND right = GetDlgItem(hDlg, IDC_RESTORE_RIGHTLIST);
+            int count = ListView_GetItemCount(right);
+            for (int i = 0; i < count; ++i) {
+                ListView_SetItemState(right, i, 0, LVIS_SELECTED);
+                ListView_SetCheckState(right, i, FALSE);
+            }
+            return TRUE;
+        }
         if (id == IDC_RESTORE_BTN) {
             HWND left = GetDlgItem(hDlg, IDC_RESTORE_LEFTLIST);
 
@@ -4566,11 +4606,11 @@ INT_PTR CALLBACK RestoreDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM l
                 // 该文件夹勾选的具体备份
                 std::vector<fs::path> selectedZips;
                 HWND rightList = GetDlgItem(hDlg, IDC_RESTORE_RIGHTLIST);
-                int rcount = (int)SendMessageW(rightList, LB_GETCOUNT, 0, 0);
+                int rcount = ListView_GetItemCount(rightList);
                 for (int ri = 0; ri < rcount; ++ri) {
-                    if (SendMessageW(rightList, LB_GETSEL, ri, 0)) {
-                        wchar_t zname[1024];
-                        SendMessageW(rightList, LB_GETTEXT, ri, (LPARAM)zname);
+                    if (ListView_GetCheckState(rightList, ri)) {
+                        wchar_t zname[1024] = {};
+                        ListView_GetItemText(rightList, ri, 0, zname, 1024);
                         selectedZips.push_back(modDir / zname);
                     }
                 }
@@ -4620,11 +4660,14 @@ INT_PTR CALLBACK ExtractDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM l
     switch (message) {
     case WM_INITDIALOG: {
         HWND left = GetDlgItem(hDlg, IDC_EXTRACT_LEFTLIST);
+        HWND right = GetDlgItem(hDlg, IDC_EXTRACT_RIGHTLIST);
         ListView_SetExtendedListViewStyle(left, LVS_EX_CHECKBOXES | LVS_EX_FULLROWSELECT);
+        ListView_SetExtendedListViewStyle(right, LVS_EX_CHECKBOXES | LVS_EX_FULLROWSELECT);
         LVCOLUMN col = {};
         col.mask = LVCF_WIDTH;
         col.cx = 1000;
         ListView_InsertColumn(left, 0, &col);
+        ListView_InsertColumn(right, 0, &col);
 
         // 填充左侧：所有含 group_*.json 的模组文件夹（按文件统计排序，多的在前方便优先）
         std::map<std::wstring, int> modFiles; // 文件夹名 -> group_*.json 数量
@@ -4658,20 +4701,31 @@ INT_PTR CALLBACK ExtractDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM l
     }
     case WM_NOTIFY: {
         NMHDR* nm = (NMHDR*)lParam;
+        // 左/右侧：单击行 = 勾选/取消勾选切换（toggle）；双击行 = 确认勾选。复选框区由原生处理
+        if ((nm->idFrom == IDC_EXTRACT_LEFTLIST || nm->idFrom == IDC_EXTRACT_RIGHTLIST)
+            && (nm->code == NM_CLICK || nm->code == NM_DBLCLK)) {
+            HWND hList = GetDlgItem(hDlg, (int)nm->idFrom);
+            LPNMITEMACTIVATE pnm = (LPNMITEMACTIVATE)lParam;
+            LVHITTESTINFO hti = {};
+            hti.pt = pnm->ptAction;
+            ListView_HitTest(hList, &hti);
+            if (hti.iItem >= 0 && !(hti.flags & LVHT_ONITEMSTATEICON)) {
+                if (nm->code == NM_DBLCLK) {
+                    ListView_SetCheckState(hList, hti.iItem, TRUE);
+                } else {
+                    ListView_SetCheckState(hList, hti.iItem, !ListView_GetCheckState(hList, hti.iItem));
+                }
+            }
+            return TRUE;
+        }
+        // 左侧当前选中项变化时，刷新右侧 group_*.json 列表
         if (nm->idFrom == IDC_EXTRACT_LEFTLIST && nm->code == LVN_ITEMCHANGED) {
             NMLISTVIEW* nmlv = (NMLISTVIEW*)lParam;
             if ((nmlv->uChanged & LVIF_STATE)
                 && ((nmlv->uNewState & LVIS_SELECTED) != (nmlv->uOldState & LVIS_SELECTED))) {
                 HWND left = GetDlgItem(hDlg, IDC_EXTRACT_LEFTLIST);
-                // 高亮选中 ↔ 勾选同步（与恢复备份一致）
-                if (nmlv->uNewState & LVIS_SELECTED) {
-                    ListView_SetCheckState(left, nmlv->iItem, TRUE);
-                } else if (nmlv->uOldState & LVIS_SELECTED) {
-                    ListView_SetCheckState(left, nmlv->iItem, FALSE);
-                }
-                // 刷新右侧：当前选中文件夹的 group_*.json
                 HWND right = GetDlgItem(hDlg, IDC_EXTRACT_RIGHTLIST);
-                SendMessageW(right, LB_RESETCONTENT, 0, 0);
+                ListView_DeleteAllItems(right);
                 int sel = ListView_GetNextItem(left, -1, LVNI_SELECTED);
                 if (sel < 0) return TRUE;
                 wchar_t label[1100] = {};
@@ -4688,8 +4742,13 @@ INT_PTR CALLBACK ExtractDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM l
                             if (ec) { ec.clear(); continue; }
                             if (!fe.is_regular_file(ec) || ec) continue;
                             std::wstring fn = fe.path().filename().wstring();
-                            if (fn.rfind(L"group_", 0) == 0 && fe.path().extension() == L".json")
-                                SendMessageW(right, LB_ADDSTRING, 0, (LPARAM)fn.c_str());
+                            if (fn.rfind(L"group_", 0) == 0 && fe.path().extension() == L".json") {
+                                LVITEM item = {};
+                                item.mask = LVIF_TEXT;
+                                item.iItem = INT_MAX;
+                                item.pszText = (LPWSTR)fn.c_str();
+                                ListView_InsertItem(right, &item);
+                            }
                         }
                     }
                 }
@@ -4720,6 +4779,21 @@ INT_PTR CALLBACK ExtractDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM l
             }
             return TRUE;
         }
+        if (id == IDC_EXTRACT_RIGHTALL) {
+            HWND right = GetDlgItem(hDlg, IDC_EXTRACT_RIGHTLIST);
+            int count = ListView_GetItemCount(right);
+            for (int i = 0; i < count; ++i) ListView_SetCheckState(right, i, TRUE);
+            return TRUE;
+        }
+        if (id == IDC_EXTRACT_RIGHTNONE) {
+            HWND right = GetDlgItem(hDlg, IDC_EXTRACT_RIGHTLIST);
+            int count = ListView_GetItemCount(right);
+            for (int i = 0; i < count; ++i) {
+                ListView_SetItemState(right, i, 0, LVIS_SELECTED);
+                ListView_SetCheckState(right, i, FALSE);
+            }
+            return TRUE;
+        }
         if (id == IDC_EXTRACT_BTN) {
             HWND left = GetDlgItem(hDlg, IDC_EXTRACT_LEFTLIST);
             HWND right = GetDlgItem(hDlg, IDC_EXTRACT_RIGHTLIST);
@@ -4735,12 +4809,12 @@ INT_PTR CALLBACK ExtractDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM l
             }
             if (checked.empty()) { MessageBoxW(hDlg, L"请勾选要提取的模组文件夹", L"提示", MB_OK); return TRUE; }
 
-            // 右侧当前选中的文件（仅对当前高亮文件夹生效；未选则取该文件夹全部）
+            // 右侧当前勾选的文件（仅对当前高亮文件夹生效；未勾选则取该文件夹全部）
             int curSel = ListView_GetNextItem(left, -1, LVNI_SELECTED);
             std::vector<int> selR;
-            int rcount = (int)SendMessageW(right, LB_GETCOUNT, 0, 0);
+            int rcount = ListView_GetItemCount(right);
             for (int ri = 0; ri < rcount; ++ri)
-                if (SendMessageW(right, LB_GETSEL, ri, 0)) selR.push_back(ri);
+                if (ListView_GetCheckState(right, ri)) selR.push_back(ri);
 
             wchar_t curLabel[1100] = {};
             std::wstring curName;
@@ -4763,8 +4837,8 @@ INT_PTR CALLBACK ExtractDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM l
                 // 当前高亮文件夹且右侧选中了文件：只取选中文件；否则取文件夹全部 group_*.json
                 if (idx == curSel && !selR.empty()) {
                     for (int ri : selR) {
-                        wchar_t fn[1024];
-                        SendMessageW(right, LB_GETTEXT, ri, (LPARAM)fn);
+                        wchar_t fn[1024] = {};
+                        ListView_GetItemText(right, ri, 0, fn, 1024);
                         files.push_back(modDir / fn);
                     }
                 } else {
@@ -4885,7 +4959,7 @@ static bool CollectMissingEntries()
 
 // ------------------------------------------------------------------
 // 翻译缺失对话框（v2.3.5）：左侧模组文件夹，右侧缺失条目，勾选后「翻译选中」
-// 交互与恢复备份/提取英文统一：点击即勾选、拉框/Shift/Ctrl 多选、全选、取消全选
+// 交互与恢复备份/提取英文统一：单击行 = 勾选/取消勾选切换、双击行 = 确认勾选、全选、取消全选
 // ------------------------------------------------------------------
 INT_PTR CALLBACK MissingDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
 {
@@ -4922,17 +4996,29 @@ INT_PTR CALLBACK MissingDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM l
     }
     case WM_NOTIFY: {
         NMHDR* nm = (NMHDR*)lParam;
+        // 左/右侧：单击行 = 勾选/取消勾选切换（toggle）；双击行 = 确认勾选。复选框区由原生处理
+        if ((nm->idFrom == IDC_MISS_LEFTLIST || nm->idFrom == IDC_MISS_RIGHTLIST)
+            && (nm->code == NM_CLICK || nm->code == NM_DBLCLK)) {
+            HWND hList = GetDlgItem(hDlg, (int)nm->idFrom);
+            LPNMITEMACTIVATE pnm = (LPNMITEMACTIVATE)lParam;
+            LVHITTESTINFO hti = {};
+            hti.pt = pnm->ptAction;
+            ListView_HitTest(hList, &hti);
+            if (hti.iItem >= 0 && !(hti.flags & LVHT_ONITEMSTATEICON)) {
+                if (nm->code == NM_DBLCLK) {
+                    ListView_SetCheckState(hList, hti.iItem, TRUE);
+                } else {
+                    ListView_SetCheckState(hList, hti.iItem, !ListView_GetCheckState(hList, hti.iItem));
+                }
+            }
+            return TRUE;
+        }
+        // 左侧当前选中项变化时，刷新右侧缺失条目列表
         if (nm->idFrom == IDC_MISS_LEFTLIST && nm->code == LVN_ITEMCHANGED) {
             NMLISTVIEW* nmlv = (NMLISTVIEW*)lParam;
             if ((nmlv->uChanged & LVIF_STATE)
                 && ((nmlv->uNewState & LVIS_SELECTED) != (nmlv->uOldState & LVIS_SELECTED))) {
                 HWND left = GetDlgItem(hDlg, IDC_MISS_LEFTLIST);
-                // 高亮选中 ↔ 勾选同步（与恢复备份/提取英文一致）
-                if (nmlv->uNewState & LVIS_SELECTED) {
-                    ListView_SetCheckState(left, nmlv->iItem, TRUE);
-                } else if (nmlv->uOldState & LVIS_SELECTED) {
-                    ListView_SetCheckState(left, nmlv->iItem, FALSE);
-                }
                 // 刷新右侧：当前选中文件夹的缺失条目
                 HWND right = GetDlgItem(hDlg, IDC_MISS_RIGHTLIST);
                 ListView_DeleteAllItems(right);
@@ -5197,14 +5283,20 @@ INT_PTR CALLBACK WikiCatsDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM 
         return TRUE;
     }
     case WM_NOTIFY: {
-        // 点击/选中行时自动勾选复选框，让「勾选」与「选中/全选」等效（与恢复备份一致）
+        // 单击行 = 勾选/取消勾选切换（toggle）；双击行 = 确认勾选。复选框区由原生处理
         NMHDR* nm = (NMHDR*)lParam;
-        if (nm->idFrom == IDC_WIKI_CATS_LIST && nm->code == LVN_ITEMCHANGED) {
-            NMLISTVIEW* nmlv = (NMLISTVIEW*)lParam;
-            if ((nmlv->uChanged & LVIF_STATE)
-                && ((nmlv->uNewState & LVIS_SELECTED) != (nmlv->uOldState & LVIS_SELECTED))
-                && (nmlv->uNewState & LVIS_SELECTED))
-                ListView_SetCheckState(hList, nmlv->iItem, TRUE);
+        if (nm->idFrom == IDC_WIKI_CATS_LIST && (nm->code == NM_CLICK || nm->code == NM_DBLCLK)) {
+            LPNMITEMACTIVATE pnm = (LPNMITEMACTIVATE)lParam;
+            LVHITTESTINFO hti = {};
+            hti.pt = pnm->ptAction;
+            ListView_HitTest(hList, &hti);
+            if (hti.iItem >= 0 && !(hti.flags & LVHT_ONITEMSTATEICON)) {
+                if (nm->code == NM_DBLCLK) {
+                    ListView_SetCheckState(hList, hti.iItem, TRUE);
+                } else {
+                    ListView_SetCheckState(hList, hti.iItem, !ListView_GetCheckState(hList, hti.iItem));
+                }
+            }
             return TRUE;
         }
         break;

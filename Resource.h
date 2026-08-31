@@ -24,6 +24,8 @@
 #define IDC_RESTORE_CLOSE		1204
 #define IDC_RESTORE_ALL			1205
 #define IDC_RESTORE_NONE		1206
+#define IDC_RESTORE_RIGHTALL	1207
+#define IDC_RESTORE_RIGHTNONE	1208
 
 // ---- Blacklist dialog ----
 #define IDD_BLACKLIST_DIALOG	1210
@@ -63,6 +65,8 @@
 #define IDC_EXTRACT_BTN			1264
 #define IDC_EXTRACT_CLOSE		1265
 #define IDC_EXTRACT_NONE		1266
+#define IDC_EXTRACT_RIGHTALL	1267
+#define IDC_EXTRACT_RIGHTNONE	1268
 
 // ---- Missing-translate dialog (v2.3.5) ----
 #define IDD_MISSING_DIALOG		1270
