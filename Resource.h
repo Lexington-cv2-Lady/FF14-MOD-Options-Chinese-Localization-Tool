@@ -37,6 +37,8 @@
 #define IDC_IMPORT_AUTOFILL		1232
 #define IDC_IMPORT_OK			1233
 #define IDC_IMPORT_CANCEL		1234
+#define IDC_IMPORT_ALL			1235
+#define IDC_IMPORT_NONE			1236
 
 // ---- Wiki category dialog ----
 #define IDD_WIKI_CATS_DIALOG	1220

@@ -4275,10 +4275,26 @@ static void BuildAISelectList(HWND hList)
     }
 }
 
+// ------------------------------------------------------------------
+// 模态窗口相对主窗口居中显示
+// ------------------------------------------------------------------
+static void CenterDialogOnOwner(HWND hDlg, HWND hOwner)
+{
+    if (!hOwner) hOwner = GetParent(hDlg);
+    RECT dr = {}, orr = {};
+    GetWindowRect(hDlg, &dr);
+    GetWindowRect(hOwner, &orr);
+    int w = dr.right - dr.left, h = dr.bottom - dr.top;
+    int x = orr.left + ((orr.right - orr.left) - w) / 2;
+    int y = orr.top + ((orr.bottom - orr.top) - h) / 2;
+    SetWindowPos(hDlg, nullptr, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+}
+
 static INT_PTR CALLBACK SelectAICfgDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
 {
     switch (message) {
     case WM_INITDIALOG: {
+        CenterDialogOnOwner(hDlg, GetParent(hDlg));
         g_aiSelResult = -1;
         HWND hList = GetDlgItem(hDlg, IDC_AI_SELECT_LIST);
         if (!hList) return TRUE;
@@ -4443,6 +4459,7 @@ INT_PTR CALLBACK RestoreDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM l
 {
     switch (message) {
     case WM_INITDIALOG: {
+        CenterDialogOnOwner(hDlg, GetParent(hDlg));
         // 初始化左侧 ListView：单选高亮 + 复选框
         HWND left = GetDlgItem(hDlg, IDC_RESTORE_LEFTLIST);
         HWND right = GetDlgItem(hDlg, IDC_RESTORE_RIGHTLIST);
@@ -4539,12 +4556,17 @@ INT_PTR CALLBACK RestoreDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM l
             return TRUE;
         }
         if (id == IDC_RESTORE_ALL) {
-            // 全选：左侧所有模组文件夹 + 右侧所有备份包（先全选左侧以刷新右侧，再全选右侧）
+            // 全选：左侧所有模组文件夹 + 右侧所有备份包
             HWND left = GetDlgItem(hDlg, IDC_RESTORE_LEFTLIST);
             HWND right = GetDlgItem(hDlg, IDC_RESTORE_RIGHTLIST);
             int lc = ListView_GetItemCount(left);
             for (int i = 0; i < lc; ++i) ListView_SetCheckState(left, i, TRUE);
+            // 若右侧为空，先选中左侧第一项触发右侧刷新，保证右侧也有内容可全勾
             int rc = ListView_GetItemCount(right);
+            if (rc == 0 && lc > 0) {
+                ListView_SetItemState(left, 0, LVIS_SELECTED, LVIS_SELECTED);
+                rc = ListView_GetItemCount(right);
+            }
             for (int i = 0; i < rc; ++i) ListView_SetCheckState(right, i, TRUE);
             return TRUE;
         }
@@ -4643,6 +4665,7 @@ INT_PTR CALLBACK ExtractDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM l
 {
     switch (message) {
     case WM_INITDIALOG: {
+        CenterDialogOnOwner(hDlg, GetParent(hDlg));
         HWND left = GetDlgItem(hDlg, IDC_EXTRACT_LEFTLIST);
         HWND right = GetDlgItem(hDlg, IDC_EXTRACT_RIGHTLIST);
         ListView_SetExtendedListViewStyle(left, LVS_EX_CHECKBOXES | LVS_EX_FULLROWSELECT);
@@ -4746,12 +4769,17 @@ INT_PTR CALLBACK ExtractDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM l
             return TRUE;
         }
         if (id == IDC_EXTRACT_ALL) {
-            // 全选：左侧所有模组文件夹 + 右侧所有 group_*.json 文件（先全选左侧以刷新右侧，再全选右侧）
+            // 全选：左侧所有模组文件夹 + 右侧所有 group_*.json 文件
             HWND left = GetDlgItem(hDlg, IDC_EXTRACT_LEFTLIST);
             HWND right = GetDlgItem(hDlg, IDC_EXTRACT_RIGHTLIST);
             int lc = ListView_GetItemCount(left);
             for (int i = 0; i < lc; ++i) ListView_SetCheckState(left, i, TRUE);
+            // 若右侧为空，先选中左侧第一项触发右侧刷新，保证右侧也有内容可全勾
             int rc = ListView_GetItemCount(right);
+            if (rc == 0 && lc > 0) {
+                ListView_SetItemState(left, 0, LVIS_SELECTED, LVIS_SELECTED);
+                rc = ListView_GetItemCount(right);
+            }
             for (int i = 0; i < rc; ++i) ListView_SetCheckState(right, i, TRUE);
             return TRUE;
         }
@@ -4942,6 +4970,7 @@ INT_PTR CALLBACK MissingDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM l
 {
     switch (message) {
     case WM_INITDIALOG: {
+        CenterDialogOnOwner(hDlg, GetParent(hDlg));
         HWND left = GetDlgItem(hDlg, IDC_MISS_LEFTLIST);
         HWND right = GetDlgItem(hDlg, IDC_MISS_RIGHTLIST);
         ListView_SetExtendedListViewStyle(left, LVS_EX_CHECKBOXES | LVS_EX_FULLROWSELECT);
@@ -5032,10 +5061,15 @@ INT_PTR CALLBACK MissingDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM l
         HWND left = GetDlgItem(hDlg, IDC_MISS_LEFTLIST);
         HWND right = GetDlgItem(hDlg, IDC_MISS_RIGHTLIST);
         if (id == IDC_MISS_ALL) {
-            // 全选：左侧所有模组文件夹 + 右侧所有缺失条目（先全选左侧以刷新右侧，再全选右侧）
+            // 全选：左侧所有模组文件夹 + 右侧所有缺失条目
             int lc = ListView_GetItemCount(left);
             for (int i = 0; i < lc; ++i) ListView_SetCheckState(left, i, TRUE);
+            // 若右侧为空，先选中左侧第一项触发右侧刷新，保证右侧也有内容可全勾
             int rc = ListView_GetItemCount(right);
+            if (rc == 0 && lc > 0) {
+                ListView_SetItemState(left, 0, LVIS_SELECTED, LVIS_SELECTED);
+                rc = ListView_GetItemCount(right);
+            }
             for (int i = 0; i < rc; ++i) ListView_SetCheckState(right, i, TRUE);
             return TRUE;
         }
@@ -5225,6 +5259,7 @@ INT_PTR CALLBACK WikiCatsDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM 
 
     switch (message) {
     case WM_INITDIALOG: {
+        CenterDialogOnOwner(hDlg, GetParent(hDlg));
         // 与恢复备份一致：复选框 + 整行高亮；单击行即勾选（LVN_ITEMCHANGED 联动），Ctrl+A / 全选按钮可框选全部
         ListView_SetExtendedListViewStyle(hList, LVS_EX_CHECKBOXES | LVS_EX_FULLROWSELECT);
         LVCOLUMN col = {};
@@ -5316,17 +5351,8 @@ INT_PTR CALLBACK WikiCatsDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM 
 
 // ------------------------------------------------------------------
 // 导入翻译对话框：选择文件 + 是否用词典补全空白项
+// 交互与其他二级窗口统一：ListView 勾选框，单击/双击行 = 勾选切换，一组「全选」「取消全选」
 // ------------------------------------------------------------------
-
-// 子类化文件列表：禁止 Ctrl+A 全选（用户要求点中即勾选、无全选，避免误操作批量写入）
-static LRESULT CALLBACK ImportListSubclassProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
-{
-    if (msg == WM_KEYDOWN && wParam == 'A' && (GetKeyState(VK_CONTROL) & 0x8000))
-        return 0;
-    WNDPROC oldProc = (WNDPROC)GetWindowLongPtrW(hWnd, GWLP_USERDATA);
-    return CallWindowProcW(oldProc, hWnd, msg, wParam, lParam);
-}
-
 INT_PTR CALLBACK ImportTransDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
 {
     UNREFERENCED_PARAMETER(lParam);
@@ -5334,6 +5360,7 @@ INT_PTR CALLBACK ImportTransDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPAR
 
     switch (message) {
     case WM_INITDIALOG: {
+        CenterDialogOnOwner(hDlg, GetParent(hDlg));
         if (g_cfg.translationDir.empty()) {
             MessageBoxW(hDlg, L"请先选择翻译目录。", L"提示", MB_OK | MB_ICONINFORMATION);
             EndDialog(hDlg, IDCANCEL);
@@ -5346,28 +5373,54 @@ INT_PTR CALLBACK ImportTransDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPAR
             EndDialog(hDlg, IDCANCEL);
             return TRUE;
         }
+        ListView_SetExtendedListViewStyle(hList, LVS_EX_CHECKBOXES | LVS_EX_FULLROWSELECT);
+        LVCOLUMN col = {};
+        col.mask = LVCF_WIDTH;
+        col.cx = 1000; // 留足宽度，避免长文件名被截断
+        ListView_InsertColumn(hList, 0, &col);
         for (const auto& f : files) {
             std::wstring line = f.path.filename().wstring()
                 + L"    （已填 " + std::to_wstring(f.filled)
                 + L" / 共 " + std::to_wstring(f.total) + L" 条）";
-            int idx = (int)SendMessageW(hList, LB_ADDSTRING, 0, (LPARAM)line.c_str());
-            SendMessageW(hList, LB_SETITEMDATA, (WPARAM)idx, (LPARAM) new fs::path(f.path));
+            LVITEM item = {};
+            item.mask = LVIF_TEXT | LVIF_PARAM;
+            item.iItem = INT_MAX;
+            item.pszText = (LPWSTR)line.c_str();
+            item.lParam = (LPARAM)new fs::path(f.path);
+            ListView_InsertItem(hList, &item);
         }
-        // 挂上子类化，拦截 Ctrl+A 全选
-        SetWindowLongPtrW(hList, GWLP_USERDATA, (LONG_PTR)GetWindowLongPtrW(hList, GWLP_WNDPROC));
-        SetWindowLongPtrW(hList, GWLP_WNDPROC, (LONG_PTR)ImportListSubclassProc);
         CheckDlgButton(hDlg, IDC_IMPORT_AUTOFILL, BST_CHECKED);
         return TRUE;
+    }
+    case WM_NOTIFY: {
+        NMHDR* nm = (NMHDR*)lParam;
+        // 单击/双击行 = 勾选/取消勾选切换（toggle，快速连点可取消）。复选框区由原生处理
+        if (nm->idFrom == IDC_IMPORT_LIST && (nm->code == NM_CLICK || nm->code == NM_DBLCLK)) {
+            LPNMITEMACTIVATE pnm = (LPNMITEMACTIVATE)lParam;
+            LVHITTESTINFO hti = {};
+            hti.pt = pnm->ptAction;
+            ListView_HitTest(hList, &hti);
+            if (hti.iItem >= 0 && !(hti.flags & LVHT_ONITEMSTATEICON)) {
+                // 单击/双击统一切换勾选：快速连点时系统把第二次点击发为 NM_DBLCLK，
+                // 若在双击里强制勾选会导致"点快了取消不了"，因此一律 toggle
+                ListView_SetCheckState(hList, hti.iItem, !ListView_GetCheckState(hList, hti.iItem));
+            }
+            return TRUE;
+        }
+        break;
     }
     case WM_COMMAND: {
         int id = LOWORD(wParam);
         if (id == IDC_IMPORT_OK || id == IDOK) {
-            int cnt = (int)SendMessageW(hList, LB_GETCOUNT, 0, 0);
+            int cnt = (int)SendMessageW(hList, LVM_GETITEMCOUNT, 0, 0);
             g_importFiles.clear();
             for (int i = 0; i < cnt; ++i) {
-                if (SendMessageW(hList, LB_GETSEL, (WPARAM)i, 0) > 0) {
-                    fs::path* p = (fs::path*)SendMessageW(hList, LB_GETITEMDATA, (WPARAM)i, 0);
-                    if (p) g_importFiles.push_back(*p);
+                if (ListView_GetCheckState(hList, i)) {
+                    LVITEM lvi = {};
+                    lvi.mask = LVIF_PARAM;
+                    lvi.iItem = i;
+                    if (ListView_GetItem(hList, &lvi) && lvi.lParam)
+                        g_importFiles.push_back(*(fs::path*)lvi.lParam);
                 }
             }
             if (g_importFiles.empty()) {
@@ -5378,6 +5431,21 @@ INT_PTR CALLBACK ImportTransDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPAR
             EndDialog(hDlg, IDOK);
             return TRUE;
         }
+        if (id == IDC_IMPORT_ALL) {
+            // 全选：勾选所有文件行
+            int cnt = (int)SendMessageW(hList, LVM_GETITEMCOUNT, 0, 0);
+            for (int i = 0; i < cnt; ++i) ListView_SetCheckState(hList, i, TRUE);
+            return TRUE;
+        }
+        if (id == IDC_IMPORT_NONE) {
+            // 取消全选：取消选中 + 取消勾选
+            int cnt = (int)SendMessageW(hList, LVM_GETITEMCOUNT, 0, 0);
+            for (int i = 0; i < cnt; ++i) {
+                ListView_SetItemState(hList, i, 0, LVIS_SELECTED);
+                ListView_SetCheckState(hList, i, FALSE);
+            }
+            return TRUE;
+        }
         if (id == IDC_IMPORT_CANCEL || id == IDCANCEL) {
             EndDialog(hDlg, IDCANCEL);
             return TRUE;
@@ -5385,11 +5453,16 @@ INT_PTR CALLBACK ImportTransDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPAR
         break;
     }
     case WM_DESTROY: {
-        int cnt = (int)SendMessageW(hList, LB_GETCOUNT, 0, 0);
+        int cnt = (int)SendMessageW(hList, LVM_GETITEMCOUNT, 0, 0);
         for (int i = 0; i < cnt; ++i) {
-            fs::path* p = (fs::path*)SendMessageW(hList, LB_GETITEMDATA, (WPARAM)i, 0);
-            delete p;
-            SendMessageW(hList, LB_SETITEMDATA, (WPARAM)i, 0);
+            LVITEM lvi = {};
+            lvi.mask = LVIF_PARAM;
+            lvi.iItem = i;
+            if (ListView_GetItem(hList, &lvi) && lvi.lParam) {
+                delete (fs::path*)lvi.lParam;
+                lvi.lParam = 0;
+                ListView_SetItem(hList, &lvi);
+            }
         }
         return TRUE;
     }
@@ -5404,7 +5477,10 @@ INT_PTR CALLBACK About(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
 {
     UNREFERENCED_PARAMETER(lParam);
     switch (message) {
-    case WM_INITDIALOG: return TRUE;
+    case WM_INITDIALOG: {
+        CenterDialogOnOwner(hDlg, GetParent(hDlg));
+        return TRUE;
+    }
     case WM_COMMAND:
         if (LOWORD(wParam) == IDOK || LOWORD(wParam) == IDCANCEL) {
             EndDialog(hDlg, LOWORD(wParam));
