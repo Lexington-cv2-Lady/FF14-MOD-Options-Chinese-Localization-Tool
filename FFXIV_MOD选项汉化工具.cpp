@@ -3352,24 +3352,41 @@ static bool AITranslateFile(const fs::path& inFile)
     // 分批调用 AI（第一轮 + 最多 2 轮自动补翻，减少 AI 漏翻）
     int batch = g_cfg.aiBatchSize;
     if (batch < 1) batch = 1;
-    if (batch > 1000) batch = 1000; // v2.3.4：上限从 100 提高到 1000
+    if (batch > 2000) batch = 2000; // v2.3.17：上限从 1000 提高到 2000，并按内容长度自动切批
     int total = (int)pending.size();
     int batches = (total + batch - 1) / batch;
     int okCount = 0;
-    LogThread("[AI] 正在翻译中，共 " + std::to_string(total) + " 条，每批 " + std::to_string(batch) + " 条，分 " + std::to_string(batches) + " 批");
+    LogThread("[AI] 正在翻译中，共 " + std::to_string(total) + " 条，每批至多 " + std::to_string(batch) + " 条，预计 " + std::to_string(batches) + " 批（内容过长时自动多分）");
     auto translateList = [&](std::vector<Item>& list) -> std::vector<Item> {
         std::vector<Item> missed;
         int cur = 0;
         int nTotal = (int)list.size();
         int nBatches = (nTotal + batch - 1) / batch;
-        for (size_t i = 0; i < list.size(); i += batch) {
-            int batchNo = (int)(i / batch) + 1;
+        // v2.3.17 智能切批：除条数上限外，每批累计内容（原文+mod 上下文）超过约 2 万字符即提前切批，
+        // 防止单批请求超出模型上下文窗口导致整批失败
+        const size_t maxBatchChars = 20000;
+        size_t i = 0;
+        int batchNo = 0;
+        while (i < list.size()) {
+            ++batchNo;
             LogThread("[AI] 正在翻译第 " + std::to_string(batchNo) + "/" + std::to_string(nBatches) + " 批...");
             if (g_cancel) {
                 LogThread("[提示] 已中断，剩余 " + std::to_string(nTotal - cur) + " 条未翻译");
                 break;
             }
-            size_t n = std::min<size_t>(batch, list.size() - i);
+            // 双重切批：凑满 batch 条，或累计内容超 maxBatchChars 即切
+            size_t n = 0;
+            size_t chars = 0;
+            while (i + n < list.size() && n < (size_t)batch) {
+                std::string ctx;
+                auto cf = ctxByKey.find(list[i + n].key);
+                if (cf != ctxByKey.end()) ctx = cf->second;
+                size_t c = list[i + n].english.size() + ctx.size();
+                if (n > 0 && chars + c > maxBatchChars) break; // 已有内容且再加会超限：切批
+                chars += c;
+                ++n;
+            }
+            if (n == 0) n = 1; // 单条内容超限也必须发出，避免卡死
             std::vector<AIItem> items;
             for (size_t k = 0; k < n; ++k) {
                 std::string ctx;
@@ -3396,14 +3413,14 @@ static bool AITranslateFile(const fs::path& inFile)
             bool retried = false;
             for (int retry = 0; retry < 3 && !okBatch; ++retry) {
                 if (g_cancel) break; // 用户已中断：不再重试
-                if (retry > 0) { retried = true; LogThread("[提示] 批次 " + std::to_string(i / batch + 1) + " 重试第 " + std::to_string(retry) + " 次..."); Sleep(2000); }
+                if (retry > 0) { retried = true; LogThread("[提示] 批次 " + std::to_string(batchNo) + " 重试第 " + std::to_string(retry) + " 次..."); Sleep(2000); }
                 got.clear();
                 if (AITranslateBatch(items, got, err, glossary)) okBatch = true;
-                else LogThread("[错误] 批次 " + std::to_string(i / batch + 1) + " 失败: " + err);
+                else LogThread("[错误] 批次 " + std::to_string(batchNo) + " 失败: " + err);
             }
             if (okBatch) {
                 if (retried)
-                    LogThread("[完成] 批次 " + std::to_string(i / batch + 1) + " 重试成功（该批结果已正常写入）");
+                    LogThread("[完成] 批次 " + std::to_string(batchNo) + " 重试成功（该批结果已正常写入）");
                 for (size_t k = 0; k < n; ++k) {
                     auto f = got.find(std::to_string(i + k));
                     if (f != got.end()) {
@@ -3423,6 +3440,7 @@ static bool AITranslateFile(const fs::path& inFile)
                 for (size_t k = 0; k < n; ++k) missed.push_back(list[i + k]);
             }
             cur += (int)n;
+            i += n;
             SetProgress(cur, nTotal);
         }
         return missed;
@@ -5739,7 +5757,7 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
         case IDC_AI_BATCH: {
             if (wmEvent == EN_CHANGE) {
                 int b = _wtoi(GetEditText(hDlg, IDC_AI_BATCH).c_str());
-                if (b >= 1 && b <= 1000) g_cfg.aiBatchSize = b; // v2.3.4：上限提高到 1000
+                if (b >= 1 && b <= 2000) g_cfg.aiBatchSize = b; // v2.3.17：上限提高到 2000
             }
             break;
         }
