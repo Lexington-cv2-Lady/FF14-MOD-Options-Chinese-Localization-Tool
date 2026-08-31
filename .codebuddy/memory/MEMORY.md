@@ -18,3 +18,16 @@
 - 部署目录（2026-08-30 更新）：最新版解压即用版部署到 `E:\Program Files\Game-Related\最终幻想14_mod选项汉化工具_AI翻译版`（与 zip 顶层目录同名）；以后更新时保留 `config.user.json`、`日志.json` 等用户数据，只覆盖 exe、config.default.json、使用说明.txt、内置wiki_术语对照.json、内置个性翻译.json，并确保内置文件隐藏属性。
 - 个性翻译值格式偏好（2026-08-30）：`个性翻译.json` 与 内置个性翻译.json 的词条值统一为「中文(英文)」格式（英文用半角括号紧贴，如 `"Hyur": "人族(Hyur)"`）；内置模板的「格式参考」说明文案同步描述该格式。注意：写入已存在的隐藏文件时 `[IO.File]::WriteAllText` 可能 Access denied（本机实测），改用 `Copy-Item -Force` 覆盖后再确保 Hidden 属性。
 
+## 系统问题排查备忘
+
+### MSI Afterburner 主窗口"看不见"（Wallpaper Engine 冲突）——排查全过程与最终放弃
+- 现象（2026-08-31）：MSI Afterburner 进程运行、主窗口存在（WS_VISIBLE=True、Normal、rect 屏幕内）、响应正常，但用户看不到；关闭 Wallpaper Engine 即正常显示。
+- 排查结论：
+  1. MSI Afterburner 是 **High integrity（管理员，S-1-16-12288）进程**，其窗口是 `WS_EX_LAYERED` 分层窗口；Wallpaper Engine 运行时 GPU 反复 `DXGI device lost in render loop`（WE 的 log.txt 可证），DWM 丢弃了 Afterburner 分层窗口的画面内容——窗口状态正常但内容不可见。普通窗口不受影响。
+  2. WE 的 `apprules` 规则（写入 config.json 的 `Match.general.user.apprules`，`{"displayname":"MSI Afterburner","rule":"pause"/"stop","trigger":"MSIAfterburner.exe"}`）**格式被识别但不执行**，此路不通。
+  3. 普通权限脚本对 Afterburner 窗口 SetWindowPos/ShowWindow/RedrawWindow 全部 LastError=5（UIPI 拒绝，因 Afterburner 是 High）；**管理员权限（RunAs）操作全部成功且持久**（壁纸恢复后窗口仍可见）。
+- 尝试方案：`C:\Tools\ABwake.ps1` + 登录时以最高权限运行的计划任务 `MSIAfterburnerWindowWake`（ShowWindow RESTORE→TOPMOST→RedrawWindow→SHOWNA→NOTOPMOST）。**用户实测无效**（仍看不见）。
+- **最终（2026-08-31 晚）**：用户放弃，要求撤销所有修改恢复默认。已撤销：恢复 WE config.json（apprules→null）、删除计划任务 MSIAfterburnerWindowWake、删除 C:\Tools\ABwake.ps1/log。**保留用户自己的计划任务 `MSIAfterburner`（自启，参数 `/s`=启动最小化到托盘，RunLevel=Highest）**——该任务本身就是"开机自启后窗口隐藏"的潜在原因（/s 强制最小化），如用户不需要自启可建议删它。
+- 诊断技巧备忘：完整性级别用 `OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION=0x1000)`+`GetTokenInformation(TokenIntegrityLevel=25)`，SID 指针在 buffer offset 0；`Start-Process -Verb RunAs` 不能与 `-RedirectStandardOutput` 同用（参数集冲突），提权脚本自己写结果文件再读回；WE 配置文件在安装目录顶层 `config.json`（`config.json.bak` 为修改前备份，可直接恢复）。
+- 经验教训：遇到"进程正常、窗口存在但不可见"，优先怀疑 DWM 合成/GPU 资源冲突（DXGI device lost、分层窗口），并考虑 UIPI 完整性级别因素。
+

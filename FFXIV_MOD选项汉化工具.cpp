@@ -28,11 +28,11 @@ std::atomic<bool> g_cancel{ false };
 volatile HINTERNET g_hActiveReq = nullptr; // 当前活动 HTTP 请求句柄（取消时立即打断，无需等超时）
 static std::vector<fs::path> g_extractFiles; // 提取英文对话框选中的文件集合（空 = 全量提取）
 
-// 翻译缺失（v2.3.5）：检查翻译的缺失条目收集 + AI 翻译指定输入文件
+// 查漏补缺（v2.3.5 原名「翻译缺失」）：检查翻译的缺失条目收集 + AI 翻译指定输入文件
 struct MissingEntry { std::string rel, sec, key, english; }; // 文件相对路径, _options/_descriptions, 完整key, 原文
 static std::vector<MissingEntry> g_missingEntries;
 static std::map<std::wstring, std::vector<size_t>> g_missingByFolder; // 文件夹名 -> g_missingEntries 下标
-static fs::path g_aiTargetFile; // 「翻译缺失」生成的 _未翻译.json，RunAITranslateThread 优先直接处理
+static fs::path g_aiTargetFile; // 「查漏补缺」生成的 _未翻译.json，RunAITranslateThread 优先直接处理
 
 // 提取英文对话框控件 ID（rc 中直接使用字面量数字，防止 IDE 资源编辑器回滚 Resource.h 宏）
 #ifndef IDD_EXTRACT_DIALOG
@@ -135,7 +135,6 @@ void OpenExplorer(HWND parent, const std::wstring& path);
 void OpenDictJson(HWND parent, const char* fname);
 std::vector<fs::path> ScanGroupFiles(const fs::path& root);
 bool ExtractEnglish(const std::vector<fs::path>* onlyFiles = nullptr);
-bool CheckTranslation();
 bool ApplyTranslation();
 static void FillAIPresetCombos(HWND hDlg);
 static void FillAIKeyCombo(HWND hDlg);
@@ -150,7 +149,6 @@ void WikiImportThread();
 void RunExtractThread();
 void RunImportThread();
 void RunApplyThread();
-void RunCheckThread();
 void RunAITranslateThread();
 
 // ------------------------------------------------------------------
@@ -1021,163 +1019,6 @@ bool ExtractEnglish(const std::vector<fs::path>* onlyFiles)
     catch (...) { Log("[错误] 提取英文时未知异常"); return false; }
 }
 
-
-// ------------------------------------------------------------------
-// 检查翻译：扫描 MOD 的 group_*.json，报告仍未翻译的英文条目
-// ------------------------------------------------------------------
-bool CheckTranslation()
-{
-    try {
-    if (g_cfg.penumbraDir.empty()) { Log("[错误] 未设置 Penumbra 目录"); return false; }
-
-    fs::path penRoot = fs::u8path(g_cfg.penumbraDir);
-    std::error_code existEc;
-    if (!fs::exists(penRoot, existEc) || existEc) { Log("[错误] Penumbra 目录不存在或无法访问"); return false; }
-
-    std::vector<fs::path> allFiles = ScanGroupFiles(penRoot);
-    if (allFiles.empty()) { Log("[提示] 未找到任何 group_*.json 文件"); return false; }
-
-    struct FileReport {
-        std::string rel;       // 相对路径
-        std::wstring folder;   // 所属 MOD 文件夹名
-        int total = 0, translated = 0, pending = 0;
-        std::vector<std::pair<std::string, std::string>> pendingItems; // 类型, 原文（最多记 10 条）
-    };
-
-    std::map<std::wstring, std::vector<FileReport>> byMod;
-    int fileIdx = 0, fileTotal = (int)allFiles.size();
-    int totalAll = 0, totalDone = 0, totalPending = 0;
-    int pendingFiles = 0, okFiles = 0;
-
-    auto examine = [&](FileReport& r, const std::string& type, const std::string& text) {
-        if (text.empty()) return;
-        r.total++; totalAll++;
-        if (contains_chinese(text)) { r.translated++; totalDone++; }
-        else if (contains_english_letter(text)) {
-            r.pending++; totalPending++;
-            if ((int)r.pendingItems.size() < 10)
-                r.pendingItems.emplace_back(type, text);
-        }
-        // 纯数字 / 版本号 / 纯符号：不算未翻译
-    };
-
-    for (auto& file : allFiles) {
-        fileIdx++;
-        if (fileIdx % 5 == 0 || fileIdx == fileTotal) SetProgress(fileIdx, fileTotal);
-        std::string data;
-        if (!read_binary_file(file, data)) continue;
-        json j;
-        try { j = json::parse(clean_utf8(data)); }
-        catch (...) {
-            Log("[警告] 解析失败: " + wstring_to_utf8(file.filename().wstring()));
-            continue;
-        }
-        if (!j.is_object()) continue;
-
-        FileReport fr;
-        fr.rel = SafeRelativePath(file, penRoot);
-        fr.folder = file.parent_path().filename().wstring();
-
-        // Name / Description：字符串 / 对象 / 数组 三种形态都检查
-        auto collectField = [&](const char* field, const char* type) {
-            if (!j.contains(field)) return;
-            const json& v = j[field];
-            if (v.is_string()) examine(fr, type, v.get<std::string>());
-            else if (v.is_object()) {
-                for (auto& it : v.items())
-                    if (it.value().is_string()) examine(fr, type, it.value().get<std::string>());
-            }
-            else if (v.is_array()) {
-                for (auto& it : v.items())
-                    if (it.value().is_string()) examine(fr, type, it.value().get<std::string>());
-            }
-        };
-        collectField("Name", "组名");
-        collectField("Description", "描述");
-
-        // Options 里的选项值
-        if (j.contains("Options") && j["Options"].is_array()) {
-            for (auto& opt : j["Options"].items()) {
-                if (!opt.value().is_object()) continue;
-                if (!opt.value().contains("Name")) continue;
-                const json& nv = opt.value()["Name"];
-                if (!nv.is_string()) continue;
-                std::string oname = nv.get<std::string>();
-                if (oname.empty()) continue;
-                examine(fr, "选项", oname);
-            }
-        }
-
-        if (fr.pending > 0) pendingFiles++; else okFiles++;
-        byMod[fr.folder].push_back(std::move(fr));
-    }
-
-    Log("===== 检查翻译结果 =====");
-    Log("扫描 " + std::to_string((int)allFiles.size()) + " 个 group_*.json 文件，共 " + std::to_string(totalAll) + " 条组名/描述/选项");
-    Log("已翻译（含中文）: " + std::to_string(totalDone) + " 条；未翻译残留: " + std::to_string(totalPending) + " 条");
-    Log("完全翻译的文件: " + std::to_string(okFiles) + " 个；有残留的文件: " + std::to_string(pendingFiles) + " 个");
-
-    if (totalPending == 0) {
-        Log("[提示] 所有条目均已翻译，无需处理");
-        return true;
-    }
-
-    // 写详细报告到翻译目录
-    json report;
-    report["检查时间"] = now_timestamp_human();
-    report["扫描文件数"] = (int)allFiles.size();
-    report["已翻译条目"] = totalDone;
-    report["未翻译条目"] = totalPending;
-    json mods = json::array();
-    for (auto& kv : byMod) {
-        int mTotal = 0, mPending = 0;
-        json files = json::array();
-        for (auto& fr : kv.second) {
-            if (fr.pending == 0) continue;
-            mTotal += fr.total; mPending += fr.pending;
-            json fj;
-            fj["文件"] = fr.rel;
-            fj["未翻译"] = fr.pending;
-            fj["共"] = fr.total;
-            json items = json::array();
-            for (auto& pi : fr.pendingItems) {
-                json it; it["类型"] = pi.first; it["原文"] = pi.second;
-                items.push_back(it);
-            }
-            fj["条目"] = items;
-            files.push_back(fj);
-        }
-        if (mPending == 0) continue;
-        json mj;
-        mj["未翻译"] = mPending; mj["共"] = mTotal;
-        mj["文件"] = files;
-        mods.push_back(mj);
-    }
-    report["残留MOD"] = mods;
-    if (!g_cfg.translationDir.empty()) {
-        fs::path tdir = fs::u8path(g_cfg.translationDir);
-        std::error_code tdec;
-        if (!fs::exists(tdir, tdec) || tdec) fs::create_directories(tdir, tdec);
-        if (!tdec) {
-            fs::path rp = tdir / fs::u8path(now_timestamp() + "_翻译检查报告.json");
-            write_binary_file(rp, report.dump(2));
-            Log("[提示] 详细残留清单已写入: " + wstring_to_utf8(rp.filename().wstring()));
-        }
-    }
-
-    // 日志按 MOD 汇总（只列有残留的）
-    for (auto& kv : byMod) {
-        int mPending = 0, mTotal = 0;
-        for (auto& fr : kv.second) { mPending += fr.pending; mTotal += fr.total; }
-        if (mPending == 0) continue;
-        Log("[残留] " + wstring_to_utf8(kv.first) + "：未翻译 " + std::to_string(mPending) + "/" + std::to_string(mTotal) + " 条");
-    }
-    return true;
-    }
-    catch (const std::system_error& e) { Log(std::string("[错误] 检查翻译时系统异常: ") + e.what()); return false; }
-    catch (const std::exception& e) { Log(std::string("[错误] 检查翻译时异常: ") + e.what()); return false; }
-    catch (...) { Log("[错误] 检查翻译时未知异常"); return false; }
-}
 
 // ------------------------------------------------------------------
 // 应用翻译
@@ -2925,20 +2766,6 @@ void RunApplyThread()
     PostMessageW(g_hMainWnd, WM_APP_DONE, 0, 0);
 }
 
-void RunCheckThread()
-{
-    try {
-        g_busy = true;
-        bool ok = CheckTranslation();
-        Log("检查翻译结束");
-        g_busy = false;
-    }
-    catch (const std::system_error& e) { Log(std::string("[错误] 检查翻译线程系统异常: ") + e.what()); }
-    catch (const std::exception& e) { Log(std::string("[错误] 检查翻译线程异常: ") + e.what()); }
-    catch (...) { Log("[错误] 检查翻译线程未知异常"); }
-    PostMessageW(g_hMainWnd, WM_APP_DONE, 0, 0);
-}
-
 void LaunchWorker(void (*fn)(), const std::string& name)
 {
     try {
@@ -3797,11 +3624,11 @@ void RunAITranslateThread()
         auto files = ScanTransFiles(fs::u8path(g_cfg.translationDir));
         fs::path target;
         fs::path failPath = fs::u8path(g_cfg.translationDir) / fs::u8path("翻译失败.json");
-        // 「翻译缺失」指定了输入文件：直接处理它（优先于自动选择）
+        // 「查漏补缺」指定了输入文件：直接处理它（优先于自动选择）
         if (!g_aiTargetFile.empty()) {
             target = g_aiTargetFile;
             g_aiTargetFile.clear();
-            Log("[提示] 翻译缺失：直接翻译 " + wstring_to_utf8(target.filename().wstring()));
+            Log("[提示] 翻译查漏补缺：直接翻译 " + wstring_to_utf8(target.filename().wstring()));
         }
         // 其次优先重试「翻译失败.json」里的失败条目，再处理 *_未翻译.json
         else {
@@ -4656,12 +4483,15 @@ INT_PTR CALLBACK RestoreDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM l
             }
             if (selIndices.empty()) { MessageBoxW(hDlg, L"请勾选或选中要恢复的模组文件夹", L"提示", MB_OK); return TRUE; }
 
+            Log("[恢复备份] 开始恢复，共 " + std::to_string(selIndices.size()) + " 个模组文件夹");
+
             // 收集每个文件夹要恢复的备份
             int success = 0, skip = 0, fail = 0;
             fs::path penRoot = fs::u8path(g_cfg.penumbraDir);
             for (int idx : selIndices) {
                 wchar_t name[1024] = {};
                 ListView_GetItemText(left, idx, 0, name, 1024);
+                std::string folderName = wstring_to_utf8(name);
                 fs::path modDir = penRoot / name;
                 // 该文件夹勾选的具体备份
                 std::vector<fs::path> selectedZips;
@@ -4692,10 +4522,15 @@ INT_PTR CALLBACK RestoreDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM l
                     catch (...) {}
                     if (!latest.empty()) selectedZips.push_back(latest);
                 }
-                if (selectedZips.empty()) { skip++; continue; }
+                if (selectedZips.empty()) {
+                    skip++;
+                    Log("[恢复备份] 文件夹 [" + folderName + "]：没有找到备份包，已跳过");
+                    continue;
+                }
 
                 // 恢复到备份时状态：先清空该模组文件夹下所有 group_*.json（含被外部改名/残留的文件），
                 // 再解压备份还原——避免被改名/多出来的 group 文件残留导致“恢复备份失效”
+                int removedCount = 0;
                 {
                     std::vector<fs::path> toRemove;
                     try {
@@ -4709,15 +4544,26 @@ INT_PTR CALLBACK RestoreDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM l
                     }
                     catch (...) {}
                     for (auto& p : toRemove) { std::error_code de; fs::remove(p, de); }
+                    removedCount = (int)toRemove.size();
                 }
+                Log("[恢复备份] 文件夹 [" + folderName + "]：清空 " + std::to_string(removedCount)
+                    + " 个 group_*.json，从 " + std::to_string(selectedZips.size()) + " 个备份包恢复");
 
                 bool allOk = true;
                 for (auto& z : selectedZips) {
-                    if (!ExtractZip(z, modDir)) { allOk = false; fail++; }
-                    else success++;
+                    if (!ExtractZip(z, modDir)) {
+                        allOk = false; fail++;
+                        Log("[恢复备份]   " + wstring_to_utf8(z.filename().wstring()) + "：解压失败");
+                    }
+                    else {
+                        success++;
+                        Log("[恢复备份]   " + wstring_to_utf8(z.filename().wstring()) + "：解压成功");
+                    }
                 }
                 if (!allOk) fail++;
             }
+            Log("[恢复备份] 完成：成功 " + std::to_string(success)
+                + "，跳过 " + std::to_string(skip) + "，失败 " + std::to_string(fail));
             wchar_t msg[256];
             swprintf_s(msg, L"恢复完成：成功 %d，跳过 %d，失败 %d", success, skip, fail);
             MessageBoxW(hDlg, msg, L"恢复备份", MB_OK);
@@ -4945,7 +4791,8 @@ INT_PTR CALLBACK ExtractDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM l
 }
 
 // ------------------------------------------------------------------
-// 翻译缺失（v2.3.5）：扫描 MOD 收集全部未翻译英文条目
+// 查漏补缺（v2.3.5，v2.3.10 起改名）：扫描 MOD 收集全部未翻译英文条目。
+// v2.3.10 与单词黑名单联动：整词命中黑名单的文本保留英文是预期行为，不算缺失、不列出。
 // ------------------------------------------------------------------
 static bool CollectMissingEntries()
 {
@@ -4957,6 +4804,7 @@ static bool CollectMissingEntries()
     if (!fs::exists(penRoot, ec) || ec) return false;
     auto allFiles = ScanGroupFiles(penRoot);
     if (allFiles.empty()) return false;
+    std::vector<std::string> blacklist = LoadBlacklistFile(g_cfg.blacklist); // 黑名单联动
 
     for (auto& file : allFiles) {
         std::string data;
@@ -4972,6 +4820,7 @@ static bool CollectMissingEntries()
             if (text.empty()) return;
             if (contains_chinese(text)) return;            // 已翻译不算缺失
             if (!contains_english_letter(text)) return;    // 纯数字/符号不算缺失
+            if (is_blacklisted(text, blacklist)) return;   // 黑名单词保留英文是预期行为，不算缺失
             g_missingEntries.push_back({ rel, sec, key, text });
             g_missingByFolder[folder].push_back(g_missingEntries.size() - 1);
         };
@@ -5037,7 +4886,7 @@ static bool CollectMissingEntries()
 }
 
 // ------------------------------------------------------------------
-// 翻译缺失对话框（v2.3.5）：左侧模组文件夹，右侧缺失条目，勾选后「翻译选中」
+// 查漏补缺对话框（v2.3.5，v2.3.10 改名）：左侧模组文件夹，右侧缺失条目，勾选后「翻译选中」
 // 交互与恢复备份/提取英文统一：单击/双击行 = 勾选/取消勾选切换（快速连点可取消）、全选、取消全选
 // ------------------------------------------------------------------
 INT_PTR CALLBACK MissingDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
@@ -5214,15 +5063,14 @@ INT_PTR CALLBACK MissingDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM l
             }
             std::error_code dec;
             fs::create_directories(fs::u8path(g_cfg.translationDir), dec);
-            std::string ts = now_timestamp_human();
-            fs::path outPath = fs::u8path(g_cfg.translationDir) / fs::u8path(ts + "_未翻译.json");
+            fs::path outPath = fs::u8path(g_cfg.translationDir) / fs::u8path("查漏补缺_未翻译.json");
             if (!write_binary_file(outPath, safeDump(out, 2))) {
                 MessageBoxW(hDlg, L"写入 _未翻译.json 失败", L"错误", MB_OK | MB_ICONERROR);
                 return TRUE;
             }
             int ask = MessageBoxW(hDlg, (std::wstring(L"已生成 ") + outPath.filename().wstring()
                 + L"（" + std::to_wstring((int)selCount) + L" 条缺失条目）。是否立即开始 AI 翻译？").c_str(),
-                L"翻译缺失", MB_YESNO | MB_ICONQUESTION);
+                L"翻译查漏补缺", MB_YESNO | MB_ICONQUESTION);
             EndDialog(hDlg, IDOK);
             if (ask == IDYES) {
                 g_aiTargetFile = outPath;
@@ -5239,10 +5087,9 @@ INT_PTR CALLBACK MissingDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM l
                 EnableWindow(GetDlgItem(mw, IDC_BTN_WIKI), FALSE);
                 EnableWindow(GetDlgItem(mw, IDC_BTN_AI_TRANSLATE), FALSE);
                 EnableWindow(GetDlgItem(mw, IDC_BTN_AI_TEST), FALSE);
-                EnableWindow(GetDlgItem(mw, IDC_BTN_CHECK), FALSE);
                 EnableWindow(GetDlgItem(mw, IDC_BTN_MISSING), FALSE);
                 EnableWindow(GetDlgItem(mw, IDC_BTN_CANCEL), TRUE);
-                Log("===== 开始 AI 翻译（翻译缺失条目） =====");
+                Log("===== 开始 AI 翻译（翻译查漏补缺条目） =====");
                 LaunchWorker(RunAITranslateThread, "AI翻译");
             }
             return TRUE;
@@ -5773,7 +5620,7 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
                 if (newT != g_cfg.translationDir) {
                     // v2.2.8：翻译目录变更，把旧目录的翻译产物迁移过去（新目录有同名则保留新目录）
                     MigrateDirFiles(fs::u8path(g_cfg.translationDir), fs::u8path(newT),
-                        { L"翻译失败.json" }, { L"_未翻译", L"_已翻译", L"_翻译检查报告" });
+                        { L"翻译失败.json" }, { L"_未翻译", L"_已翻译" });
                     g_cfg.translationDir = newT;
                 }
                 std::error_code dec;
@@ -5950,7 +5797,6 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_WIKI), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_AI_TRANSLATE), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_AI_TEST), FALSE);
-            EnableWindow(GetDlgItem(hDlg, IDC_BTN_CHECK), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_CANCEL), TRUE);
             Log("===== 开始提取英文 =====");
             LaunchWorker(RunExtractThread, "提取英文");
@@ -5973,7 +5819,6 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_WIKI), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_AI_TRANSLATE), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_AI_TEST), FALSE);
-            EnableWindow(GetDlgItem(hDlg, IDC_BTN_CHECK), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_CANCEL), TRUE);
             Log("===== 开始导入翻译 =====");
             LaunchWorker(RunImportThread, "导入翻译");
@@ -5993,7 +5838,6 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_WIKI), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_AI_TRANSLATE), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_AI_TEST), FALSE);
-            EnableWindow(GetDlgItem(hDlg, IDC_BTN_CHECK), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_CANCEL), TRUE);
             if (g_cfg.pureChinese)
                 Log("[提示] 当前为「纯中文」模式：应用后名称仅保留中文（去掉英文括号）。");
@@ -6005,28 +5849,8 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
             LaunchWorker(RunApplyThread, "应用翻译");
             break;
         }
-        case IDC_BTN_CHECK: {
-            if (g_busy) break;
-            SaveConfig();
-            g_busy = true;
-            g_cancel = false;
-            EnableWindow(GetDlgItem(hDlg, IDC_BTN_EXTRACT), FALSE);
-            EnableWindow(GetDlgItem(hDlg, IDC_BTN_IMPORT), FALSE);
-            EnableWindow(GetDlgItem(hDlg, IDC_BTN_APPLY), FALSE);
-            EnableWindow(GetDlgItem(hDlg, IDC_BTN_RESTORE), FALSE);
-            EnableWindow(GetDlgItem(hDlg, IDC_BTN_BLACKLIST), FALSE);
-            EnableWindow(GetDlgItem(hDlg, IDC_BTN_CUSTOM), FALSE);
-            EnableWindow(GetDlgItem(hDlg, IDC_BTN_WIKI), FALSE);
-            EnableWindow(GetDlgItem(hDlg, IDC_BTN_AI_TRANSLATE), FALSE);
-            EnableWindow(GetDlgItem(hDlg, IDC_BTN_AI_TEST), FALSE);
-            EnableWindow(GetDlgItem(hDlg, IDC_BTN_CHECK), FALSE);
-            EnableWindow(GetDlgItem(hDlg, IDC_BTN_CANCEL), TRUE);
-            Log("===== 开始检查翻译 =====");
-            LaunchWorker(RunCheckThread, "检查翻译");
-            break;
-        }
         case IDC_BTN_MISSING: {
-            // v2.3.5：翻译缺失——扫描 MOD 收集未翻译英文条目，二级窗口勾选后 AI 补翻
+            // v2.3.5：查漏补缺——扫描 MOD 收集未翻译英文条目（黑名单词整词命中的不算缺失），二级窗口勾选后 AI 补翻
             if (g_busy) break;
             if (g_cfg.penumbraDir.empty()) {
                 MessageBoxW(hDlg, L"请先设置 Penumbra 目录。", L"提示", MB_OK | MB_ICONINFORMATION);
@@ -6073,7 +5897,6 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_CUSTOM), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_WIKI), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_AI_TRANSLATE), FALSE);
-            EnableWindow(GetDlgItem(hDlg, IDC_BTN_CHECK), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_CANCEL), TRUE);
             Log("===== 开始 Wiki 全站导出 =====");
             LaunchWorker(WikiImportThread, "Wiki 导出");
@@ -6113,7 +5936,6 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_WIKI), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_AI_TRANSLATE), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_AI_TEST), FALSE);
-            EnableWindow(GetDlgItem(hDlg, IDC_BTN_CHECK), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_CANCEL), TRUE);
             Log("===== 开始测试 AI 连接 =====");
             LaunchWorker(RunAITestThread, "AI 测试");
@@ -6140,7 +5962,6 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_WIKI), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_AI_TRANSLATE), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_AI_TEST), FALSE);
-            EnableWindow(GetDlgItem(hDlg, IDC_BTN_CHECK), FALSE);
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_CANCEL), TRUE);
             Log("===== 开始 AI 自动翻译 =====");
             LaunchWorker(RunAITranslateThread, "AI 翻译");

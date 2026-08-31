@@ -143,5 +143,4 @@
 
 #define IDC_BTN_AI_SELECT		1346
 
-#define IDC_BTN_CHECK			1347
 #define IDC_BTN_MISSING			1349
