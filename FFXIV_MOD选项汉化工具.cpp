@@ -4489,7 +4489,7 @@ INT_PTR CALLBACK RestoreDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM l
     }
     case WM_NOTIFY: {
         NMHDR* nm = (NMHDR*)lParam;
-        // 左/右侧：单击行 = 勾选/取消勾选切换（toggle）；双击行 = 确认勾选。复选框区由原生处理
+        // 左/右侧：单击/双击行 = 勾选/取消勾选切换（toggle，快速连点可取消）。复选框区由原生处理
         if ((nm->idFrom == IDC_RESTORE_LEFTLIST || nm->idFrom == IDC_RESTORE_RIGHTLIST)
             && (nm->code == NM_CLICK || nm->code == NM_DBLCLK)) {
             HWND hList = GetDlgItem(hDlg, (int)nm->idFrom);
@@ -4498,11 +4498,9 @@ INT_PTR CALLBACK RestoreDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM l
             hti.pt = pnm->ptAction;
             ListView_HitTest(hList, &hti);
             if (hti.iItem >= 0 && !(hti.flags & LVHT_ONITEMSTATEICON)) {
-                if (nm->code == NM_DBLCLK) {
-                    ListView_SetCheckState(hList, hti.iItem, TRUE);
-                } else {
-                    ListView_SetCheckState(hList, hti.iItem, !ListView_GetCheckState(hList, hti.iItem));
-                }
+                // 单击/双击统一切换勾选：快速连点时系统把第二次点击发为 NM_DBLCLK，
+                // 若在双击里强制勾选会导致"点快了取消不了"，因此一律 toggle
+                ListView_SetCheckState(hList, hti.iItem, !ListView_GetCheckState(hList, hti.iItem));
             }
             return TRUE;
         }
@@ -4701,7 +4699,7 @@ INT_PTR CALLBACK ExtractDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM l
     }
     case WM_NOTIFY: {
         NMHDR* nm = (NMHDR*)lParam;
-        // 左/右侧：单击行 = 勾选/取消勾选切换（toggle）；双击行 = 确认勾选。复选框区由原生处理
+        // 左/右侧：单击/双击行 = 勾选/取消勾选切换（toggle，快速连点可取消）。复选框区由原生处理
         if ((nm->idFrom == IDC_EXTRACT_LEFTLIST || nm->idFrom == IDC_EXTRACT_RIGHTLIST)
             && (nm->code == NM_CLICK || nm->code == NM_DBLCLK)) {
             HWND hList = GetDlgItem(hDlg, (int)nm->idFrom);
@@ -4710,11 +4708,9 @@ INT_PTR CALLBACK ExtractDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM l
             hti.pt = pnm->ptAction;
             ListView_HitTest(hList, &hti);
             if (hti.iItem >= 0 && !(hti.flags & LVHT_ONITEMSTATEICON)) {
-                if (nm->code == NM_DBLCLK) {
-                    ListView_SetCheckState(hList, hti.iItem, TRUE);
-                } else {
-                    ListView_SetCheckState(hList, hti.iItem, !ListView_GetCheckState(hList, hti.iItem));
-                }
+                // 单击/双击统一切换勾选：快速连点时系统把第二次点击发为 NM_DBLCLK，
+                // 若在双击里强制勾选会导致"点快了取消不了"，因此一律 toggle
+                ListView_SetCheckState(hList, hti.iItem, !ListView_GetCheckState(hList, hti.iItem));
             }
             return TRUE;
         }
@@ -4959,7 +4955,7 @@ static bool CollectMissingEntries()
 
 // ------------------------------------------------------------------
 // 翻译缺失对话框（v2.3.5）：左侧模组文件夹，右侧缺失条目，勾选后「翻译选中」
-// 交互与恢复备份/提取英文统一：单击行 = 勾选/取消勾选切换、双击行 = 确认勾选、全选、取消全选
+// 交互与恢复备份/提取英文统一：单击/双击行 = 勾选/取消勾选切换（快速连点可取消）、全选、取消全选
 // ------------------------------------------------------------------
 INT_PTR CALLBACK MissingDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
 {
@@ -4996,7 +4992,7 @@ INT_PTR CALLBACK MissingDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM l
     }
     case WM_NOTIFY: {
         NMHDR* nm = (NMHDR*)lParam;
-        // 左/右侧：单击行 = 勾选/取消勾选切换（toggle）；双击行 = 确认勾选。复选框区由原生处理
+        // 左/右侧：单击/双击行 = 勾选/取消勾选切换（toggle，快速连点可取消）。复选框区由原生处理
         if ((nm->idFrom == IDC_MISS_LEFTLIST || nm->idFrom == IDC_MISS_RIGHTLIST)
             && (nm->code == NM_CLICK || nm->code == NM_DBLCLK)) {
             HWND hList = GetDlgItem(hDlg, (int)nm->idFrom);
@@ -5005,11 +5001,9 @@ INT_PTR CALLBACK MissingDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM l
             hti.pt = pnm->ptAction;
             ListView_HitTest(hList, &hti);
             if (hti.iItem >= 0 && !(hti.flags & LVHT_ONITEMSTATEICON)) {
-                if (nm->code == NM_DBLCLK) {
-                    ListView_SetCheckState(hList, hti.iItem, TRUE);
-                } else {
-                    ListView_SetCheckState(hList, hti.iItem, !ListView_GetCheckState(hList, hti.iItem));
-                }
+                // 单击/双击统一切换勾选：快速连点时系统把第二次点击发为 NM_DBLCLK，
+                // 若在双击里强制勾选会导致"点快了取消不了"，因此一律 toggle
+                ListView_SetCheckState(hList, hti.iItem, !ListView_GetCheckState(hList, hti.iItem));
             }
             return TRUE;
         }
@@ -5283,7 +5277,7 @@ INT_PTR CALLBACK WikiCatsDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM 
         return TRUE;
     }
     case WM_NOTIFY: {
-        // 单击行 = 勾选/取消勾选切换（toggle）；双击行 = 确认勾选。复选框区由原生处理
+        // 单击/双击行 = 勾选/取消勾选切换（toggle，快速连点可取消）。复选框区由原生处理
         NMHDR* nm = (NMHDR*)lParam;
         if (nm->idFrom == IDC_WIKI_CATS_LIST && (nm->code == NM_CLICK || nm->code == NM_DBLCLK)) {
             LPNMITEMACTIVATE pnm = (LPNMITEMACTIVATE)lParam;
@@ -5291,11 +5285,9 @@ INT_PTR CALLBACK WikiCatsDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM 
             hti.pt = pnm->ptAction;
             ListView_HitTest(hList, &hti);
             if (hti.iItem >= 0 && !(hti.flags & LVHT_ONITEMSTATEICON)) {
-                if (nm->code == NM_DBLCLK) {
-                    ListView_SetCheckState(hList, hti.iItem, TRUE);
-                } else {
-                    ListView_SetCheckState(hList, hti.iItem, !ListView_GetCheckState(hList, hti.iItem));
-                }
+                // 单击/双击统一切换勾选：快速连点时系统把第二次点击发为 NM_DBLCLK，
+                // 若在双击里强制勾选会导致"点快了取消不了"，因此一律 toggle
+                ListView_SetCheckState(hList, hti.iItem, !ListView_GetCheckState(hList, hti.iItem));
             }
             return TRUE;
         }
