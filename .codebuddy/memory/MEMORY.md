@@ -2,6 +2,8 @@
 
 ## FFXIV_MOD选项汉化工具
 
+- 二级窗口交互约定（2026-08-31，v2.3.4）：「1. 提取英文」与「4. 恢复备份」共用同款二级窗口交互——左侧 ListView 列出模组文件夹（LVS_EX_CHECKBOXES，点击高亮即同步勾选），右侧 ListBox 多选当前高亮文件夹的文件，左上角「全选」勾选全部文件夹。新增对话框控件 ID 需三处同步：rc 用字面量数字（防 IDE 资源编辑器回滚 Resource.h）、cpp 顶部 #ifndef 兜底宏、Resource.h 定义宏。注意 ListView_SetCheckState 宏展开后 if/else 必须带大括号（无括号报 C2181）。
+
 - 翻译规则同步约定（2026-08-30，用户明确要求）：凡修改 AI 翻译规则，必须同时同步两处——(1) 程序内置的 system prompt（`AITranslateBatch` 里的 `sysMsg`，约 2700 行附近）；(2) 写入 `_未翻译.json` 的「翻译规则」字段（`out["翻译规则"]`，约 648-659 行，这是给外部 AI 看的规则）。两处都要改，不能只改一处。
 - 翻译规则相关：短名称用「中文（英文）」格式；无法翻译的专有名词/缩写/品牌名（如 EXQB、Uranus）原样保留英文，禁止输出「英文（英文）」重复格式；`fixRepeatParen()` 在 AI 译文写入前做兜底修正。
 - 运行方式（2026-08-30 确认）：用户用 **Visual Studio 打开项目，Ctrl+Shift+B 重新生成后按 F5 运行**，实际运行的 exe 和配置在 `x64\Release\`（也可能 `x64\Debug\`）目录，**不是 E 盘部署目录**。因此：以后源码修改后无需往 E 盘部署 exe；改 `config.default.json` 后需同步到 `x64\Release\`（VS 项目已加 PostBuildEvent：`xcopy /Y /Q "$(ProjectDir)config.default.json" "$(OutDir)"`，用户每次重新生成会自动同步，无需手动）。`config.user.json`（用户 AI Key、词典/翻译/penumbra 目录、customSaves、aiPresets）在 x64\Release 目录，改它要小心程序退出时会用内存配置写回覆盖。

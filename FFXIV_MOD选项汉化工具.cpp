@@ -28,6 +28,12 @@ std::atomic<bool> g_cancel{ false };
 volatile HINTERNET g_hActiveReq = nullptr; // 当前活动 HTTP 请求句柄（取消时立即打断，无需等超时）
 static std::vector<fs::path> g_extractFiles; // 提取英文对话框选中的文件集合（空 = 全量提取）
 
+// 翻译缺失（v2.3.5）：检查翻译的缺失条目收集 + AI 翻译指定输入文件
+struct MissingEntry { std::string rel, sec, key, english; }; // 文件相对路径, _options/_descriptions, 完整key, 原文
+static std::vector<MissingEntry> g_missingEntries;
+static std::map<std::wstring, std::vector<size_t>> g_missingByFolder; // 文件夹名 -> g_missingEntries 下标
+static fs::path g_aiTargetFile; // 「翻译缺失」生成的 _未翻译.json，RunAITranslateThread 优先直接处理
+
 // 提取英文对话框控件 ID（rc 中直接使用字面量数字，防止 IDE 资源编辑器回滚 Resource.h 宏）
 #ifndef IDD_EXTRACT_DIALOG
 #define IDD_EXTRACT_DIALOG 1260
@@ -36,6 +42,24 @@ static std::vector<fs::path> g_extractFiles; // 提取英文对话框选中的�
 #define IDC_EXTRACT_ALL 1263
 #define IDC_EXTRACT_BTN 1264
 #define IDC_EXTRACT_CLOSE 1265
+#define IDC_EXTRACT_NONE 1266
+#endif
+#ifndef IDD_MISSING_DIALOG
+#define IDD_MISSING_DIALOG 1270
+#define IDC_MISS_LEFTLIST 1271
+#define IDC_MISS_ALL 1272
+#define IDC_MISS_NONE 1273
+#define IDC_MISS_BTN 1274
+#define IDC_MISS_CLOSE 1275
+#define IDC_MISS_RIGHTLIST 1276
+#define IDC_MISS_RIGHTALL 1277
+#define IDC_MISS_RIGHTNONE 1278
+#endif
+#ifndef IDC_RESTORE_NONE
+#define IDC_RESTORE_NONE 1206
+#endif
+#ifndef IDC_BTN_MISSING
+#define IDC_BTN_MISSING 1349
 #endif
 std::mutex g_logMutex;
 std::vector<std::wstring> g_logBuffer; // 日志缓冲：改字号后重放，恢复各行的标签颜色
@@ -3758,15 +3782,23 @@ void RunAITranslateThread()
         }
         auto files = ScanTransFiles(fs::u8path(g_cfg.translationDir));
         fs::path target;
-        // 优先重试「翻译失败.json」里的失败条目，其次再处理 *_未翻译.json
         fs::path failPath = fs::u8path(g_cfg.translationDir) / fs::u8path("翻译失败.json");
-        std::error_code fec;
-        if (fs::exists(failPath, fec) && !fec) {
-            target = failPath;
-            Log("[提示] 检测到 翻译失败.json，优先重新翻译失败条目");
+        // 「翻译缺失」指定了输入文件：直接处理它（优先于自动选择）
+        if (!g_aiTargetFile.empty()) {
+            target = g_aiTargetFile;
+            g_aiTargetFile.clear();
+            Log("[提示] 翻译缺失：直接翻译 " + wstring_to_utf8(target.filename().wstring()));
         }
+        // 其次优先重试「翻译失败.json」里的失败条目，再处理 *_未翻译.json
         else {
-            for (auto& f : files) if (!f.isTranslated) { target = f.path; break; }
+            std::error_code fec;
+            if (fs::exists(failPath, fec) && !fec) {
+                target = failPath;
+                Log("[提示] 检测到 翻译失败.json，优先重新翻译失败条目");
+            }
+            else {
+                for (auto& f : files) if (!f.isTranslated) { target = f.path; break; }
+            }
         }
         if (target.empty()) {
             Log("[错误] 翻译目录下没有 *_未翻译.json，请先执行『1. 提取英文』");
@@ -4498,6 +4530,16 @@ INT_PTR CALLBACK RestoreDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM l
             for (int i = 0; i < count; ++i) ListView_SetCheckState(left, i, TRUE);
             return TRUE;
         }
+        if (id == IDC_RESTORE_NONE) {
+            // 取消全选：取消选中 + 取消勾选
+            HWND left = GetDlgItem(hDlg, IDC_RESTORE_LEFTLIST);
+            int count = ListView_GetItemCount(left);
+            for (int i = 0; i < count; ++i) {
+                ListView_SetItemState(left, i, 0, LVIS_SELECTED);
+                ListView_SetCheckState(left, i, FALSE);
+            }
+            return TRUE;
+        }
         if (id == IDC_RESTORE_BTN) {
             HWND left = GetDlgItem(hDlg, IDC_RESTORE_LEFTLIST);
 
@@ -4668,6 +4710,16 @@ INT_PTR CALLBACK ExtractDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM l
             for (int i = 0; i < count; ++i) ListView_SetCheckState(left, i, TRUE);
             return TRUE;
         }
+        if (id == IDC_EXTRACT_NONE) {
+            // 取消全选：取消选中 + 取消勾选
+            HWND left = GetDlgItem(hDlg, IDC_EXTRACT_LEFTLIST);
+            int count = ListView_GetItemCount(left);
+            for (int i = 0; i < count; ++i) {
+                ListView_SetItemState(left, i, 0, LVIS_SELECTED);
+                ListView_SetCheckState(left, i, FALSE);
+            }
+            return TRUE;
+        }
         if (id == IDC_EXTRACT_BTN) {
             HWND left = GetDlgItem(hDlg, IDC_EXTRACT_LEFTLIST);
             HWND right = GetDlgItem(hDlg, IDC_EXTRACT_RIGHTLIST);
@@ -4731,6 +4783,303 @@ INT_PTR CALLBACK ExtractDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM l
             if (files.empty()) { MessageBoxW(hDlg, L"选中的模组文件夹没有 group_*.json 文件", L"提示", MB_OK); return TRUE; }
             g_extractFiles = files;
             EndDialog(hDlg, IDOK);
+            return TRUE;
+        }
+        break;
+    }
+    }
+    return FALSE;
+}
+
+// ------------------------------------------------------------------
+// 翻译缺失（v2.3.5）：扫描 MOD 收集全部未翻译英文条目
+// ------------------------------------------------------------------
+static bool CollectMissingEntries()
+{
+    g_missingEntries.clear();
+    g_missingByFolder.clear();
+    if (g_cfg.penumbraDir.empty()) return false;
+    fs::path penRoot = fs::u8path(g_cfg.penumbraDir);
+    std::error_code ec;
+    if (!fs::exists(penRoot, ec) || ec) return false;
+    auto allFiles = ScanGroupFiles(penRoot);
+    if (allFiles.empty()) return false;
+
+    for (auto& file : allFiles) {
+        std::string data;
+        if (!read_binary_file(file, data)) continue;
+        json j;
+        try { j = json::parse(clean_utf8(data)); }
+        catch (...) { continue; }
+        if (!j.is_object()) continue;
+
+        std::string rel = SafeRelativePath(file, penRoot);
+        std::wstring folder = file.parent_path().filename().wstring();
+        auto add = [&](const std::string& sec, const std::string& key, const std::string& text) {
+            if (text.empty()) return;
+            if (contains_chinese(text)) return;            // 已翻译不算缺失
+            if (!contains_english_letter(text)) return;    // 纯数字/符号不算缺失
+            g_missingEntries.push_back({ rel, sec, key, text });
+            g_missingByFolder[folder].push_back(g_missingEntries.size() - 1);
+        };
+        // 与 ExtractEnglish 完全一致的 key 组装，保证补翻结果能被「词典写入 Mod」应用
+        auto collectName = [&](const std::string& baseKey, const std::string& text) {
+            add("_options", baseKey + "||Name||" + text, text);
+        };
+        auto collectDesc = [&](const std::string& baseKey, const std::string& text) {
+            add("_descriptions", baseKey + "||Desc||" + text, text);
+        };
+        auto scanField = [&](const char* field, bool isName) {
+            if (!j.contains(field)) return;
+            const json& v = j[field];
+            auto emit = [&](const std::string& baseKey, const std::string& text) {
+                if (isName) collectName(baseKey, text); else collectDesc(baseKey, text);
+            };
+            if (v.is_string()) emit(rel, v.get<std::string>());
+            else if (v.is_object()) {
+                for (auto& it : v.items())
+                    if (it.value().is_string()) emit(rel + "||" + it.key(), it.value().get<std::string>());
+            }
+            else if (v.is_array()) {
+                int idx = 0;
+                for (auto& it : v.items()) {
+                    if (it.value().is_string()) emit(rel + "||[" + std::to_string(idx) + "]", it.value().get<std::string>());
+                    idx++;
+                }
+            }
+        };
+        scanField("Name", true);
+        scanField("Description", false);
+
+        // Options 里的选项值
+        if (j.contains("Options") && j["Options"].is_array()) {
+            std::set<std::string> seenOpt; // 同一 group 内按值去重（与提取一致）
+            for (auto& opt : j["Options"].items()) {
+                if (!opt.value().is_object()) continue;
+                if (!opt.value().contains("Name")) continue;
+                const json& nv = opt.value()["Name"];
+                if (!nv.is_string()) continue;
+                std::string oname = nv.get<std::string>();
+                if (oname.empty()) continue;
+                std::string stdOpt = oname;
+                auto slash = oname.find(" / ");
+                if (slash != std::string::npos) {
+                    std::string eng = oname.substr(0, slash);
+                    std::string zh = oname.substr(slash + 3);
+                    std::string trimEng = eng, trimZh = zh;
+                    size_t ss = trimEng.find_first_not_of(" \t");
+                    if (ss != std::string::npos) trimEng = trimEng.substr(ss);
+                    ss = trimZh.find_first_not_of(" \t");
+                    if (ss != std::string::npos) trimZh = trimZh.substr(ss);
+                    if (contains_chinese(zh) && !contains_chinese(eng))
+                        stdOpt = trimZh + "（" + trimEng + "）";
+                }
+                if (contains_chinese(stdOpt)) continue;
+                if (!seenOpt.insert(stdOpt).second) continue;
+                add("_options", rel + "||Opt||" + stdOpt, stdOpt);
+            }
+        }
+    }
+    return !g_missingEntries.empty();
+}
+
+// ------------------------------------------------------------------
+// 翻译缺失对话框（v2.3.5）：左侧模组文件夹，右侧缺失条目，勾选后「翻译选中」
+// 交互与恢复备份/提取英文统一：点击即勾选、拉框/Shift/Ctrl 多选、全选、取消全选
+// ------------------------------------------------------------------
+INT_PTR CALLBACK MissingDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
+{
+    switch (message) {
+    case WM_INITDIALOG: {
+        HWND left = GetDlgItem(hDlg, IDC_MISS_LEFTLIST);
+        HWND right = GetDlgItem(hDlg, IDC_MISS_RIGHTLIST);
+        ListView_SetExtendedListViewStyle(left, LVS_EX_CHECKBOXES | LVS_EX_FULLROWSELECT);
+        ListView_SetExtendedListViewStyle(right, LVS_EX_CHECKBOXES | LVS_EX_FULLROWSELECT);
+        LVCOLUMN col = {};
+        col.mask = LVCF_WIDTH;
+        col.cx = 1000;
+        ListView_InsertColumn(left, 0, &col);
+        ListView_InsertColumn(right, 0, &col);
+
+        // 左侧：含缺失条目的模组文件夹（按缺失条数降序，多的在前优先）
+        std::vector<std::pair<std::wstring, int>> folders;
+        for (auto& kv : g_missingByFolder) folders.emplace_back(kv.first, (int)kv.second.size());
+        std::sort(folders.begin(), folders.end(),
+            [](const auto& a, const auto& b) { return a.second > b.second; });
+        for (auto& f : folders) {
+            LVITEM item = {};
+            item.mask = LVIF_TEXT;
+            item.iItem = INT_MAX;
+            std::wstring label = f.first + L"  (" + std::to_wstring(f.second) + L")";
+            item.pszText = (LPWSTR)label.c_str();
+            ListView_InsertItem(left, &item);
+        }
+        if (folders.empty()) {
+            MessageBoxW(hDlg, L"未发现未翻译的英文条目", L"提示", MB_OK);
+            EndDialog(hDlg, IDCANCEL);
+        }
+        return TRUE;
+    }
+    case WM_NOTIFY: {
+        NMHDR* nm = (NMHDR*)lParam;
+        if (nm->idFrom == IDC_MISS_LEFTLIST && nm->code == LVN_ITEMCHANGED) {
+            NMLISTVIEW* nmlv = (NMLISTVIEW*)lParam;
+            if ((nmlv->uChanged & LVIF_STATE)
+                && ((nmlv->uNewState & LVIS_SELECTED) != (nmlv->uOldState & LVIS_SELECTED))) {
+                HWND left = GetDlgItem(hDlg, IDC_MISS_LEFTLIST);
+                // 高亮选中 ↔ 勾选同步（与恢复备份/提取英文一致）
+                if (nmlv->uNewState & LVIS_SELECTED) {
+                    ListView_SetCheckState(left, nmlv->iItem, TRUE);
+                } else if (nmlv->uOldState & LVIS_SELECTED) {
+                    ListView_SetCheckState(left, nmlv->iItem, FALSE);
+                }
+                // 刷新右侧：当前选中文件夹的缺失条目
+                HWND right = GetDlgItem(hDlg, IDC_MISS_RIGHTLIST);
+                ListView_DeleteAllItems(right);
+                int sel = ListView_GetNextItem(left, -1, LVNI_SELECTED);
+                if (sel < 0) return TRUE;
+                wchar_t label[1100] = {};
+                ListView_GetItemText(left, sel, 0, label, 1100);
+                std::wstring name = label;
+                size_t pos = name.rfind(L"  (");
+                if (pos != std::wstring::npos) name = name.substr(0, pos);
+                auto it = g_missingByFolder.find(name);
+                if (it != g_missingByFolder.end()) {
+                    for (size_t ei : it->second) {
+                        const MissingEntry& e = g_missingEntries[ei];
+                        std::string type;
+                        if (e.sec == "_descriptions") type = "描述";
+                        else type = (e.key.find("||Opt||") != std::string::npos) ? "选项" : "组名";
+                        std::wstring w = utf8_to_wstring(type + "｜" + e.english);
+                        LVITEM item = {};
+                        item.mask = LVIF_TEXT;
+                        item.iItem = INT_MAX;
+                        item.pszText = (LPWSTR)w.c_str();
+                        ListView_InsertItem(right, &item);
+                    }
+                }
+            }
+        }
+        return TRUE;
+    }
+    case WM_COMMAND: {
+        int id = LOWORD(wParam);
+        if (id == IDC_MISS_CLOSE || id == IDCANCEL) {
+            EndDialog(hDlg, IDCANCEL);
+            return TRUE;
+        }
+        HWND left = GetDlgItem(hDlg, IDC_MISS_LEFTLIST);
+        HWND right = GetDlgItem(hDlg, IDC_MISS_RIGHTLIST);
+        if (id == IDC_MISS_ALL) {
+            int count = ListView_GetItemCount(left);
+            for (int i = 0; i < count; ++i) ListView_SetCheckState(left, i, TRUE);
+            return TRUE;
+        }
+        if (id == IDC_MISS_NONE) {
+            int count = ListView_GetItemCount(left);
+            for (int i = 0; i < count; ++i) {
+                ListView_SetItemState(left, i, 0, LVIS_SELECTED);
+                ListView_SetCheckState(left, i, FALSE);
+            }
+            return TRUE;
+        }
+        if (id == IDC_MISS_RIGHTALL) {
+            int count = ListView_GetItemCount(right);
+            for (int i = 0; i < count; ++i) ListView_SetCheckState(right, i, TRUE);
+            return TRUE;
+        }
+        if (id == IDC_MISS_RIGHTNONE) {
+            int count = ListView_GetItemCount(right);
+            for (int i = 0; i < count; ++i) {
+                ListView_SetItemState(right, i, 0, LVIS_SELECTED);
+                ListView_SetCheckState(right, i, FALSE);
+            }
+            return TRUE;
+        }
+        if (id == IDC_MISS_BTN) {
+            // 收集左侧勾选文件夹（未勾选时退回高亮选中项）
+            std::vector<int> checked;
+            int count = ListView_GetItemCount(left);
+            for (int i = 0; i < count; ++i)
+                if (ListView_GetCheckState(left, i)) checked.push_back(i);
+            if (checked.empty()) {
+                int s = -1;
+                while ((s = ListView_GetNextItem(left, s, LVNI_SELECTED)) != -1) checked.push_back(s);
+            }
+            if (checked.empty()) { MessageBoxW(hDlg, L"请勾选或选中要翻译的模组文件夹", L"提示", MB_OK); return TRUE; }
+
+            // 右侧勾选的条目（仅对当前高亮文件夹生效；未勾选则取该文件夹全部缺失条目）
+            int curSel = ListView_GetNextItem(left, -1, LVNI_SELECTED);
+            std::vector<int> selR;
+            int rcount = ListView_GetItemCount(right);
+            for (int ri = 0; ri < rcount; ++ri)
+                if (ListView_GetCheckState(right, ri)) selR.push_back(ri);
+
+            json out;
+            out["_options"] = json::object();
+            out["_descriptions"] = json::object();
+            size_t selCount = 0;
+            for (int idx : checked) {
+                wchar_t label[1100] = {};
+                ListView_GetItemText(left, idx, 0, label, 1100);
+                std::wstring name = label;
+                size_t pos = name.rfind(L"  (");
+                if (pos != std::wstring::npos) name = name.substr(0, pos);
+                auto it = g_missingByFolder.find(name);
+                if (it == g_missingByFolder.end()) continue;
+                if (idx == curSel && !selR.empty()) {
+                    for (int ri : selR) {
+                        if (ri < 0 || ri >= (int)it->second.size()) continue;
+                        const MissingEntry& e = g_missingEntries[it->second[ri]];
+                        out[e.sec][e.key] = "";
+                        selCount++;
+                    }
+                } else {
+                    for (size_t ei : it->second) {
+                        const MissingEntry& e = g_missingEntries[ei];
+                        out[e.sec][e.key] = "";
+                        selCount++;
+                    }
+                }
+            }
+            if (selCount == 0) { MessageBoxW(hDlg, L"未选择任何缺失条目", L"提示", MB_OK); return TRUE; }
+            if (g_cfg.translationDir.empty()) {
+                MessageBoxW(hDlg, L"请先在主界面设置翻译目录", L"提示", MB_OK);
+                return TRUE;
+            }
+            std::error_code dec;
+            fs::create_directories(fs::u8path(g_cfg.translationDir), dec);
+            std::string ts = now_timestamp_human();
+            fs::path outPath = fs::u8path(g_cfg.translationDir) / fs::u8path(ts + "_未翻译.json");
+            if (!write_binary_file(outPath, safeDump(out, 2))) {
+                MessageBoxW(hDlg, L"写入 _未翻译.json 失败", L"错误", MB_OK | MB_ICONERROR);
+                return TRUE;
+            }
+            int ask = MessageBoxW(hDlg, (std::wstring(L"已生成 ") + outPath.filename().wstring()
+                + L"（" + std::to_wstring((int)selCount) + L" 条缺失条目）。是否立即开始 AI 翻译？").c_str(),
+                L"翻译缺失", MB_YESNO | MB_ICONQUESTION);
+            EndDialog(hDlg, IDOK);
+            if (ask == IDYES) {
+                g_aiTargetFile = outPath;
+                SaveConfig();
+                g_busy = true;
+                g_cancel = false;
+                HWND mw = g_hMainWnd;
+                EnableWindow(GetDlgItem(mw, IDC_BTN_EXTRACT), FALSE);
+                EnableWindow(GetDlgItem(mw, IDC_BTN_IMPORT), FALSE);
+                EnableWindow(GetDlgItem(mw, IDC_BTN_APPLY), FALSE);
+                EnableWindow(GetDlgItem(mw, IDC_BTN_RESTORE), FALSE);
+                EnableWindow(GetDlgItem(mw, IDC_BTN_BLACKLIST), FALSE);
+                EnableWindow(GetDlgItem(mw, IDC_BTN_CUSTOM), FALSE);
+                EnableWindow(GetDlgItem(mw, IDC_BTN_WIKI), FALSE);
+                EnableWindow(GetDlgItem(mw, IDC_BTN_AI_TRANSLATE), FALSE);
+                EnableWindow(GetDlgItem(mw, IDC_BTN_AI_TEST), FALSE);
+                EnableWindow(GetDlgItem(mw, IDC_BTN_CHECK), FALSE);
+                EnableWindow(GetDlgItem(mw, IDC_BTN_MISSING), FALSE);
+                EnableWindow(GetDlgItem(mw, IDC_BTN_CANCEL), TRUE);
+                Log("===== 开始 AI 翻译（翻译缺失条目） =====");
+                LaunchWorker(RunAITranslateThread, "AI翻译");
+            }
             return TRUE;
         }
         break;
@@ -5146,6 +5495,7 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
         EnableWindow(GetDlgItem(hDlg, IDC_BTN_WIKI), TRUE);
         EnableWindow(GetDlgItem(hDlg, IDC_BTN_AI_TRANSLATE), TRUE);
         EnableWindow(GetDlgItem(hDlg, IDC_BTN_AI_TEST), TRUE);
+        EnableWindow(GetDlgItem(hDlg, IDC_BTN_MISSING), TRUE);
         EnableWindow(GetDlgItem(hDlg, IDC_BTN_CANCEL), FALSE);
         g_cancel = false;
         // 操作结束：进度条归零
@@ -5455,6 +5805,23 @@ INT_PTR CALLBACK MainDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
             EnableWindow(GetDlgItem(hDlg, IDC_BTN_CANCEL), TRUE);
             Log("===== 开始检查翻译 =====");
             LaunchWorker(RunCheckThread, "检查翻译");
+            break;
+        }
+        case IDC_BTN_MISSING: {
+            // v2.3.5：翻译缺失——扫描 MOD 收集未翻译英文条目，二级窗口勾选后 AI 补翻
+            if (g_busy) break;
+            if (g_cfg.penumbraDir.empty()) {
+                MessageBoxW(hDlg, L"请先设置 Penumbra 目录。", L"提示", MB_OK | MB_ICONINFORMATION);
+                break;
+            }
+            HCURSOR hOldCur = SetCursor(LoadCursorW(nullptr, IDC_WAIT)); // 全量扫描可能需要几秒
+            bool hasMissing = CollectMissingEntries();
+            SetCursor(hOldCur);
+            if (!hasMissing) {
+                MessageBoxW(hDlg, L"未发现未翻译的英文条目。", L"提示", MB_OK | MB_ICONINFORMATION);
+                break;
+            }
+            DialogBoxW(hInst, MAKEINTRESOURCEW(IDD_MISSING_DIALOG), hDlg, MissingDlgProc);
             break;
         }
         case IDC_BTN_RESTORE: {

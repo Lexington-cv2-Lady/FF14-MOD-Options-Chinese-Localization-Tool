@@ -23,6 +23,7 @@
 #define IDC_RESTORE_BTN			1203
 #define IDC_RESTORE_CLOSE		1204
 #define IDC_RESTORE_ALL			1205
+#define IDC_RESTORE_NONE		1206
 
 // ---- Blacklist dialog ----
 #define IDD_BLACKLIST_DIALOG	1210
@@ -61,6 +62,18 @@
 #define IDC_EXTRACT_ALL			1263
 #define IDC_EXTRACT_BTN			1264
 #define IDC_EXTRACT_CLOSE		1265
+#define IDC_EXTRACT_NONE		1266
+
+// ---- Missing-translate dialog (v2.3.5) ----
+#define IDD_MISSING_DIALOG		1270
+#define IDC_MISS_LEFTLIST		1271
+#define IDC_MISS_ALL			1272
+#define IDC_MISS_NONE			1273
+#define IDC_MISS_BTN			1274
+#define IDC_MISS_CLOSE			1275
+#define IDC_MISS_RIGHTLIST		1276
+#define IDC_MISS_RIGHTALL		1277
+#define IDC_MISS_RIGHTNONE		1278
 
 // ---- Main window controls ----
 #define IDC_EDIT_PENUMBRA		1300
@@ -131,3 +144,4 @@
 #define IDC_BTN_AI_SELECT		1346
 
 #define IDC_BTN_CHECK			1347
+#define IDC_BTN_MISSING			1349
