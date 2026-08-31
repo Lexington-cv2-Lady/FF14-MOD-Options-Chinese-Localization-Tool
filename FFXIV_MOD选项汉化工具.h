@@ -158,6 +158,7 @@ struct AppConfig {
     bool autoFontSize = true;  // 窗口缩放时是否自动调整字体大小
     int winX = -1, winY = -1;  // 上次退出时的窗口位置（-1 表示未保存，使用系统默认）
     int winW = 0, winH = 0;    // 上次退出时的窗口大小（0 表示使用默认尺寸）
+    std::map<int, std::pair<int, int>> dlgPos; // 模态对话框资源 ID -> 上次关闭时的位置(x,y)
 };
 
 // ------------------------------------------------------------------

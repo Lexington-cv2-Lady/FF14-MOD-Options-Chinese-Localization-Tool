@@ -376,6 +376,13 @@ static json BuildConfigJson(const AppConfig& c)
     j["winY"] = c.winY;
     j["winW"] = c.winW;
     j["winH"] = c.winH;
+    {
+        json pa = json::array();
+        for (const auto& kv : c.dlgPos) {
+            pa.push_back({ {"id", kv.first}, {"x", kv.second.first}, {"y", kv.second.second} });
+        }
+        j["dlgPos"] = pa;
+    }
     return j;
 }
 
@@ -504,6 +511,15 @@ bool LoadConfigFrom(const fs::path& cfgPath, bool asUserLayer)
         g_cfg.winY = j.value("winY", g_cfg.winY);
         g_cfg.winW = j.value("winW", g_cfg.winW);
         g_cfg.winH = j.value("winH", g_cfg.winH);
+        g_cfg.dlgPos.clear();
+        if (j.contains("dlgPos") && j["dlgPos"].is_array()) {
+            for (const auto& it : j["dlgPos"]) {
+                int id = it.value("id", 0);
+                int x = it.value("x", 0);
+                int y = it.value("y", 0);
+                if (id > 0) g_cfg.dlgPos[id] = { x, y };
+            }
+        }
         if (presetRestored) SaveDefaultConfig(); // 默认配置预设缺失时写回，避免每次启动都靠内存兜底
         return true;
     }
@@ -4290,11 +4306,46 @@ static void CenterDialogOnOwner(HWND hDlg, HWND hOwner)
     SetWindowPos(hDlg, nullptr, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
+// 当前打开的模态对话框资源 ID（v2.4.0 起：关闭时据此保存上次位置）
+static int g_activeDlgId = 0;
+
+// 模态对话框打开时定位：有保存位置且仍在可见屏幕内则恢复，否则相对主窗口居中
+static void PositionDialog(HWND hDlg, int dlgId)
+{
+    g_activeDlgId = dlgId;
+    auto it = g_cfg.dlgPos.find(dlgId);
+    if (it != g_cfg.dlgPos.end()) {
+        int x = it->second.first, y = it->second.second;
+        int vx = GetSystemMetrics(SM_XVIRTUALSCREEN);
+        int vy = GetSystemMetrics(SM_YVIRTUALSCREEN);
+        int vw = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+        int vh = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+        // 只要求窗口左上角区域仍可见（允许窗口大部分移出屏幕）
+        if (x + 40 >= vx && x <= vx + vw && y + 20 >= vy && y <= vy + vh) {
+            SetWindowPos(hDlg, nullptr, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+            return;
+        }
+    }
+    CenterDialogOnOwner(hDlg, GetParent(hDlg));
+}
+
+// 模态对话框关闭（WM_DESTROY）时记录位置并持久化
+static void RememberDlgPos(HWND hDlg)
+{
+    if (g_activeDlgId == 0) return;
+    RECT rc = {};
+    if (GetWindowRect(hDlg, &rc)) {
+        g_cfg.dlgPos[g_activeDlgId] = { rc.left, rc.top };
+        SaveConfig();
+    }
+    g_activeDlgId = 0;
+}
+
 static INT_PTR CALLBACK SelectAICfgDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
 {
     switch (message) {
     case WM_INITDIALOG: {
-        CenterDialogOnOwner(hDlg, GetParent(hDlg));
+        PositionDialog(hDlg, IDD_AI_SELECT_DIALOG);
         g_aiSelResult = -1;
         HWND hList = GetDlgItem(hDlg, IDC_AI_SELECT_LIST);
         if (!hList) return TRUE;
@@ -4426,6 +4477,9 @@ static INT_PTR CALLBACK SelectAICfgDlgProc(HWND hDlg, UINT message, WPARAM wPara
         }
         break;
     }
+    case WM_DESTROY:
+        RememberDlgPos(hDlg);
+        return TRUE;
     }
     return FALSE;
 }
@@ -4459,7 +4513,7 @@ INT_PTR CALLBACK RestoreDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM l
 {
     switch (message) {
     case WM_INITDIALOG: {
-        CenterDialogOnOwner(hDlg, GetParent(hDlg));
+        PositionDialog(hDlg, IDD_RESTORE_DIALOG);
         // 初始化左侧 ListView：单选高亮 + 复选框
         HWND left = GetDlgItem(hDlg, IDC_RESTORE_LEFTLIST);
         HWND right = GetDlgItem(hDlg, IDC_RESTORE_RIGHTLIST);
@@ -4640,6 +4694,23 @@ INT_PTR CALLBACK RestoreDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM l
                 }
                 if (selectedZips.empty()) { skip++; continue; }
 
+                // 恢复到备份时状态：先清空该模组文件夹下所有 group_*.json（含被外部改名/残留的文件），
+                // 再解压备份还原——避免被改名/多出来的 group 文件残留导致“恢复备份失效”
+                {
+                    std::vector<fs::path> toRemove;
+                    try {
+                        std::error_code de;
+                        for (auto& fe : fs::directory_iterator(modDir, fs::directory_options::skip_permission_denied, de)) {
+                            if (de) break;
+                            if (!fe.is_regular_file(de)) continue;
+                            if (is_group_json(fe.path().filename().wstring()))
+                                toRemove.push_back(fe.path());
+                        }
+                    }
+                    catch (...) {}
+                    for (auto& p : toRemove) { std::error_code de; fs::remove(p, de); }
+                }
+
                 bool allOk = true;
                 for (auto& z : selectedZips) {
                     if (!ExtractZip(z, modDir)) { allOk = false; fail++; }
@@ -4654,6 +4725,9 @@ INT_PTR CALLBACK RestoreDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM l
         }
         break;
     }
+    case WM_DESTROY:
+        RememberDlgPos(hDlg);
+        return TRUE;
     }
     return FALSE;
 }
@@ -4970,7 +5044,7 @@ INT_PTR CALLBACK MissingDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM l
 {
     switch (message) {
     case WM_INITDIALOG: {
-        CenterDialogOnOwner(hDlg, GetParent(hDlg));
+        PositionDialog(hDlg, IDD_MISSING_DIALOG);
         HWND left = GetDlgItem(hDlg, IDC_MISS_LEFTLIST);
         HWND right = GetDlgItem(hDlg, IDC_MISS_RIGHTLIST);
         ListView_SetExtendedListViewStyle(left, LVS_EX_CHECKBOXES | LVS_EX_FULLROWSELECT);
@@ -5175,6 +5249,9 @@ INT_PTR CALLBACK MissingDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM l
         }
         break;
     }
+    case WM_DESTROY:
+        RememberDlgPos(hDlg);
+        return TRUE;
     }
     return FALSE;
 }
@@ -5259,7 +5336,7 @@ INT_PTR CALLBACK WikiCatsDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM 
 
     switch (message) {
     case WM_INITDIALOG: {
-        CenterDialogOnOwner(hDlg, GetParent(hDlg));
+        PositionDialog(hDlg, IDD_WIKI_CATS_DIALOG);
         // 与恢复备份一致：复选框 + 整行高亮；单击行即勾选（LVN_ITEMCHANGED 联动），Ctrl+A / 全选按钮可框选全部
         ListView_SetExtendedListViewStyle(hList, LVS_EX_CHECKBOXES | LVS_EX_FULLROWSELECT);
         LVCOLUMN col = {};
@@ -5360,7 +5437,7 @@ INT_PTR CALLBACK ImportTransDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPAR
 
     switch (message) {
     case WM_INITDIALOG: {
-        CenterDialogOnOwner(hDlg, GetParent(hDlg));
+        PositionDialog(hDlg, IDD_IMPORT_TRANS_DIALOG);
         if (g_cfg.translationDir.empty()) {
             MessageBoxW(hDlg, L"请先选择翻译目录。", L"提示", MB_OK | MB_ICONINFORMATION);
             EndDialog(hDlg, IDCANCEL);
@@ -5453,6 +5530,7 @@ INT_PTR CALLBACK ImportTransDlgProc(HWND hDlg, UINT message, WPARAM wParam, LPAR
         break;
     }
     case WM_DESTROY: {
+        RememberDlgPos(hDlg);
         int cnt = (int)SendMessageW(hList, LVM_GETITEMCOUNT, 0, 0);
         for (int i = 0; i < cnt; ++i) {
             LVITEM lvi = {};
@@ -5478,7 +5556,7 @@ INT_PTR CALLBACK About(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
     UNREFERENCED_PARAMETER(lParam);
     switch (message) {
     case WM_INITDIALOG: {
-        CenterDialogOnOwner(hDlg, GetParent(hDlg));
+        PositionDialog(hDlg, IDD_ABOUTBOX);
         return TRUE;
     }
     case WM_COMMAND:
@@ -5487,6 +5565,9 @@ INT_PTR CALLBACK About(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
             return TRUE;
         }
         break;
+    case WM_DESTROY:
+        RememberDlgPos(hDlg);
+        return TRUE;
     }
     return FALSE;
 }
