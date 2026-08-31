@@ -2,7 +2,7 @@
 
 ## FFXIV_MOD选项汉化工具
 
-- 二级窗口交互约定（2026-08-31，v2.3.4）：「1. 提取英文」与「4. 恢复备份」共用同款二级窗口交互——左侧 ListView 列出模组文件夹（LVS_EX_CHECKBOXES，点击高亮即同步勾选），右侧 ListBox 多选当前高亮文件夹的文件，左上角「全选」勾选全部文件夹。新增对话框控件 ID 需三处同步：rc 用字面量数字（防 IDE 资源编辑器回滚 Resource.h）、cpp 顶部 #ifndef 兜底宏、Resource.h 定义宏。注意 ListView_SetCheckState 宏展开后 if/else 必须带大括号（无括号报 C2181）。
+- 二级窗口交互规范（2026-08-31，v2.3.5 统一）：「提取英文」「恢复备份」「翻译缺失」等二级窗口统一——左侧 ListView（LVS_EX_CHECKBOXES | LVS_EX_FULLROWSELECT，点击高亮即同步勾选/取消勾选，拉框/Shift/Ctrl 多选联动勾选），右侧为当前高亮项的子项（多选），底部「全选」「取消全选」+ 主操作按钮（提取选中/恢复选中/翻译选中）。「取消全选」= 取消选中 + 取消勾选。导入翻译窗口例外（用户明确要求无全选防误批量写入）。新增对话框控件 ID 需三处同步：rc 用字面量数字（防 IDE 资源编辑器回滚 Resource.h）、cpp 顶部 #ifndef 兜底宏、Resource.h 定义宏；ID 不得与已有冲突（如 1348 已属 IDC_BTN_CUSTOM）。注意 ListView_SetCheckState 宏展开后 if/else 必须带大括号（无括号报 C2181）。「翻译缺失」窗口（IDD_MISSING_DIALOG=1270 系列）与 AI 翻译链路的对接：CollectMissingEntries() 扫描 MOD 收集缺失条目，key 组装与 ExtractEnglish 完全一致（rel||Name||原文 / rel||Desc||原文 / rel||Opt||原文），选中后生成 时间戳_未翻译.json 并把 g_aiTargetFile 指向它，RunAITranslateThread 开头检测 g_aiTargetFile 非空则直接翻译（failPath 须在 if/else 外声明）。
 
 - 翻译规则同步约定（2026-08-30，用户明确要求）：凡修改 AI 翻译规则，必须同时同步两处——(1) 程序内置的 system prompt（`AITranslateBatch` 里的 `sysMsg`，约 2700 行附近）；(2) 写入 `_未翻译.json` 的「翻译规则」字段（`out["翻译规则"]`，约 648-659 行，这是给外部 AI 看的规则）。两处都要改，不能只改一处。
 - 翻译规则相关：短名称用「中文（英文）」格式；无法翻译的专有名词/缩写/品牌名（如 EXQB、Uranus）原样保留英文，禁止输出「英文（英文）」重复格式；`fixRepeatParen()` 在 AI 译文写入前做兜底修正。
