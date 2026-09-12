@@ -19,7 +19,11 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static ICommandManager CommandManager { get; private set; } = null!;
     [PluginService] internal static IPluginLog Log { get; private set; } = null!;
 
-    private const string CommandName = "/pm";
+    private const string CommandName = "/pmh";
+    private const string LegacyCommandName = "/pm"; // 旧指令，保留兼容
+
+    /// <summary> 旧版中文插件 ID（InternalName）；用于把旧配置文件迁移到新的英文 ID。 </summary>
+    private const string LegacyInternalName = "FFXIV_penumbra的模组汉化插件";
 
     private string _initialTranslationPath;
     private string _initialDictionaryPath;
@@ -51,6 +55,7 @@ public sealed class Plugin : IDalamudPlugin
 
     public Plugin()
     {
+        MigrateLegacyConfig(); // 插件 ID 由中文改为英文：先迁移旧配置（含 API Key），再读取
         Configuration = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
         // 旧版单一 API Key 字段一次性迁移：落到「当前服务商」名下（之后按服务商分存，切换/删除不再串 Key）
         Configuration.AiApiKeys ??= new();
@@ -100,6 +105,10 @@ public sealed class Plugin : IDalamudPlugin
         CommandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
         {
             HelpMessage = "打开 FFXIV Penumbra 模组汉化插件主窗口"
+        });
+        CommandManager.AddHandler(LegacyCommandName, new CommandInfo(OnCommand)
+        {
+            HelpMessage = "打开 FFXIV Penumbra 模组汉化插件主窗口（旧指令，同 /pmh）"
         });
 
         _initialTranslationPath = Configuration.TranslationPath;
@@ -247,6 +256,50 @@ public sealed class Plugin : IDalamudPlugin
         }
     }
 
+    /// <summary>
+    /// 插件 ID 从中文（FFXIV_penumbra的模组汉化插件）改为英文后，把旧配置文件复制到新 ID 目录，
+    /// 避免升级后丢失目录设置与按服务商分存的 API Key。仅在新配置尚不存在时迁移。
+    /// </summary>
+    private void MigrateLegacyConfig()
+    {
+        try
+        {
+            var newFile = PluginInterface.ConfigFile; // ...\pluginConfigs\FFXIV_Penumbra_Mod_Chinese_Localization_Plugin.json
+            if (newFile.Exists) return;
+            var dir = newFile.DirectoryName;
+            if (string.IsNullOrEmpty(dir)) return;
+            var oldFile = Path.Combine(dir, LegacyInternalName + ".json");
+            if (!File.Exists(oldFile)) return;
+
+            var newDir = newFile.Directory; // ...\pluginConfigs\<新ID>\
+            if (newDir is { Exists: false }) newDir.Create();
+
+            // 1) 配置文件本体
+            File.Copy(oldFile, newFile.FullName, overwrite: true);
+            // 2) 旧配置目录（若存在：日志等）一并迁移，已存在的不覆盖
+            var oldDir = Path.Combine(dir, LegacyInternalName);
+            if (Directory.Exists(oldDir) && newDir != null)
+            {
+                CopyDirIfMissing(oldDir, newDir.FullName);
+            }
+            Log.Information($"已把旧插件配置（{LegacyInternalName}）迁移到新 ID（{PluginInterface.InternalName}）");
+        }
+        catch (Exception ex)
+        {
+            Log.Warning($"旧插件配置迁移失败（不影响新配置）：{ex.Message}");
+        }
+    }
+
+    private static void CopyDirIfMissing(string src, string dst)
+    {
+        Directory.CreateDirectory(dst);
+        foreach (var f in Directory.GetFiles(src))
+        {
+            var t = Path.Combine(dst, Path.GetFileName(f));
+            if (!File.Exists(t)) File.Copy(f, t);
+        }
+    }
+
     public void Dispose()
     {
         PluginInterface.UiBuilder.Draw -= DrawAll;
@@ -265,6 +318,7 @@ public sealed class Plugin : IDalamudPlugin
         Penumbra.Dispose();
 
         CommandManager.RemoveHandler(CommandName);
+        CommandManager.RemoveHandler(LegacyCommandName);
     }
 
     private void OnCommand(string command, string args)

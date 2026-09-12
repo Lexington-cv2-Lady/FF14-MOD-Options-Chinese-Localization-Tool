@@ -2,16 +2,24 @@
 <Project Sdk="Dalamud.NET.Sdk/15.0.0">
   <PropertyGroup>
     <Version>1.0.0.0</Version>
+    <!-- 插件 ID（InternalName）= 程序集名，必须为 ASCII；显示名（Name）用中文。 -->
+    <AssemblyName>FFXIV_Penumbra_Mod_Chinese_Localization_Plugin</AssemblyName>
     <!-- 不从 NuGet 包复制 pdb 调试符号（保持输出目录整洁） -->
     <CopyDebugSymbolFilesFromPackages>false</CopyDebugSymbolFilesFromPackages>
-    <!-- Manifest fields (see https://github.com/goatcorp/DalamudPackager/blob/827d88dc/DalamudPackager/DalamudPackager.cs#L420) -->
+    <!-- Manifest 字段（见 https://dalamud.dev/plugin-development/plugin-metadata）：
+         必填 Name / Author / Description / Punchline；InternalName/AssemblyVersion/DalamudApiLevel 由打包器自动填。
+         Punchline 为单行短摘要；Description 首行为摘要、其后为详细说明（手动换行以便安装器完整显示）。 -->
     <Author>Lexington-cv2-Lady</Author>
     <Name>FFXIV_penumbra的模组汉化插件</Name>
-    <Punchline>把 Penumbra 模组的英文选项翻译成简体中文并写回，游戏内即时生效。</Punchline>
-    <Description>读取 Penumbra 模组的选项与描述，调用词典（我的翻译 / 个性翻译 / wiki 术语 / AI 知识库）与 AI 翻译批量汉化，写回 meta.json / group_*.json 后自动触发 Penumbra 重载。应用前自动备份，可随时撤销。
-支持 Penumbra 新旧双格式、纯中文输出、黑名单保留专名。</Description>
+    <Punchline>把 Penumbra 模组的英文选项与描述批量汉化为简体中文并写回，游戏内即时生效。</Punchline>
+    <Description>读取 Penumbra 模组的选项与描述，用本地词典与 AI 批量汉化为简体中文，写回 meta.json / group_*.json 后自动触发 Penumbra 重载，游戏内即时生效。纯本地翻译，无遥测。
+汉化前自动备份（zip 按份数轮转），可一键还原且保留 Penumbra 的选项状态；支持 Penumbra 新旧双格式、纯中文输出、黑名单保留英文专名。
+词典来源：我的翻译 / 个性翻译 / wiki 术语对照 / AI 知识库 / 单词黑名单；AI 翻译内置多家国内主流服务商（按平台自动拆批），也支持导出后交给外部 AI 翻译再汇总。
+可将 Penumbra 模组的英文选项一键中文化，适合追求中文界面的玩家。</Description>
     <RepoUrl>https://github.com/Lexington-cv2-Lady/FFXIV_Penumbra_Mod_Chinese_Localization_Plugin</RepoUrl>
-    <Tags>汉化;翻译;模组;penumbra;ffxiv;chinese;localization</Tags>
+    <IconUrl>https://raw.githubusercontent.com/Lexington-cv2-Lady/FFXIV_Penumbra_Mod_Chinese_Localization_Plugin/main/Data/icon.png</IconUrl>
+    <Tags>汉化;翻译;模组;penumbra;ffxiv;chinese;localization;中文</Tags>
+    <CategoryTags>utility</CategoryTags>
     <!-- dev 插件部署目录（构建后自动复制） -->
     <DevPluginDir>C:\Users\<USER>\AppData\Roaming\XIVLauncherCN\devPlugins\FFXIV_Penumbra_Mod_Chinese_Localization_Plugin</DevPluginDir>
   </PropertyGroup>
