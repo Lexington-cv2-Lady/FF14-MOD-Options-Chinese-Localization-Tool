@@ -1,0 +1,794 @@
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
+using System.Linq;
+using System.Numerics;
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using Dalamud.Bindings.ImGui;
+using Dalamud.Interface.Utility;
+using Dalamud.Interface.Utility.Raii;
+using Dalamud.Interface.Windowing;
+using FFXIVPenumbraHanhua.Services;
+
+namespace FFXIVPenumbraHanhua.Windows;
+
+public class MainWindow : Window, IDisposable
+{
+    private readonly Plugin plugin;
+    private readonly PenumbraService penumbra;
+    private readonly DictionaryService dict;
+    private readonly HanhuaService hanhua;
+
+    private int _selected = -1;
+    private bool _autoRefresh = true;
+    private bool _showMarked;   // 勾选「已翻译」：只看有标记的模组；默认只显示未翻译
+
+    // 多选集合（批量翻译 / 批量备份）
+    private readonly HashSet<int> _selectedSet = new();
+
+    // 左右分栏比例（分隔条可拖动）
+    private float _split = 0.34f;
+    private bool _draggingSplit;
+    // 详情区选项编辑缓冲
+    private readonly Dictionary<string, string> _editBufs = new();
+    private string _editFileKey = "";
+    private bool _showAllOptions;
+
+    // 详情区
+    private ModFileInfo? _selectedFile;
+    private string _result = "";
+
+    /// <summary> 翻译管线「仅提取勾选」用：当前勾选的模组列表。 </summary>
+    public IReadOnlyList<ModEntry> SelectedMods
+    {
+        get
+        {
+            var list = new List<ModEntry>();
+            foreach (var i in _selectedSet)
+            {
+                if (i >= 0 && i < penumbra.Mods.Count) list.Add(penumbra.Mods[i]);
+            }
+            return list;
+        }
+    }
+
+    public MainWindow(Plugin plugin, PenumbraService penumbra, DictionaryService dict, HanhuaService hanhua)
+        : base("模组汉化###HanhuaMain", ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse)
+    {
+        SizeConstraints = new WindowSizeConstraints
+        {
+            MinimumSize = new Vector2(720, 420),
+            MaximumSize = new Vector2(float.MaxValue, float.MaxValue)
+        };
+
+        this.plugin = plugin;
+        this.penumbra = penumbra;
+        this.dict = dict;
+        this.hanhua = hanhua;
+        this.penumbra.PenumbraDisposed += OnPenumbraDisposed;
+    }
+
+    private void OnPenumbraDisposed()
+    {
+        _selected = -1;
+        _selectedFile = null;
+        penumbra.Status = "Penumbra 已卸载，请重载插件后重试";
+    }
+
+    public void Dispose()
+    {
+        penumbra.PenumbraDisposed -= OnPenumbraDisposed;
+    }
+
+    public override void Draw()
+    {
+        // 顶部功能导航
+        DrawNavBar();
+
+        // 状态条
+        DrawStatusBar();
+
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+
+        // 双栏：左 = 模组列表（分隔条可拖动），右 = 详情
+        var avail = ImGui.GetContentRegionAvail();
+        var splitterW = 6f * ImGuiHelpers.GlobalScale;
+        var listW = Math.Max(200f, avail.X * _split);
+        var y0 = ImGui.GetCursorPosY();
+
+        using (var left = ImRaii.Child("##ModList", new Vector2(listW, avail.Y), true))
+        {
+            if (left.Success)
+            {
+                var visible = BuildVisibleList();
+                DrawModListHeader(visible);
+                ImGui.Spacing();
+                if (visible.Count == 0)
+                {
+                    ImGui.TextDisabled(_showMarked
+                        ? "没有「已翻译」标记的模组（取消勾选查看未翻译）"
+                        : "没有未翻译的模组（勾选「已翻译」查看已翻译）");
+                }
+                else
+                {
+                    // 列表独立滚动区：头部（全选）固定置顶
+                    using (var scroll = ImRaii.Child("##ModListScroll", new Vector2(-1, -1), false))
+                    {
+                        if (scroll.Success)
+                        {
+                            for (var k = 0; k < visible.Count; k++)
+                            {
+                                var i = visible[k];
+                                var mod = penumbra.Mods[i];
+                                var isChecked = _selectedSet.Contains(i);
+                                // 紧凑行：小内边距 → 勾选框更小、行更矮，窗口缩小时一屏可见更多
+                                ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, new Vector2(3f, 2f) * ImGuiHelpers.GlobalScale);
+                                if (ImGui.Checkbox($"##sel{i}", ref isChecked))
+                                {
+                                    if (isChecked) _selectedSet.Add(i);
+                                    else _selectedSet.Remove(i);
+                                }
+                                ImGui.SameLine();
+                                var name = mod.Name.Length > 0 ? mod.Name : mod.Directory;
+                                if (ImGui.Selectable(Truncate(name, ImGui.GetContentRegionAvail().X) + $"##{i}", _selected == i))
+                                {
+                                    _selected = i;
+                                    _selectedFile = null;
+                                    _result = "";
+                                }
+                                ImGui.PopStyleVar();
+                                if (ImGui.IsItemHovered())
+                                {
+                                    ImGui.SetTooltip(mod.Directory);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 可拖动分隔条：InvisibleButton 消费点击（防止误拖窗口）+ 宽热区 + 手动坐标计算
+        // 竖条 Y 直接取左栏 Child 绘制后的实际屏幕矩形，保证与左右栏上下完全对齐
+        var hotW = 12f * ImGuiHelpers.GlobalScale;
+        var draw = ImGui.GetWindowDrawList();
+        var winPos = ImGui.GetWindowPos();
+        var rmin = ImGui.GetWindowContentRegionMin();
+        var barMin = ImGui.GetItemRectMin();
+        var barMax = ImGui.GetItemRectMax();
+        var barX = barMin.X + listW;
+        var barY = barMin.Y;
+        var barBottom = barMax.Y;
+        var mouse = ImGui.GetMousePos();
+        var io = ImGui.GetIO();
+
+        ImGui.SetCursorPos(new Vector2(listW, y0));
+        ImGui.InvisibleButton("##splitter", new Vector2(hotW, avail.Y));
+        var hoverBar = ImGui.IsItemHovered();
+        var activeBar = ImGui.IsItemActive();
+        if (hoverBar || activeBar || _draggingSplit)
+        {
+            ImGui.SetMouseCursor(ImGuiMouseCursor.ResizeAll);
+            if (activeBar) _draggingSplit = true;
+            if (_draggingSplit && io.MouseDown[0])
+            {
+                _split = Math.Clamp((mouse.X - (winPos.X + rmin.X)) / avail.X, 0.18f, 0.78f);
+            }
+            if (!io.MouseDown[0]) _draggingSplit = false;
+        }
+        draw.AddRectFilled(new Vector2(barX, barY), new Vector2(barX + splitterW, barBottom),
+            ImGui.GetColorU32(new Vector4(0.7f, 0.7f, 0.7f, _draggingSplit || hoverBar ? 0.6f : 0.25f)));
+
+        ImGui.SetCursorPos(new Vector2(listW + hotW, y0));
+        using (var right = ImRaii.Child("##ModDetail", new Vector2(Math.Max(100f, avail.X - listW - hotW), avail.Y), true))
+        {
+            if (!right.Success) return;
+            DrawDetail();
+        }
+    }
+
+    /// <summary> 可见模组索引：默认只显示未翻译模组；勾选「已翻译」后只看有标记的模组。 </summary>
+    private List<int> BuildVisibleList()
+    {
+        var list = new List<int>();
+        for (var i = 0; i < penumbra.Mods.Count; i++)
+        {
+            var hasMark = plugin.Mark.HasMark(penumbra.Mods[i].Directory);
+            if (hasMark == _showMarked) list.Add(i);
+        }
+        return list;
+    }
+
+    /// <summary> 模组列表标题行：标题自适应剩余宽度，全选 / 已翻译 始终靠右缘（随分隔条同步移动）。 </summary>
+    private void DrawModListHeader(IReadOnlyList<int> visible)
+    {
+        var total = penumbra.Mods.Count;
+        var title = _showMarked
+            ? $"模组列表（已翻译 {visible.Count}/{total}）"
+            : $"模组列表（未翻译 {visible.Count}/{total}）";
+        var availW = ImGui.GetContentRegionAvail().X;
+
+        // 右侧两个勾选框宽度估算（勾选框 ≈ 帧高，加文字和间距）
+        var frameH = ImGui.GetFrameHeight();
+        var checkSelW = frameH + ImGui.CalcTextSize("全选").X + 10f * ImGuiHelpers.GlobalScale;
+        var checkMarkW = frameH + ImGui.CalcTextSize("已翻译").X + 10f * ImGuiHelpers.GlobalScale;
+        var rightBlock = checkSelW + checkMarkW + 8f * ImGuiHelpers.GlobalScale;
+
+        // 标题占用剩余宽度（超长截断）；勾选框靠右缘，随分隔条拖动同步移动
+        ImGui.TextUnformatted(FitTitle(title, Math.Max(40f, availW - rightBlock)));
+        ImGui.SameLine(Math.Max(40f, availW - rightBlock));
+        var allSelected = visible.Count > 0 && visible.All(i => _selectedSet.Contains(i));
+        if (ImGui.Checkbox("全选", ref allSelected))
+        {
+            _selectedSet.Clear();
+            if (allSelected)
+            {
+                foreach (var i in visible) _selectedSet.Add(i);
+            }
+        }
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip("勾选当前列表中的全部模组");
+        }
+        ImGui.SameLine(Math.Max(40f, availW - checkMarkW));
+        if (ImGui.Checkbox("已翻译", ref _showMarked))
+        {
+            // 切换筛选时清空勾选/选中，避免误操作被隐藏的模组
+            _selectedSet.Clear();
+            _selected = -1;
+            _selectedFile = null;
+            _result = "";
+        }
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip("默认：只显示未翻译模组（隐藏已翻译）；勾选后：只显示有「已翻译」标记的模组");
+        }
+    }
+
+    /// <summary> 标题按宽度截断（超出加省略号），保证行内按钮位置不随文字长度跳动。 </summary>
+    private static string FitTitle(string t, float maxW)
+    {
+        if (ImGui.CalcTextSize(t).X <= maxW) return t;
+        var s = "";
+        for (var i = 0; i < t.Length; i++)
+        {
+            var c = t[i];
+            if (ImGui.CalcTextSize(s + c + "…").X > maxW) break;
+            s += c;
+        }
+        return s + "…";
+    }
+
+    /// <summary> 顶部功能导航：各功能独立窗口。 </summary>
+    private void DrawNavBar()
+    {
+        if (ImGui.Button("汉化流程"))
+        {
+            plugin.TogglePipelineUi();
+        }
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip("① 提取英文 → ② 预翻译 → ③ AI 翻译 → ④ 汇总已翻译内容 → ⑤ 翻译写入MOD\n（⑤ 直写版即本页：勾选模组 → 翻译并写入）");
+        }
+        ImGui.SameLine();
+        if (ImGui.Button("备份管理"))
+        {
+            plugin.ToggleBackupUi();
+        }
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip("创建 / 还原 / 删除备份");
+        }
+        ImGui.SameLine();
+        if (ImGui.Button("词典管理"))
+        {
+            plugin.ToggleDictionaryUi();
+        }
+        ImGui.SameLine();
+        if (ImGui.Button("Wiki提取"))
+        {
+            plugin.ToggleWikiUi();
+        }
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip("从灰机 wiki 抓取官方中/英名，按分类写入 词典目录\\wiki_术语对照\\");
+        }
+        ImGui.SameLine();
+        if (ImGui.Button("日志"))
+        {
+            plugin.ToggleLogUi();
+        }
+        ImGui.SameLine();
+        if (ImGui.Button("设置"))
+        {
+            plugin.ToggleConfigUi();
+        }
+        ImGui.Separator();
+    }
+
+    private void DrawStatusBar()
+    {
+        ImGui.TextUnformatted(penumbra.Status);
+        ImGui.SameLine();
+        ImGui.TextColored(new Vector4(0.6f, 0.85f, 1f, 1f), "|");
+        ImGui.SameLine();
+        ImGui.TextUnformatted(dict.Status);
+        ImGui.SameLine();
+        if (ImGui.Button("刷新"))
+        {
+            penumbra.Refresh();
+        }
+        ImGui.SameLine();
+        if (ImGui.Button("重载词典"))
+        {
+            plugin.ReloadDictionary();
+        }
+
+        if (_autoRefresh && penumbra.Mods.Count == 0 && penumbra.Status.StartsWith("未连接", StringComparison.Ordinal))
+        {
+            penumbra.Refresh();
+        }
+    }
+
+    private void DrawDetail()
+    {
+        if (_selected < 0 || _selected >= penumbra.Mods.Count)
+        {
+            // 新用户引导：词典/翻译目录未设置时，详情区先引导配置，设置完后自动隐藏
+            var cfg = plugin.Configuration;
+            var dictMissing = string.IsNullOrWhiteSpace(cfg.DictionaryPath) || !Directory.Exists(cfg.DictionaryPath);
+            var transMissing = string.IsNullOrWhiteSpace(cfg.TranslationPath) || !Directory.Exists(cfg.TranslationPath);
+            if (dictMissing || transMissing)
+            {
+                ImGui.TextUnformatted("欢迎使用模组汉化工具！开始前需要先设置两个目录：");
+                ImGui.Spacing();
+                if (dictMissing)
+                {
+                    ImGui.TextColored(new Vector4(1f, 0.75f, 0.3f, 1f), "⚠ 词典目录未设置（存放 我的翻译 / 个性翻译 / wiki 术语 / AI知识库）");
+                }
+                else
+                {
+                    ImGui.TextColored(new Vector4(0.55f, 0.9f, 0.55f, 1f), "✓ 词典目录已设置");
+                }
+                if (transMissing)
+                {
+                    ImGui.TextColored(new Vector4(1f, 0.75f, 0.3f, 1f), "⚠ 翻译目录未设置（提取英文 / AI翻译 的输入输出目录）");
+                }
+                else
+                {
+                    ImGui.TextColored(new Vector4(0.55f, 0.9f, 0.55f, 1f), "✓ 翻译目录已设置");
+                }
+                ImGui.Spacing();
+                if (ImGui.Button("打开设置，配置目录"))
+                {
+                    plugin.ToggleConfigUi();
+                }
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.SetTooltip("在设置窗口中填写词典目录与翻译目录并点击「保存设置」");
+                }
+                ImGui.Spacing();
+                ImGui.TextDisabled("目录设置完成后，本提示自动消失，可正常开始汉化。");
+                return;
+            }
+            ImGui.TextDisabled("← 左侧选择一个模组查看详情");
+            return;
+        }
+
+        var mod = penumbra.Mods[_selected];
+        var modRoot2 = penumbra.GetModRoot();
+        var modFullPath = Path.Combine(modRoot2 ?? "", mod.Directory);
+
+        // 模组行：最左「打开」按钮（带阴影） + 模组名（可点击打开文件夹）
+        var openW = 56f * ImGuiHelpers.GlobalScale;
+        ButtonWithShadow("打开", new Vector2(openW, 0), () => OpenModFolder(modFullPath),
+            "打开模组文件夹\n" + modFullPath);
+        ImGui.SameLine();
+        ImGui.TextUnformatted("模组：");
+        ImGui.SameLine();
+        if (ImGui.Selectable(mod.Name + "##openModFolder"))
+        {
+            OpenModFolder(modFullPath);
+        }
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip("点击打开模组文件夹\n" + modFullPath);
+        }
+        ImGui.TextDisabled($"目录：{mod.Directory}");
+        ImGui.Spacing();
+
+        // 文件列表
+        var modRoot = penumbra.GetModRoot();
+        var files = new List<ModFileInfo>();
+        if (!string.IsNullOrEmpty(modRoot))
+        {
+            files = plugin.ModFiles.ReadModFiles(System.IO.Path.Combine(modRoot, mod.Directory));
+        }
+
+        if (files.Count == 0)
+        {
+            ImGui.TextDisabled("未找到 meta.json / group_*.json（该模组可能没有选项）");
+            return;
+        }
+
+        if (_selectedFile == null) _selectedFile = files[0];
+
+        ImGui.TextUnformatted("文件（点击查看选项）:");
+        ImGui.Spacing();
+        foreach (var f in files)
+        {
+            if (ImGui.Selectable($"{(f.IsMeta ? "[新] " : "")}{f.FileName}##file", ReferenceEquals(_selectedFile, f)))
+            {
+                _selectedFile = f;
+            }
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip($"文件：{f.FileName}\n完整路径：{f.Path}\n选项组：{f.Groups.Count} 个 / 选项：{CountOptions(f)} 项");
+            }
+        }
+
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+
+        // 选项编辑（可直接修改中英文）
+        var file = _selectedFile!;
+        ImGui.TextUnformatted($"选项编辑（{CountOptions(file)} 项，直接改中英文，点保存写回）：");
+        ImGui.Spacing();
+
+        // 切换文件时重置编辑缓冲
+        if (_editFileKey != file.Path)
+        {
+            _editFileKey = file.Path;
+            _editBufs.Clear();
+            _showAllOptions = false;
+        }
+
+        var rowW = ImGui.GetContentRegionAvail().X;
+        var inputW = Math.Max(120f, rowW - 230f * ImGuiHelpers.GlobalScale);
+        var shown = 0;
+        var limit = _showAllOptions ? int.MaxValue : 30;
+        var truncated = false;
+
+        foreach (var g in file.Groups)
+        {
+            // 组名编辑
+            if (g.Name.Length > 0 || g.Options.Count > 0)
+            {
+                if (shown >= limit) { truncated = true; break; }
+                var gk = $"{file.Path}|G{g.Index}";
+                if (!_editBufs.TryGetValue(gk, out var gv)) _editBufs[gk] = gv = g.Name;
+                ImGui.TextDisabled(string.IsNullOrEmpty(g.Description) ? "组名：" : $"组名（{g.Description}）：");
+                ImGui.SetNextItemWidth(inputW);
+                if (ImGui.InputText($"##g{g.Index}", ref gv, 1024)) _editBufs[gk] = gv;
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.SetTooltip("组名（可直接改中英文）\n原文：" + g.Name);
+                }
+                shown++;
+            }
+
+            foreach (var o in g.Options)
+            {
+                if (shown >= limit) { truncated = true; break; }
+                var k = $"{file.Path}|{g.Index}|{o.Index}";
+                if (!_editBufs.TryGetValue(k, out var v)) _editBufs[k] = v = o.Name;
+                ImGui.SetNextItemWidth(inputW);
+                if (ImGui.InputText($"##e{shown}", ref v, 1024)) _editBufs[k] = v;
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.SetTooltip("输入框内可直接改中英文\n原文：" + o.Name);
+                }
+                ImGui.SameLine();
+                var orig = o.Name.Length > 22 ? o.Name.Substring(0, 22) + "…" : o.Name;
+                if (orig.Length > 0) ImGui.TextDisabled(orig);
+                shown++;
+            }
+            if (truncated) break;
+        }
+
+        if (truncated)
+        {
+            ImGui.Spacing();
+            if (ImGui.Button("显示全部选项"))
+            {
+                _showAllOptions = true;
+            }
+        }
+        else if (CountOptions(file) > 0)
+        {
+            ImGui.Spacing();
+            ImGui.TextDisabled($"共 {CountOptions(file)} 项，已全部显示");
+        }
+
+        ImGui.Spacing();
+        if (ImGui.Button("保存修改"))
+        {
+            SaveEdits(file);
+        }
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip("先自动备份原文件，再把输入框内容写回模组，随后触发重载");
+        }
+        ImGui.SameLine();
+        if (ImGui.Button("放弃修改"))
+        {
+            _result = "已放弃未保存的修改";
+            ReloadSelectedFile();
+        }
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip("丢弃输入框未保存的修改，重新从文件读取");
+        }
+
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+
+        // 翻译按钮
+        if (ImGui.Button("翻译并写入", new Vector2(140 * ImGuiHelpers.GlobalScale, 0)))
+        {
+            _result = "";
+            var changed = hanhua.TranslateMod(mod.Directory, mod.Name);
+            _result = hanhua.LastResult;
+            penumbra.Refresh();
+        }
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip($"翻译并写入：{mod.Name}\n（先自动备份，再写回 meta.json / group_*.json，随后触发 Penumbra 重载）");
+        }
+        ImGui.SameLine();
+        if (ImGui.Button("备份全部文件"))
+        {
+            var modPath = Path.Combine(modRoot ?? "", mod.Directory);
+            var zip = plugin.Backup.CreateModZip(modPath, plugin.Configuration.BackupCount);
+            _result = zip != null
+                ? $"已备份模组全部文件：{Path.GetFileName(zip)}（zip 轮转保留 {plugin.Configuration.BackupCount} 份）"
+                : "备份失败（无 meta.json / group_*.json 或打包异常）";
+        }
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip("手动备份当前模组的全部文件为 zip（meta.json / group_*.json）");
+        }
+
+        // 已翻译标记 + 查漏补缺
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+
+        var mark = plugin.Mark;
+        var marked = mark.HasMark(mod.Directory);
+        if (ImGui.Button(marked ? "删除「已翻译」标记" : "创建「已翻译」标记"))
+        {
+            if (marked)
+            {
+                _result = mark.Remove(mod.Directory)
+                    ? "已删除标记，提取英文时将重新处理该模组"
+                    : "删除标记失败：无法写入模组目录";
+            }
+            else
+            {
+                _result = mark.Create(mod.Directory)
+                    ? "已创建标记，提取英文时将自动跳过该模组"
+                    : "创建标记失败：无法写入模组目录（请确认模组目录存在且可写）";
+            }
+        }
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip("模组目录创建无后缀「已翻译」文件：提取英文/翻译时自动跳过；查漏补缺不受影响；备份还原时自动删除");
+        }
+        ImGui.SameLine();
+        if (ImGui.Button("查漏补缺"))
+        {
+            _result = CheckGaps(files);
+        }
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip("扫描当前模组未翻译的选项/描述（不受「已翻译」标记影响）");
+        }
+        ImGui.SameLine();
+        if (ImGui.Button("并入我的翻译"))
+        {
+            plugin.Sumup.SumupFromMod(modRoot ?? "", mod.Directory, plugin.Configuration.DictionaryPath);
+            _result = plugin.Sumup.LastResult;
+        }
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip("把当前模组中已改中文的条目（英文原文来自英文快照/双语格式）沉淀进 我的翻译.json，其他模组翻译时可直接命中");
+        }
+
+        // 详情区操作结果：带边框统一风格
+        ImGui.Spacing();
+        Plugin.ResultBox("##MainResult", _result, "操作结果将显示在这里（如：已保存 N 项修改…）");
+    }
+
+    /// <summary> 查漏补缺：列出模组文件中仍为英文的选项/组名/描述。 </summary>
+    private string CheckGaps(List<ModFileInfo> files)
+    {
+        var gaps = new List<string>();
+        foreach (var f in files)
+        {
+            foreach (var g in f.Groups)
+            {
+                if (g.Name.Length > 0 && !dict.ContainsChinese(g.Name)) gaps.Add(g.Name);
+                foreach (var o in g.Options)
+                {
+                    if (o.Name.Length > 0 && !dict.ContainsChinese(o.Name)) gaps.Add(o.Name);
+                    if (!string.IsNullOrWhiteSpace(o.Description) && !dict.ContainsChinese(o.Description)) gaps.Add(o.Description);
+                }
+            }
+        }
+        if (gaps.Count == 0) return "查漏补缺：未发现未翻译条目（全部已中文）";
+        var shown = gaps.Distinct().Take(20).ToList();
+        return $"查漏补缺：发现 {gaps.Count} 条未翻译\n" + string.Join("\n", shown) +
+               (gaps.Count > 20 ? $"\n… 其余 {gaps.Count - 20} 条" : "");
+    }
+
+    /// <summary> 带投影阴影的按钮：先画右下偏移阴影，再画按钮，增加层次感（消除扁平突兀感）。 </summary>
+    private static void ButtonWithShadow(string label, Vector2 size, Action onClick, string? tooltip = null)
+    {
+        var draw = ImGui.GetWindowDrawList();
+        var pos = ImGui.GetCursorScreenPos();
+        var rounding = ImGui.GetStyle().FrameRounding;
+        var shadowColor = ImGui.GetColorU32(new Vector4(0f, 0f, 0f, 0.38f));
+        // 阴影：右下偏移 2px，圆角与按钮一致
+        draw.AddRectFilled(new Vector2(pos.X + 2f, pos.Y + 3f),
+            new Vector2(pos.X + size.X + 2f, pos.Y + size.Y + 3f),
+            shadowColor, rounding);
+        draw.AddRectFilled(new Vector2(pos.X + 1.5f, pos.Y + 2.5f),
+            new Vector2(pos.X + size.X + 1.5f, pos.Y + size.Y + 2.5f),
+            ImGui.GetColorU32(new Vector4(0f, 0f, 0f, 0.18f)), rounding);
+
+        if (ImGui.Button(label, size))
+        {
+            onClick();
+        }
+        if (tooltip != null && ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip(tooltip);
+        }
+    }
+
+    /// <summary> 超长文本截断省略号（防止列表项溢出窗口边界）。 </summary>
+    private static string Truncate(string text, float maxWidth)
+    {
+        if (maxWidth <= 10f || ImGui.CalcTextSize(text).X <= maxWidth) return text;
+        var result = text;
+        while (result.Length > 1 && ImGui.CalcTextSize(result + "…").X > maxWidth)
+        {
+            result = result[..^1];
+        }
+        return result + "…";
+    }
+
+    /// <summary> 打开模组文件夹（explorer）。 </summary>
+    private void OpenModFolder(string modFullPath)    {
+        if (Directory.Exists(modFullPath))
+        {
+            try
+            {
+                Process.Start(new ProcessStartInfo("explorer.exe", $"\"{modFullPath}\"") { UseShellExecute = true });
+            }
+            catch (Exception ex)
+            {
+                _result = "打开模组文件夹失败：" + ex.Message;
+            }
+        }
+        else
+        {
+            _result = "模组目录不存在：" + modFullPath;
+        }
+    }
+
+    /// <summary> 保存详情区编辑：备份（zip）→ 写回输入框内容 → 重读文件 → 触发 Penumbra 重载。 </summary>
+    private void SaveEdits(ModFileInfo file)
+    {
+        try
+        {
+            // 先自动备份整个模组（zip），防翻车
+            var modDirPath = Path.GetDirectoryName(file.Path) ?? "";
+            var modDirName = Path.GetFileName(modDirPath);
+            plugin.Backup.CreateModZip(modDirPath, plugin.Configuration.BackupCount);
+
+            // 保存前若文件仍为纯英文：存英文快照（改中文后仍可用原文覆写）
+            try
+            {
+                var before = File.ReadAllText(file.Path);
+                plugin.Snapshot.SaveIfEnglish(modDirName, file.FileName, before);
+            }
+            catch (Exception)
+            {
+                /* 快照失败不影响保存 */
+            }
+
+            var node = JsonNode.Parse(File.ReadAllText(file.Path)) as JsonObject;
+            if (node == null)
+            {
+                _result = "保存失败：无法解析文件";
+                return;
+            }
+
+            var changed = 0;
+            foreach (var kv in _editBufs)
+            {
+                var parts = kv.Key.Split('|');
+                if (parts.Length < 2) continue;
+
+                if (parts.Length == 2 && parts[1].StartsWith("G")) // 组名（key: 路径|G组索引）
+                {
+                    var gi = int.Parse(parts[1].Substring(1));
+                    if (file.IsMeta && node["Groups"] is JsonArray gArr && gi < gArr.Count &&
+                        gArr[gi] is JsonObject gObj)
+                    {
+                        gObj["Name"] = kv.Value;
+                        changed++;
+                    }
+                    else if (!file.IsMeta && gi == 0)
+                    {
+                        node["Name"] = kv.Value;
+                        changed++;
+                    }
+                }
+                else if (parts.Length >= 3) // 选项名（key: 路径|组索引|选项索引）
+                {
+                    var gi = int.Parse(parts[1]);
+                    var oi = int.Parse(parts[2]);
+                    JsonArray? opts = null;
+                    if (file.IsMeta && node["Groups"] is JsonArray groups && gi < groups.Count &&
+                        groups[gi] is JsonObject gObj2)
+                    {
+                        opts = gObj2["Options"] as JsonArray;
+                    }
+                    else if (!file.IsMeta)
+                    {
+                        opts = node["Options"] as JsonArray;
+                    }
+                    if (opts != null && oi < opts.Count && opts[oi] is JsonObject oObj)
+                    {
+                        oObj["Name"] = kv.Value;
+                        changed++;
+                    }
+                }
+            }
+
+            File.WriteAllText(file.Path, node.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+            _result = $"已保存 {changed} 项修改（原文件已自动备份）";
+
+            ReloadSelectedFile();
+            penumbra.Reload(modDirName); // 触发 Penumbra 重新加载该模组，游戏内立即生效
+        }
+        catch (Exception ex)
+        {
+            _result = "保存失败：" + ex.Message;
+        }
+    }
+
+    /// <summary> 重新读取当前模组的文件，刷新编辑缓冲。 </summary>
+    private void ReloadSelectedFile()
+    {
+        var modRoot = penumbra.GetModRoot();
+        if (_selected < 0 || _selected >= penumbra.Mods.Count || string.IsNullOrEmpty(modRoot))
+        {
+            _selectedFile = null;
+            return;
+        }
+        var mod = penumbra.Mods[_selected];
+        var files = plugin.ModFiles.ReadModFiles(Path.Combine(modRoot, mod.Directory));
+        _selectedFile = files.FirstOrDefault(x => x.Path == _selectedFile?.Path) ?? files.FirstOrDefault();
+        _editFileKey = _selectedFile?.Path ?? "";
+        _editBufs.Clear();
+        _showAllOptions = false;
+    }
+
+    private static int CountOptions(ModFileInfo f)
+    {
+        var n = 0;
+        foreach (var g in f.Groups) n += g.Options.Count;
+        return n;
+    }
+}

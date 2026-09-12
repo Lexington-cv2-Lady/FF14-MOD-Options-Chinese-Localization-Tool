@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project Sdk="Dalamud.NET.Sdk/15.0.0">
+  <PropertyGroup>
+    <Version>1.0.0.0</Version>
+    <!-- Manifest fields (see https://github.com/goatcorp/DalamudPackager/blob/827d88dc/DalamudPackager/DalamudPackager.cs#L420) -->
+    <Author>Lexington-cv2-Lady</Author>
+    <Name>FFXIV_penumbra的模组汉化工具</Name>
+    <Punchline>把 Penumbra 模组的英文选项翻译成简体中文并写回，游戏内即时生效。</Punchline>
+    <Description>读取 Penumbra 模组的选项与描述，调用词典（我的翻译 / 个性翻译 / wiki 术语 / AI 知识库）与 AI 翻译批量汉化，写回 meta.json / group_*.json 后自动触发 Penumbra 重载。应用前自动备份，可随时撤销。
+支持 Penumbra 新旧双格式、纯中文输出、黑名单保留专名。</Description>
+    <RepoUrl>https://github.com/Lexington-cv2-Lady/FFXIV-Penumbra-Mod-Chinese-Localization-Tool</RepoUrl>
+    <Tags>汉化;翻译;模组;penumbra;ffxiv;chinese;localization</Tags>
+    <!-- dev 插件部署目录（构建后自动复制） -->
+    <DevPluginDir>C:\Users\Match\AppData\Roaming\XIVLauncherCN\devPlugins\FFXIV_penumbra的模组汉化工具</DevPluginDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Content Include="..\Data\goat.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Visible>false</Visible>
+    </Content>
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Penumbra.Api" Version="5.19.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Penumbra.Api 依赖的 Luna 程序集（NuGet 包仅发布不完整的 Luna.Core，此处引用游戏内完整版） -->
+    <Reference Include="Luna">
+      <HintPath>lib\Luna.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
+
+  <Target Name="CopyLunaDeps" AfterTargets="Build">
+    <ItemGroup>
+      <_LibDeps Include="lib\Microsoft.Extensions*.dll" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_LibDeps)" DestinationFolder="$(TargetDir)" SkipUnchangedFiles="true" />
+  </Target>
+
+  <Target Name="DeployToDev" AfterTargets="Build" DependsOnTargets="CopyLunaDeps">
+    <ItemGroup>
+      <_DeployFiles Include="$(TargetDir)*" />
+      <_DeployFiles Include="$(TargetDir)*\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_DeployFiles)" DestinationFiles="@(_DeployFiles->'$(DevPluginDir)\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+  </Target>
+</Project>
