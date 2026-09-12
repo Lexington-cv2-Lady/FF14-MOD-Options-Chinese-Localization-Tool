@@ -6,37 +6,58 @@
 
 **AI 编写声明**：本插件代码由 AI 辅助编写，作者（Lexington-cv2-Lady）负责需求设计、逐项测试与验收，对应卫月官方 [AI Usage Policy](https://dalamud.dev/plugin-publishing/ai-policy) 的 Copilot 级 AI 使用。插件不采集任何遥测或用户数据，所有翻译仅在本地完成。
 
-## 功能
+---
+
+## 📦 安装
+
+> [!IMPORTANT]
+> **把下面的仓库地址添加进卫月，然后在插件安装器中搜索「模组汉化」安装。**
+
+**① 主地址**（推荐，点击代码块右上角图标即可复制）
+
+```
+https://raw.githubusercontent.com/Lexington-cv2-Lady/FFXIV_Penumbra_Mod_Chinese_Localization_Plugin/main/plugin_repo.json
+```
+
+**② 镜像地址**（主地址加载慢时改用这个）
+
+```
+https://cdn.jsdelivr.net/gh/Lexington-cv2-Lady/FFXIV_Penumbra_Mod_Chinese_Localization_Plugin@main/plugin_repo.json
+```
+
+**添加步骤**
+
+1. 打开卫月设置 → **「实验性」** → **「自定义插件仓库」**
+2. 粘贴上面任一地址，点 **「+」** 添加
+3. 打开**插件安装器**，在「自定义插件仓库」分类中搜索 **「模组汉化」** 并安装
+
+<details>
+<summary><b>手动安装（不通过自定义仓库）</b></summary>
+
+1. 从 [Releases](https://github.com/Lexington-cv2-Lady/FFXIV_Penumbra_Mod_Chinese_Localization_Plugin/releases) 下载 `FFXIV-Penumbra-Mod-Localization.zip`
+2. 解压到 `XIVLauncherCN\plugins\FFXIV_Penumbra_Mod_Chinese_Localization_Plugin\`
+3. 重启游戏或重新加载卫月
+
+</details>
+
+---
+
+## ✨ 功能
 
 - 读取 Penumbra 模组选项与描述（`meta.json` / `group_*.json`，兼容新旧双格式）
 - 词典汉化：我的翻译 / 个性翻译 / wiki 术语对照 / AI 知识库 / 单词黑名单
 - AI 翻译：内置多家国内主流服务商（按平台自动拆批与输出上限），也支持导出后交给外部 AI 翻译再汇总
 - 汉化前自动备份（zip 按份数轮转），可一键还原且保留 Penumbra 的选项状态
 - 纯中文输出、黑名单保留英文专名、「已翻译」标记自动跳过
+- 列表支持鼠标拖框多选，实时日志可落盘并一键打开
 
-## 安装
+## 🚀 使用
 
-**自定义仓库安装（推荐）**
+- **打开主窗口**：聊天框输入 **`/pmh`**，或通过插件安装器点击齿轮图标。
+- **汉化流程**：① 提取英文 → ② 预翻译 → ③ AI 翻译 → ④ 汇总已翻译内容 → ⑤ 翻译写入MOD
+- 主窗口可对单个模组「翻译并写入」、手动编辑中英文并保存、创建/删除「已翻译」标记、查漏补缺。
 
-1. 打开卫月设置 → 「实验性」→ 自定义插件仓库
-2. 添加仓库地址（任选其一）：
-   - `https://raw.githubusercontent.com/Lexington-cv2-Lady/FFXIV_Penumbra_Mod_Chinese_Localization_Plugin/main/plugin_repo.json`
-   - 镜像：`https://cdn.jsdelivr.net/gh/Lexington-cv2-Lady/FFXIV_Penumbra_Mod_Chinese_Localization_Plugin@main/plugin_repo.json`
-3. 在插件安装器中搜索「模组汉化」安装
-
-**手动安装**
-
-1. 从 [Releases](https://github.com/Lexington-cv2-Lady/FFXIV_Penumbra_Mod_Chinese_Localization_Plugin/releases) 下载 `FFXIV-Penumbra-Mod-Localization.zip`
-2. 解压到 `XIVLauncherCN\plugins\FFXIV_Penumbra_Mod_Chinese_Localization_Plugin\`
-3. 重启游戏或重新加载卫月
-
-## 使用
-
-- 打开主窗口：聊天框输入 **`/pmh`**，或通过插件安装器点击齿轮图标。
-- 汉化流程：① 提取英文 → ② 预翻译 → ③ AI 翻译 → ④ 汇总已翻译内容 → ⑤ 翻译写入MOD
-- 主窗口还可对单个模组「翻译并写入」、手动编辑中英文并保存、创建/删除「已翻译」标记、查漏补缺。
-
-## 数据目录
+## 📂 数据目录
 
 | 目录 | 用途 |
 |---|---|
@@ -44,7 +65,7 @@
 | 翻译目录（首次使用时在插件内设置） | AI 翻译管线的 `_未翻译.json` / `_已翻译.json` |
 | 模组根目录（Penumbra 数据目录，插件自动获取） | 存放 Penumbra 模组的目录 |
 
-## 构建与打包
+## 🛠 构建与打包
 
 ```powershell
 $env:DALAMUD_HOME = "$env:APPDATA\XIVLauncherCN\addon\Hooks\dev"
