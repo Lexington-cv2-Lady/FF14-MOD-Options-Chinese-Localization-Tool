@@ -37,6 +37,11 @@ public class BackupWindow : Window, IDisposable
     private float _split = 0.36f;
     private bool _draggingSplit;
 
+    // 框选时锁定窗口位置（ImGui 默认把空白处拖动当移动窗口）：两个列表区域 + 位置锁定
+    private Vector2 _modRectMin, _modRectMax, _bakRectMin, _bakRectMax;
+    private Vector2? _dragWinLock;
+    private Vector2 _posWhileIdle;
+
     public BackupWindow(Plugin plugin) : base("备份管理###HanhuaBackup")
     {
         Size = new Vector2(640, 480);
@@ -120,6 +125,10 @@ public class BackupWindow : Window, IDisposable
         var hotW = 12f * ImGuiHelpers.GlobalScale;
         var y0 = ImGui.GetCursorPosY();
 
+        // 记录空闲窗口位置，供框选时锁定窗口用
+        if (!_modDrag.Armed && !_modDrag.Active && !_bakDrag.Armed && !_bakDrag.Active)
+            _posWhileIdle = ImGui.GetWindowPos();
+
         // 分栏尺寸：左右永远并排。左按比例（下限 100、上限不超过剩余宽减右栏下限），右取剩余（下限 90）
         var rightMin = 90f;
         var listW = avail.X * _split;
@@ -131,6 +140,8 @@ public class BackupWindow : Window, IDisposable
 
         // ── 左：模组列表（多选，头部固定置顶） ──
         ImGui.SetCursorPos(new Vector2(0f, y0));
+        _modRectMin = ImGui.GetCursorScreenPos();
+        _modRectMax = _modRectMin + new Vector2(listW, listH);
         using (var left = ImRaii.Child("##BackupMods", new Vector2(listW, listH), true))
         {
             if (left.Success)
@@ -240,6 +251,8 @@ public class BackupWindow : Window, IDisposable
 
         // 右 Child：显式钉死同一行位置（与主窗口一致，防止 InvisibleButton 后光标被推进导致换行）
         ImGui.SetCursorPos(new Vector2(listW + hotW, y0));
+        _bakRectMin = ImGui.GetCursorScreenPos();
+        _bakRectMax = _bakRectMin + new Vector2(rightW, listH);
         using (var right = ImRaii.Child("##BackupList", new Vector2(rightW, listH), true))
         {
             if (right.Success)
@@ -363,5 +376,26 @@ public class BackupWindow : Window, IDisposable
         ImGui.Spacing();
         // ── 结果日志区：固定高度、带边框、可滚动，完整显示操作结果（风格与其他窗口统一） ──
         Plugin.ResultBox("##BackupResult", _result, "操作结果将显示在这里（如：已还原 N 个备份…）");
+
+        // ── 框选时阻止窗口移动（同主窗口）──
+        // ImGui 默认把「在空白处按下拖动」当移动窗口；鼠标在任一列表内或正在框选时给窗口加 NoMove。
+        var mouseNow = ImGui.GetMousePos();
+        var inMod = InRect(mouseNow, _modRectMin, _modRectMax);
+        var inBak = InRect(mouseNow, _bakRectMin, _bakRectMax);
+        var wantNoMove = inMod || inBak || _modDrag.Armed || _modDrag.Active || _bakDrag.Armed || _bakDrag.Active;
+        Flags = wantNoMove ? ImGuiWindowFlags.NoMove : ImGuiWindowFlags.None;
+
+        if (_modDrag.Active || _bakDrag.Active)
+        {
+            _dragWinLock ??= _posWhileIdle;
+            ImGui.SetWindowPos(_dragWinLock.Value);
+        }
+        else
+        {
+            _dragWinLock = null;
+        }
     }
+
+    private static bool InRect(Vector2 p, Vector2 min, Vector2 max)
+        => p.X >= min.X && p.X <= max.X && p.Y >= min.Y && p.Y <= max.Y;
 }

@@ -25,6 +25,9 @@ internal sealed class ListDragSelect
     /// <summary> 是否正在框选（拖动阈值已过；用于屏蔽底层行的点击）。 </summary>
     public bool Active => _dragging;
 
+    /// <summary> 是否已在列表内按下（点击/拖动判定中；用于锁定窗口位置，避免 ImGui 把拖动当成移动窗口）。 </summary>
+    public bool Armed => _armed;
+
     /// <summary> 每帧进入列表后调用，清空上一帧收集的行矩形。 </summary>
     public void Begin() => _rows.Clear();
 

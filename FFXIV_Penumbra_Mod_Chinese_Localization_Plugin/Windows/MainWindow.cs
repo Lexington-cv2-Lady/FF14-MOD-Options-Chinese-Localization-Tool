@@ -30,6 +30,12 @@ public class MainWindow : Window, IDisposable
     private readonly HashSet<int> _selectedSet = new();
     // 列表鼠标框选（空白处拖动拉框多选）
     private readonly ListDragSelect _listDrag = new();
+    // 框选期间锁定窗口位置：ImGui 默认把「在空白处按下拖动」当成移动窗口，需在框选时把它锁住
+    private System.Numerics.Vector2? _dragWinLock;
+    private System.Numerics.Vector2 _posWhileIdle;
+    private System.Numerics.Vector2 _listRectMin;
+    private System.Numerics.Vector2 _listRectMax;
+    private const ImGuiWindowFlags BaseFlags = ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse;
 
     // 左右分栏比例（分隔条可拖动）
     private float _split = 0.34f;
@@ -81,7 +87,7 @@ public class MainWindow : Window, IDisposable
     }
 
     public MainWindow(Plugin plugin, PenumbraService penumbra, DictionaryService dict, HanhuaService hanhua)
-        : base("模组汉化###HanhuaMain", ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse)
+        : base("模组汉化###HanhuaMain", BaseFlags)
     {
         SizeConstraints = new WindowSizeConstraints
         {
@@ -144,6 +150,13 @@ public class MainWindow : Window, IDisposable
         var listW = Math.Max(200f, avail.X * _split);
         var y0 = ImGui.GetCursorPosY();
 
+        // 记录「空闲」时的窗口位置：起拖帧窗口尚未被 ImGui 位移，用它作为锁定基准
+        if (!_listDrag.Armed && !_listDrag.Active)
+            _posWhileIdle = ImGui.GetWindowPos();
+
+        // 记录左侧列表子区域的屏幕矩形（仅框选该区域时锁定窗口，不影响拖标题栏移动窗口）
+        _listRectMin = ImGui.GetCursorScreenPos();
+        _listRectMax = _listRectMin + new Vector2(listW, avail.Y);
         using (var left = ImRaii.Child("##ModList", new Vector2(listW, avail.Y), true))
         {
             if (left.Success)
@@ -200,6 +213,25 @@ public class MainWindow : Window, IDisposable
                     }
                 }
             }
+        }
+
+        // ── 框选时的窗口移动处理 ──
+        // ImGui 默认把「在窗口空白处按下拖动」当作移动窗口，导致框选时窗口跟着跑。
+        // 方案：① 鼠标在列表内（或已在框选）时，给窗口临时加 NoMove 标志，从源头阻止 ImGui 开始移动；
+        //       ② 兜底：若框选中窗口仍被位移，用空闲时记下的位置强制回位。
+        var mouseNow = ImGui.GetMousePos();
+        var hoverList = mouseNow.X >= _listRectMin.X && mouseNow.X <= _listRectMax.X
+                        && mouseNow.Y >= _listRectMin.Y && mouseNow.Y <= _listRectMax.Y;
+        Flags = BaseFlags | ((hoverList || _listDrag.Armed || _listDrag.Active) ? ImGuiWindowFlags.NoMove : 0);
+
+        if (_listDrag.Active)
+        {
+            _dragWinLock ??= _posWhileIdle;
+            ImGui.SetWindowPos(_dragWinLock.Value);
+        }
+        else
+        {
+            _dragWinLock = null;
         }
 
         // 可拖动分隔条：InvisibleButton 消费点击（防止误拖窗口）+ 宽热区 + 手动坐标计算
