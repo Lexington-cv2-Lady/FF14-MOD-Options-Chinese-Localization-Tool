@@ -31,6 +31,9 @@ https://cdn.jsdelivr.net/gh/Lexington-cv2-Lady/FFXIV_Penumbra_Mod_Chinese_Locali
 2. 粘贴上面任一地址，点 **「+」** 添加
 3. 打开**插件安装器**，在「自定义插件仓库」分类中搜索 **「模组汉化」** 并安装
 
+> [!TIP]
+> **用外部 AI 翻译？** 把插件导出的 `_未翻译.json` 连同这份 [翻译规则.json](Data/翻译规则.json) 一起发给 AI（规则内容[点此直接复制](https://raw.githubusercontent.com/Lexington-cv2-Lady/FFXIV_Penumbra_Mod_Chinese_Localization_Plugin/main/Data/翻译规则.json)），翻好的文件改名为 `xxx_已翻译.json` 放回翻译目录即可。
+
 <details>
 <summary><b>手动安装（不通过自定义仓库）</b></summary>
 
