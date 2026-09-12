@@ -45,7 +45,9 @@
     <Copy SourceFiles="@(_LibDeps)" DestinationFolder="$(TargetDir)" SkipUnchangedFiles="true" />
   </Target>
 
-  <Target Name="DeployToDev" AfterTargets="Build" DependsOnTargets="CopyLunaDeps">
+  <!-- DependsOn 打包器：DalamudPackager 的 targets 在 SDK 末尾导入、晚于本文件执行；
+       不加依赖时 DeployToDev 会先复制“上一次”生成的旧 manifest（例如 RepoUrl 不同步更新）。 -->
+  <Target Name="DeployToDev" AfterTargets="Build" DependsOnTargets="CopyLunaDeps;DefaultDalamudPackagerDebug;DefaultDalamudPackagerRelease">
     <ItemGroup>
       <_DeployFiles Include="$(TargetDir)*" Exclude="$(TargetDir)*.pdb" />
       <_DeployFiles Include="$(TargetDir)*\*" />
