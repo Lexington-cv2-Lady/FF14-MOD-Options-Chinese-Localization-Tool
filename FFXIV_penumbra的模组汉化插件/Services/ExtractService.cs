@@ -40,7 +40,7 @@ public sealed class ExtractService
 
         // 7. 专名保留：注入单词黑名单
         var blPath = Path.Combine(dictionaryDir ?? "", "单词黑名单.json");
-        var words = LoadLineFile(blPath);
+        var words = TextListFile.Load(blPath);
         if (words.Count > 0)
         {
             r["7. 专名保留"] = "以下为本次翻译必须原样保留的英文专名/标识（用户指定，禁止译成中文或改动），待翻译文本中出现这些词时照抄原样保留：" +
@@ -211,32 +211,5 @@ public sealed class ExtractService
             sb.Append(Array.IndexOf(invalid, c) >= 0 ? '_' : c);
         var s = sb.ToString().Trim();
         return s.Length == 0 ? "模组" : s;
-    }
-
-    private static List<string> LoadLineFile(string path)
-    {
-        var words = new List<string>();
-        if (!File.Exists(path)) return words;
-        try
-        {
-            var text = File.ReadAllText(path, Encoding.UTF8);
-            if (text.Length >= 3 && text[0] == '\uFEFF') text = text[1..];
-            foreach (var rawLine in text.Split('\n'))
-            {
-                var line = rawLine.TrimEnd('\r');
-                var trimmed = line.TrimStart(' ', '\t');
-                if (trimmed.Length == 0 || trimmed[0] == '#') continue;
-                foreach (var rawToken in line.Split(','))
-                {
-                    var token = rawToken;
-                    var hash = token.IndexOf('#');
-                    if (hash >= 0) token = token[..hash];
-                    token = token.Trim();
-                    if (token.Length > 0) words.Add(token);
-                }
-            }
-        }
-        catch (Exception) { }
-        return words;
     }
 }

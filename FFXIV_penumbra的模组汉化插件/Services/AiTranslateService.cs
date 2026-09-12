@@ -7,6 +7,7 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace FFXIVPenumbraHanhua.Services;
@@ -113,8 +114,10 @@ public sealed class AiTranslateService
     /// <summary> 单请求输出上限 max_tokens（按平台自动取官方安全值；未知平台沿用旧值避免 400）。 </summary>
     public static long MaxTokensForModel(Configuration cfg)
     {
-        var m = (cfg.AiModel ?? "").ToLowerInvariant();
-        var b = (cfg.AiBaseUrl ?? "").ToLowerInvariant();
+        // 必须用解析后的生效端点/模型判断平台（选预设服务商时 AiBaseUrl/AiModel 覆盖字段为空）
+        var (epUrl, epModel) = ResolveEndpoint(cfg);
+        var m = (epModel ?? "").ToLowerInvariant();
+        var b = (epUrl ?? "").ToLowerInvariant();
         if (b.Contains("deepseek") || m.Contains("deepseek"))
             return 384000; // DeepSeek V4 官方单请求最大输出
         if (b.Contains("bigmodel") || b.Contains("moonshot"))
@@ -127,8 +130,9 @@ public sealed class AiTranslateService
     /// <summary> 单批输入内容字符上限（按平台自动，防止超长被拒；条数上限同时生效）。 </summary>
     public static int MaxBatchChars(Configuration cfg)
     {
-        var m = (cfg.AiModel ?? "").ToLowerInvariant();
-        var b = (cfg.AiBaseUrl ?? "").ToLowerInvariant();
+        var (epUrl, epModel) = ResolveEndpoint(cfg);
+        var m = (epModel ?? "").ToLowerInvariant();
+        var b = (epUrl ?? "").ToLowerInvariant();
         if (b.Contains("deepseek") || m.Contains("deepseek"))
             return 30000;  // DeepSeek 上下文大，单批可放宽
         if (b.Contains("bigmodel") || b.Contains("moonshot") || b.Contains("dashscope") || b.Contains("aliyuncs"))
@@ -139,7 +143,8 @@ public sealed class AiTranslateService
     /// <summary> 联网搜索：当前平台是否支持 OpenAI 兼容顶层 enable_search（仅通义/百炼）。 </summary>
     public static bool PlatformSupportsWebSearch(Configuration cfg)
     {
-        var b = (cfg.AiBaseUrl ?? "").ToLowerInvariant();
+        var (epUrl, _) = ResolveEndpoint(cfg);
+        var b = (epUrl ?? "").ToLowerInvariant();
         return b.Contains("dashscope") || b.Contains("aliyuncs");
     }
 
@@ -147,8 +152,9 @@ public sealed class AiTranslateService
     private static void ApplyNoDeepThink(JsonObject body, Configuration cfg)
     {
         if (!cfg.AiDisableThinking) return;
-        var m = (cfg.AiModel ?? "").ToLowerInvariant();
-        var b = (cfg.AiBaseUrl ?? "").ToLowerInvariant();
+        var (epUrl, epModel) = ResolveEndpoint(cfg);
+        var m = (epModel ?? "").ToLowerInvariant();
+        var b = (epUrl ?? "").ToLowerInvariant();
         if (b.Contains("deepseek") || m.Contains("deepseek"))
         {
             body["thinking"] = new JsonObject { ["type"] = "disabled" };
@@ -232,7 +238,7 @@ public sealed class AiTranslateService
     }
 
     /// <summary> 翻译未翻译文件。inputPath → outputPath。返回翻译成功的条目数。 </summary>
-    public async Task<int> TranslateAsync(string inputPath, string outputPath, Configuration cfg)
+    public async Task<int> TranslateAsync(string inputPath, string outputPath, Configuration cfg, CancellationToken ct = default)
     {
         var apiKey = GetApiKey(cfg);
         if (string.IsNullOrWhiteSpace(apiKey))
@@ -301,8 +307,15 @@ public sealed class AiTranslateService
         }
         if (cur.Count > 0) batches.Add(cur);
 
+        _log.Info($"AI 翻译：开始 {Path.GetFileName(inputPath)}（{pending.Count} 项待翻译，自动分 {batches.Count} 批）");
+
         for (var bi = 0; bi < batches.Count; bi++)
         {
+            if (ct.IsCancellationRequested)
+            {
+                _log.Info($"AI 翻译：已取消（{Path.GetFileName(inputPath)}，已完成 {ok}/{pending.Count} 条）");
+                break;
+            }
             var batch = batches[bi];
             var batchObj = new JsonObject();
             foreach (var k in batch)
@@ -329,7 +342,7 @@ public sealed class AiTranslateService
 
             try
             {
-                _log.Info($"AI 翻译批次 {bi + 1}/{batches.Count}（{batch.Count} 项）");
+                _log.Info($"AI 翻译：{Path.GetFileName(inputPath)} 批次 {bi + 1}/{batches.Count}（{batch.Count} 项，当前：{KeySummary(batch[0])}）");
                 var resp = await PostAsync(baseUrl, apiKey, body);
                 var content = await resp.Content.ReadAsStringAsync();
                 if (!resp.IsSuccessStatusCode)
@@ -370,7 +383,7 @@ public sealed class AiTranslateService
                     }
                 }
                 ok += got;
-                _log.Info($"批次完成，命中 {got} 项");
+                _log.Info($"AI 翻译：{Path.GetFileName(inputPath)} 已完成 {ok}/{pending.Count} 条");
             }
             catch (Exception ex)
             {
@@ -392,7 +405,8 @@ public sealed class AiTranslateService
         }
 
         var sb = new StringBuilder();
-        sb.Append($"AI 翻译完成：命中 {ok}/{pending.Count} 项 → {outputPath}");
+        var cancelled = ct.IsCancellationRequested;
+        sb.Append($"AI 翻译{(cancelled ? "已取消" : "完成")}：命中 {ok}/{pending.Count} 项 → {outputPath}");
         if (errors.Count > 0)
             sb.Append("；问题：" + string.Join("；", errors.Take(3)) + (errors.Count > 3 ? $" 等 {errors.Count} 条" : ""));
         LastResult = sb.ToString();
@@ -402,6 +416,14 @@ public sealed class AiTranslateService
 
     private static bool IsPending(JsonNode? v)
         => v == null || v.ToString().Trim().Length == 0 || !ContainsChinese(v.ToString());
+
+    /// <summary> 取 key 的原文段做进度摘要（key 格式：模组目录/文件||字段||原文）。 </summary>
+    private static string KeySummary(string key)
+    {
+        var parts = key.Split(new[] { "||" }, StringSplitOptions.None);
+        var text = parts.Length >= 3 ? parts[2] : key;
+        return text.Length > 28 ? text[..28] + "…" : text;
+    }
 
     private static bool ContainsChinese(string s)
     {

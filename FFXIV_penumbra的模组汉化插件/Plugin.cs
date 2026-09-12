@@ -76,7 +76,7 @@ public sealed class Plugin : IDalamudPlugin
         Extract = new ExtractService(Dict, ModFiles, AppLog);
         AiTranslate = new AiTranslateService(AppLog);
         Import = new ImportService(ModFiles, Penumbra, AppLog);
-        Backup = new BackupManager(ModFiles, Penumbra, AppLog, Snapshot);
+        Backup = new BackupManager(ModFiles, Penumbra, AppLog, Snapshot, Mark);
         Sumup = new SumupService(AppLog, ModFiles, Snapshot);
         Wiki = new WikiExportService(AppLog);
 
@@ -263,6 +263,8 @@ public sealed class Plugin : IDalamudPlugin
         PipelineWindow.Dispose();
         BackupWindow.Dispose();
         AiSettingsWindow.Dispose();
+        AiConfigWindow.Dispose();
+        WikiExportWindow.Dispose();
         LogWindow.Dispose();
         Penumbra.Dispose();
 

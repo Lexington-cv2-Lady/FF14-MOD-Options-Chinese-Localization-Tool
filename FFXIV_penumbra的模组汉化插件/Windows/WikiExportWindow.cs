@@ -144,7 +144,7 @@ public class WikiExportWindow : Window, IDisposable
             try
             {
                 var n = _task.Result;
-                if (n > 0) _plugin.ReloadDictionary(); // 有新增才重载词典
+                if (n != 0) _plugin.ReloadDictionary(); // 取消(-2)时也可能已写入部分词条，需重载
                 if (n >= 0 && _result.Length == 0) _result = _wiki.LastResult;
             }
             finally

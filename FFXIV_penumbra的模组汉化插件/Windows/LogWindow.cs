@@ -63,7 +63,7 @@ public class LogWindow : Window, IDisposable
             }
             if (_autoScroll && entries.Count > 0)
             {
-                ImGui.SetScrollHereY(0f);
+                ImGui.SetScrollY(0f); // 列表新→旧：顶部即最新一条
             }
         }
 

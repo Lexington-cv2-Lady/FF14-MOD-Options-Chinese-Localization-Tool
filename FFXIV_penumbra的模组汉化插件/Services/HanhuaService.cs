@@ -161,15 +161,12 @@ public sealed class HanhuaService
                 }
             }
 
-            if (totalChanged == 0 && file.Groups.Count == 0)
-            {
-                errors.Add($"{file.FileName}：无可翻译内容");
-                continue;
-            }
-
             if (groupNames.Count == 0 && optionNames.Count == 0 && optionDescs.Count == 0)
             {
-                errors.Add($"{file.FileName}：词典未命中，无需修改");
+                // 按本文件判定（不能用跨文件累计的 totalChanged，否则后续空文件会被误报）
+                errors.Add(file.Groups.Count == 0
+                    ? $"{file.FileName}：无可翻译内容"
+                    : $"{file.FileName}：词典未命中，无需修改");
                 continue;
             }
 

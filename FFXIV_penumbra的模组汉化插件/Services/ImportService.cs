@@ -37,7 +37,7 @@ public sealed class ImportService
         var totalWritten = 0;
         var totalBackups = 0;
         var errors = new List<string>();
-        var reloaded = new HashSet<string>();
+        var reloaded = new Dictionary<string, string>(); // 目录 → 显示名（ReloadMod 需按二元组匹配）
         var modBackedUp = new HashSet<string>();
 
         foreach (var mod in mods)
@@ -100,12 +100,12 @@ public sealed class ImportService
                     errors.Add(fileName + "：写入失败");
                 }
             }
-            if (wroteAny) reloaded.Add(mod.Directory);
+            if (wroteAny) reloaded[mod.Directory] = mod.Name;
         }
 
-        foreach (var modDir in reloaded)
+        foreach (var kv in reloaded)
         {
-            _penumbra.Reload(modDir);
+            _penumbra.Reload(kv.Key, kv.Value);
         }
 
         var sb = new StringBuilder();

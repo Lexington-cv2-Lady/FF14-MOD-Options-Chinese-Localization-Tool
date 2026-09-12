@@ -48,11 +48,11 @@ public sealed class DictionaryService
         }
 
         var dir = Path.Combine(dictionaryDir, "wiki_术语对照");
-        _wikiBlacklist.UnionWith(LoadLineFile(Path.Combine(dir, "wiki_术语对照_黑名单.json")));
+        _wikiBlacklist.UnionWith(TextListFile.Load(Path.Combine(dir, "wiki_术语对照_黑名单.json")));
 
         // 0) 单词黑名单（必须先加载，后续所有词表都要用它过滤）
         var blPath = Path.Combine(dictionaryDir, "单词黑名单.json");
-        _blacklist.UnionWith(LoadLineFile(blPath));
+        _blacklist.UnionWith(TextListFile.Load(blPath));
 
         // 1) 我的翻译.json（含 mods 双层 + terms 平铺；损坏时跳过并提示）
         var myPath = Path.Combine(dictionaryDir, "我的翻译.json");
@@ -248,36 +248,5 @@ public sealed class DictionaryService
             count++;
         }
         return count;
-    }
-
-    /// <summary> 读取行式文本文件（# 注释、逗号分隔、BOM 兼容）。 </summary>
-    private static List<string> LoadLineFile(string path)
-    {
-        var words = new List<string>();
-        if (!File.Exists(path)) return words;
-        try
-        {
-            var text = File.ReadAllText(path, Encoding.UTF8);
-            if (text.Length >= 3 && text[0] == '\uFEFF') text = text[1..];
-            foreach (var rawLine in text.Split('\n'))
-            {
-                var line = rawLine.TrimEnd('\r');
-                var trimmed = line.TrimStart(' ', '\t');
-                if (trimmed.Length == 0 || trimmed[0] == '#') continue;
-                foreach (var rawToken in line.Split(','))
-                {
-                    var token = rawToken;
-                    var hash = token.IndexOf('#');
-                    if (hash >= 0) token = token[..hash];
-                    token = token.Trim();
-                    if (token.Length > 0) words.Add(token);
-                }
-            }
-        }
-        catch (Exception)
-        {
-            // 文件损坏则静默跳过
-        }
-        return words;
     }
 }

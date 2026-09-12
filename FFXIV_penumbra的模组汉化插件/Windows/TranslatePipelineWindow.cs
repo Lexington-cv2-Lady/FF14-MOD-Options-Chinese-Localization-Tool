@@ -6,6 +6,7 @@ using System.Numerics;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Threading;
 using System.Threading.Tasks;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Utility;
@@ -28,6 +29,7 @@ public class TranslatePipelineWindow : Window, IDisposable
     private bool _skipMarked = true;
     private string _result = "";
     private Task<int>? _task;
+    private CancellationTokenSource? _cts;
     private string _taskStatus = "";
 
     public TranslatePipelineWindow(Plugin plugin) : base("汉化流程###HanhuaPipeline")
@@ -49,7 +51,7 @@ public class TranslatePipelineWindow : Window, IDisposable
         _log = plugin.AppLog;
     }
 
-    public void Dispose() { }
+    public void Dispose() => _cts?.Cancel(); // 插件卸载时中断进行中的 AI 翻译
 
     public override void Draw()
     {
@@ -157,7 +159,17 @@ public class TranslatePipelineWindow : Window, IDisposable
         if (_task != null && !_task.IsCompleted)
         {
             ImGui.TextWrapped(_taskStatus);
-            ImGui.TextDisabled("翻译进行中，请等待…（可切到其他窗口，完成后回来查看）");
+            if (ImGui.Button("取消 AI 翻译"))
+            {
+                _cts?.Cancel();
+                _taskStatus = "正在取消…（当前已发出的批次请求仍会完成，后续批次停止）";
+                _log.Info("AI 翻译：已请求取消，等待当前批次结束");
+            }
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("停止后续批次；当前已发出的请求仍会完成");
+            }
+            ImGui.TextDisabled("翻译进行中…（可切到其他窗口，完成后回来查看）");
         }
         else
         {
@@ -172,6 +184,8 @@ public class TranslatePipelineWindow : Window, IDisposable
                 {
                     _result = "";
                     _taskStatus = "AI 翻译进行中…";
+                    _cts = new CancellationTokenSource();
+                    var token = _cts.Token;
                     _task = Task.Run(async () =>
                     {
                         var total = 0;
@@ -179,7 +193,8 @@ public class TranslatePipelineWindow : Window, IDisposable
                         {
                             var output = Path.ChangeExtension(input, null) + "_已翻译.json";
                             _taskStatus = $"AI 翻译中：{Path.GetFileName(input)}…";
-                            total += await _ai.TranslateAsync(input, output, cfg);
+                            total += await _ai.TranslateAsync(input, output, cfg, token);
+                            if (token.IsCancellationRequested) break;
                         }
                         return total;
                     });
@@ -188,17 +203,6 @@ public class TranslatePipelineWindow : Window, IDisposable
             if (ImGui.IsItemHovered())
             {
                 ImGui.SetTooltip($"翻译翻译目录下所有 _未翻译.json\n分别写出对应的 _已翻译.json（外部 AI 翻好的文件也按此命名即可被 ④ 汇总）");
-            }
-            ImGui.SameLine();
-            if (ImGui.Button("取消 AI 翻译"))
-            {
-                _task = null;
-                _taskStatus = "";
-                _result = "已取消（当前批次可能仍会完成）";
-            }
-            if (ImGui.IsItemHovered())
-            {
-                ImGui.SetTooltip("取消后续批次（当前批次可能仍会完成）");
             }
         }
         ImGui.Spacing();
@@ -277,12 +281,17 @@ public class TranslatePipelineWindow : Window, IDisposable
         {
             try
             {
-                _result = _ai.LastResult;
+                // 任务异常（如翻译目录不可写）时 LastResult 是旧值，须显式提示
+                _result = _task.IsFaulted
+                    ? "AI 翻译异常：" + (_task.Exception?.GetBaseException().Message ?? "未知错误")
+                    : _ai.LastResult;
             }
             finally
             {
                 _task = null;
                 _taskStatus = "";
+                _cts?.Dispose();
+                _cts = null;
             }
         }
     }

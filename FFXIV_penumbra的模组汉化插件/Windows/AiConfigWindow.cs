@@ -125,43 +125,41 @@ public class AiConfigWindow : Window, IDisposable
 
         ImGui.Spacing();
 
-        var editing = cfg.CustomProviders.FirstOrDefault(x => x.Name == currentName);
-        if (editing != null)
-        {
-            // ── 自定义服务商编辑表单 ──
-            var formW = ImGui.GetContentRegionAvail().X;
+            var editing = (cfg.CustomProviders ?? []).FirstOrDefault(x => x.Name == currentName);
+            if (editing != null)
+            {
+                // ── 自定义服务商编辑表单 ──
+                var formW = ImGui.GetContentRegionAvail().X;
 
-            ImGui.TextUnformatted("名称：");
-            var editName = editing.Name;
-            ImGui.SetNextItemWidth(Math.Max(120f, formW - pasteW - 8f * ImGuiHelpers.GlobalScale));
-            if (ImGui.InputText("##CpName", ref editName, 128))
-            {
-                var trimmed = editName.Trim();
-                if (trimmed.Length > 0 && cfg.CustomProviders.All(x => x == editing || x.Name != trimmed))
+                ImGui.TextUnformatted("名称：");
+                var editName = editing.Name;
+                ImGui.SetNextItemWidth(Math.Max(120f, formW - pasteW - 8f * ImGuiHelpers.GlobalScale));
+                if (ImGui.InputText("##CpName", ref editName, 128))
                 {
-                    if (cfg.AiProviderName == editing.Name) cfg.AiProviderName = trimmed;
-                    editing.Name = trimmed;
-                    cfg.Save(); // 修改即保存
-                }
-            }
-            ImGui.SameLine();
-            if (ImGui.Button("粘贴##CpNamePaste", new Vector2(pasteW, 0)))
-            {
-                var clip = ImGui.GetClipboardText();
-                if (!string.IsNullOrWhiteSpace(clip))
-                {
-                    var trimmed = clip.Trim();
-                    if (cfg.CustomProviders.All(x => x == editing || x.Name != trimmed))
+                    var trimmed = editName.Trim();
+                    if (trimmed.Length > 0 && (cfg.CustomProviders ?? []).All(x => x == editing || x.Name != trimmed))
                     {
-                        if (cfg.AiProviderName == editing.Name) cfg.AiProviderName = trimmed;
-                        editing.Name = trimmed;
-                        cfg.Save();
-                        _result = "已从剪贴板粘贴名称";
+                        RenameProvider(cfg, editing, trimmed);
+                        cfg.Save(); // 修改即保存
                     }
-                    else _result = "名称与其他服务商重复，未应用";
                 }
-                else _result = "剪贴板为空，粘贴失败";
-            }
+                ImGui.SameLine();
+                if (ImGui.Button("粘贴##CpNamePaste", new Vector2(pasteW, 0)))
+                {
+                    var clip = ImGui.GetClipboardText();
+                    if (!string.IsNullOrWhiteSpace(clip))
+                    {
+                        var trimmed = clip.Trim();
+                        if ((cfg.CustomProviders ?? []).All(x => x == editing || x.Name != trimmed))
+                        {
+                            RenameProvider(cfg, editing, trimmed);
+                            cfg.Save();
+                            _result = "已从剪贴板粘贴名称";
+                        }
+                        else _result = "名称与其他服务商重复，未应用";
+                    }
+                    else _result = "剪贴板为空，粘贴失败";
+                }
 
             ImGui.TextUnformatted("API 地址（OpenAI 兼容端点）：");
             var editBase = editing.BaseUrl;
@@ -308,5 +306,19 @@ public class AiConfigWindow : Window, IDisposable
         {
             ImGui.TextWrapped(_result);
         }
+    }
+
+    /// <summary> 重命名自定义服务商：同步选中名，并把旧名下分存的 API Key 迁移到新名（防 Key 变孤儿）。 </summary>
+    private static void RenameProvider(Configuration cfg, CustomProvider cp, string newName)
+    {
+        var oldName = cp.Name;
+        if (oldName == newName) return;
+        if (cfg.AiProviderName == oldName) cfg.AiProviderName = newName;
+        if (cfg.AiApiKeys != null && cfg.AiApiKeys.TryGetValue(oldName, out var key))
+        {
+            cfg.AiApiKeys.Remove(oldName);
+            cfg.AiApiKeys[newName] = key;
+        }
+        cp.Name = newName;
     }
 }

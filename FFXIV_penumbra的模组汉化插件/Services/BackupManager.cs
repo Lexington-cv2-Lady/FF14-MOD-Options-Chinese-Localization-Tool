@@ -16,18 +16,20 @@ public sealed class BackupManager
     private readonly PenumbraService _penumbra;
     private readonly AppLog _log;
     private readonly EnglishSnapshotService _snapshot;
+    private readonly MarkService _mark;
 
     public string LastResult { get; private set; } = "";
 
     public sealed record BackupInfo(string ModDir, string FileName, string BakPath, DateTime Time, bool IsZip);
 
     public BackupManager(ModFileService files, PenumbraService penumbra, AppLog log,
-        EnglishSnapshotService snapshot)
+        EnglishSnapshotService snapshot, MarkService mark)
     {
         _files = files;
         _penumbra = penumbra;
         _log = log;
         _snapshot = snapshot;
+        _mark = mark;
     }
 
     /// <summary> 扫描模组根目录下所有备份，按时间新→旧。识别：.json.bak_yyyyMMdd_HHmmss 与 yyyy-MM-dd_HH-mm-ss备份.zip。 </summary>
@@ -105,6 +107,9 @@ public sealed class BackupManager
 
             SendToRecycleBin(b.BakPath);
 
+            // 还原后模组回退为备份时的内容（通常为英文）：按文档约定清除「已翻译」标记
+            try { _mark.Remove(b.ModDir); } catch { /* 标记删除失败不影响还原 */ }
+
             // 还原的是英文原版：同步更新英文快照（保证后续可覆写）
             try
             {
@@ -119,8 +124,10 @@ public sealed class BackupManager
                 /* 快照更新失败不影响还原 */
             }
 
-            _penumbra.Reload(b.ModDir);
-            _log.Info($"[恢复备份] 已还原 {b.ModDir}（{b.FileName}，原备份已移至回收站，已重载 Penumbra）");
+            // ReloadMod 按（目录, 名称）匹配：只传目录可能重载不到，优先从已加载列表取显示名
+            var entry = _penumbra.Mods.FirstOrDefault(m => m.Directory == b.ModDir);
+            _penumbra.Reload(b.ModDir, entry?.Name ?? "");
+            _log.Info($"[恢复备份] 已还原 {b.ModDir}（{b.FileName}，原备份已移至回收站，已清除「已翻译」标记，已重载 Penumbra）");
             return true;
         }
         catch (Exception ex)

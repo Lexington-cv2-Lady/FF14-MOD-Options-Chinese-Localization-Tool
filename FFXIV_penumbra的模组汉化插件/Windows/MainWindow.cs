@@ -32,6 +32,11 @@ public class MainWindow : Window, IDisposable
     // 左右分栏比例（分隔条可拖动）
     private float _split = 0.34f;
     private bool _draggingSplit;
+    // 「已翻译」标记缓存：避免每帧对每个模组 File.Exists（2 秒 TTL 或显式失效）
+    private readonly Dictionary<string, bool> _markCache = new();
+    private DateTime _markCacheTime = DateTime.MinValue;
+    // 断线自动重连节流：未连接时不再每帧发起 IPC 调用
+    private DateTime _lastAutoRefresh = DateTime.MinValue;
     // 详情区选项编辑缓冲
     private readonly Dictionary<string, string> _editBufs = new();
     private string _editFileKey = "";
@@ -69,6 +74,7 @@ public class MainWindow : Window, IDisposable
         this.dict = dict;
         this.hanhua = hanhua;
         this.penumbra.PenumbraDisposed += OnPenumbraDisposed;
+        this.penumbra.ModsChanged += OnModsChanged;
     }
 
     private void OnPenumbraDisposed()
@@ -78,9 +84,26 @@ public class MainWindow : Window, IDisposable
         penumbra.Status = "Penumbra 已卸载，请重载插件后重试";
     }
 
+    private void OnModsChanged()
+    {
+        _markCache.Clear();
+        // Penumbra 模组增删后下标会漂移：越界的勾选清空，防止误操作其它模组
+        if (_selectedSet.Count > 0 && _selectedSet.Any(i => i >= penumbra.Mods.Count))
+        {
+            _selectedSet.Clear();
+        }
+        if (_selected >= penumbra.Mods.Count)
+        {
+            _selected = -1;
+            _selectedFile = null;
+            _result = "";
+        }
+    }
+
     public void Dispose()
     {
         penumbra.PenumbraDisposed -= OnPenumbraDisposed;
+        penumbra.ModsChanged -= OnModsChanged;
     }
 
     public override void Draw()
@@ -195,10 +218,21 @@ public class MainWindow : Window, IDisposable
     /// <summary> 可见模组索引：默认只显示未翻译模组；勾选「已翻译」后只看有标记的模组。 </summary>
     private List<int> BuildVisibleList()
     {
+        // 标记状态走缓存：每帧对每模组 File.Exists 在模组多时磁盘压力过大
+        if ((DateTime.Now - _markCacheTime).TotalSeconds > 2)
+        {
+            _markCache.Clear();
+            _markCacheTime = DateTime.Now;
+        }
         var list = new List<int>();
         for (var i = 0; i < penumbra.Mods.Count; i++)
         {
-            var hasMark = plugin.Mark.HasMark(penumbra.Mods[i].Directory);
+            var dir = penumbra.Mods[i].Directory;
+            if (!_markCache.TryGetValue(dir, out var hasMark))
+            {
+                hasMark = plugin.Mark.HasMark(dir);
+                _markCache[dir] = hasMark;
+            }
             if (hasMark == _showMarked) list.Add(i);
         }
         return list;
@@ -338,8 +372,10 @@ public class MainWindow : Window, IDisposable
             plugin.ReloadDictionary();
         }
 
-        if (_autoRefresh && penumbra.Mods.Count == 0 && penumbra.Status.StartsWith("未连接", StringComparison.Ordinal))
+        if (_autoRefresh && penumbra.Mods.Count == 0 && penumbra.Status.StartsWith("未连接", StringComparison.Ordinal)
+            && (DateTime.Now - _lastAutoRefresh).TotalSeconds >= 3)
         {
+            _lastAutoRefresh = DateTime.Now;
             penumbra.Refresh();
         }
     }
@@ -531,7 +567,7 @@ public class MainWindow : Window, IDisposable
         ImGui.Spacing();
         if (ImGui.Button("保存修改"))
         {
-            SaveEdits(file);
+            SaveEdits(file, mod);
         }
         if (ImGui.IsItemHovered())
         {
@@ -559,6 +595,7 @@ public class MainWindow : Window, IDisposable
             var changed = hanhua.TranslateMod(mod.Directory, mod.Name);
             _result = hanhua.LastResult;
             penumbra.Refresh();
+            ReloadSelectedFile(); // 刷新详情区与编辑缓冲：旧英文缓冲若被「保存修改」写回会覆盖刚翻译的中文
         }
         if (ImGui.IsItemHovered())
         {
@@ -599,6 +636,7 @@ public class MainWindow : Window, IDisposable
                     ? "已创建标记，提取英文时将自动跳过该模组"
                     : "创建标记失败：无法写入模组目录（请确认模组目录存在且可写）";
             }
+            _markCache.Remove(mod.Directory); // 立即失效标记缓存，列表筛选即时更新
         }
         if (ImGui.IsItemHovered())
         {
@@ -708,7 +746,7 @@ public class MainWindow : Window, IDisposable
     }
 
     /// <summary> 保存详情区编辑：备份（zip）→ 写回输入框内容 → 重读文件 → 触发 Penumbra 重载。 </summary>
-    private void SaveEdits(ModFileInfo file)
+    private void SaveEdits(ModFileInfo file, ModEntry mod)
     {
         try
         {
@@ -736,6 +774,11 @@ public class MainWindow : Window, IDisposable
             }
 
             var changed = 0;
+            // 定位 Groups：顶层（新版 meta）或 Mod.Groups 包装（旧版），与解析/写回同规则
+            JsonArray? groupsArr = node["Groups"] as JsonArray;
+            if (groupsArr == null && node["Mod"] is JsonObject modWrap)
+                groupsArr = modWrap["Groups"] as JsonArray;
+
             foreach (var kv in _editBufs)
             {
                 var parts = kv.Key.Split('|');
@@ -744,8 +787,8 @@ public class MainWindow : Window, IDisposable
                 if (parts.Length == 2 && parts[1].StartsWith("G")) // 组名（key: 路径|G组索引）
                 {
                     var gi = int.Parse(parts[1].Substring(1));
-                    if (file.IsMeta && node["Groups"] is JsonArray gArr && gi < gArr.Count &&
-                        gArr[gi] is JsonObject gObj)
+                    if (file.IsMeta && groupsArr != null && gi < groupsArr.Count &&
+                        groupsArr[gi] is JsonObject gObj)
                     {
                         gObj["Name"] = kv.Value;
                         changed++;
@@ -761,12 +804,12 @@ public class MainWindow : Window, IDisposable
                     var gi = int.Parse(parts[1]);
                     var oi = int.Parse(parts[2]);
                     JsonArray? opts = null;
-                    if (file.IsMeta && node["Groups"] is JsonArray groups && gi < groups.Count &&
-                        groups[gi] is JsonObject gObj2)
+                    if (file.IsMeta)
                     {
-                        opts = gObj2["Options"] as JsonArray;
+                        if (groupsArr != null && gi < groupsArr.Count && groupsArr[gi] is JsonObject gObj2)
+                            opts = gObj2["Options"] as JsonArray;
                     }
-                    else if (!file.IsMeta)
+                    else
                     {
                         opts = node["Options"] as JsonArray;
                     }
@@ -782,7 +825,7 @@ public class MainWindow : Window, IDisposable
             _result = $"已保存 {changed} 项修改（原文件已自动备份）";
 
             ReloadSelectedFile();
-            penumbra.Reload(modDirName); // 触发 Penumbra 重新加载该模组，游戏内立即生效
+            penumbra.Reload(mod.Directory, mod.Name); // 触发 Penumbra 重新加载该模组（按目录+名称匹配），游戏内立即生效
         }
         catch (Exception ex)
         {

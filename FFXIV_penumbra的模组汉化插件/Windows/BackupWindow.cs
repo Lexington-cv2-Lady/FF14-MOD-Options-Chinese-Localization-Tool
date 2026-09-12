@@ -26,6 +26,9 @@ public class BackupWindow : Window, IDisposable
 
     private string _result = "";
     private bool _needRefresh;
+    // 备份列表缓存：避免每帧全库磁盘枚举（5 秒过期；有勾选时不自动过期防下标漂移；操作后显式失效）
+    private List<BackupManager.BackupInfo>? _backupsCache;
+    private DateTime _backupsCacheTime = DateTime.MinValue;
 
     // 左右分栏比例（分隔条可拖动）
     private float _split = 0.36f;
@@ -44,9 +47,25 @@ public class BackupWindow : Window, IDisposable
         _plugin = plugin;
         _backup = plugin.Backup;
         _mark = plugin.Mark;
+        _plugin.Penumbra.ModsChanged += OnModsChanged;
     }
 
-    public void Dispose() { }
+    private void OnModsChanged()
+    {
+        _backupsCache = null;
+        var mods = _plugin.Penumbra.Mods;
+        // 模组增删后下标漂移：越界勾选清空，防止误操作其它模组
+        if (_modSet.Count > 0 && _modSet.Any(i => i >= mods.Count))
+        {
+            _modSet.Clear();
+            _bakSet.Clear();
+        }
+    }
+
+    public void Dispose()
+    {
+        _plugin.Penumbra.ModsChanged -= OnModsChanged;
+    }
 
     /// <summary> 超长文本截断省略号（防止列表项溢出窗口边界）。 </summary>
     private static string Truncate(string text, float maxWidth)
@@ -68,6 +87,7 @@ public class BackupWindow : Window, IDisposable
         if (_needRefresh)
         {
             _needRefresh = false;
+            _backupsCache = null;
             _bakSet.Clear();
             _syncBak = true; // 操作后按当前勾选的模组重新同步备份全选
         }
@@ -78,7 +98,13 @@ public class BackupWindow : Window, IDisposable
             return;
         }
 
-        var allBackups = _backup.ListBackups(modRoot);
+        // 备份列表缓存：每帧全库枚举模组目录磁盘开销过大；操作后 _needRefresh 显式失效
+        if (_backupsCache == null || (_bakSet.Count == 0 && (DateTime.Now - _backupsCacheTime).TotalSeconds > 5))
+        {
+            _backupsCache = _backup.ListBackups(modRoot);
+            _backupsCacheTime = DateTime.Now;
+        }
+        var allBackups = _backupsCache;
 
         // 顶部说明
         ImGui.TextUnformatted($"备份文件：yyyy-MM-dd_HH-mm-ss备份.zip（每个模组一个 zip，自动备份轮转保留 {_plugin.Configuration.BackupCount} 份）");

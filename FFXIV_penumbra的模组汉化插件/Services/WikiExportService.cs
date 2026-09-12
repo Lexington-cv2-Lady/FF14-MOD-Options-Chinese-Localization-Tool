@@ -86,7 +86,7 @@ public sealed class WikiExportService
         var catDir = Path.Combine(dictionaryDir, "wiki_术语对照");
         Directory.CreateDirectory(catDir);
         var blacklist = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        LoadLineFile(Path.Combine(catDir, "wiki_术语对照_黑名单.json"), blacklist);
+        blacklist.UnionWith(TextListFile.Load(Path.Combine(catDir, "wiki_术语对照_黑名单.json")));
 
         var rejected = 0;   // 黑名单拒绝
         var noise = 0;      // 噪音词拒绝
@@ -105,6 +105,8 @@ public sealed class WikiExportService
             catResults[t] = new JsonObject();
         }
 
+        var cancelled = false; // 取消时跳出抓取循环，已抓取部分仍在下方写回保存
+
         try
         {
             foreach (var prefix in prefixes)
@@ -122,7 +124,11 @@ public sealed class WikiExportService
 
                 while (!done)
                 {
-                    ct.ThrowIfCancellationRequested();
+                    if (ct.IsCancellationRequested)
+                    {
+                        cancelled = true;
+                        break;
+                    }
                     var url = api;
                     if (gapCont.Length > 0) url += "&gapcontinue=" + Uri.EscapeDataString(gapCont);
                     if (rvCont.Length > 0) url += "&rvcontinue=" + Uri.EscapeDataString(rvCont);
@@ -134,7 +140,8 @@ public sealed class WikiExportService
                     }
                     catch (OperationCanceledException)
                     {
-                        throw;
+                        cancelled = true;
+                        break;
                     }
                     catch (Exception ex)
                     {
@@ -285,15 +292,16 @@ public sealed class WikiExportService
                 log?.Invoke(mm);
             }
             log?.Invoke($"[提示] 诊断：共解析 {pages} 个数据页；本次新增术语 {added} 条，命中已有词条 {hitExisting} 条（跳过）");
+            if (cancelled)
+            {
+                LastResult = "Wiki 提取已取消（已抓取部分已保存）";
+                _log.Info(LastResult);
+                return -2;
+            }
+
             LastResult = $"Wiki 提取完成：新增 {added} 条，命中已有 {hitExisting} 条，用时 {DateTime.Now:HH:mm:ss}";
             _log.Info(LastResult);
             return added;
-        }
-        catch (OperationCanceledException)
-        {
-            LastResult = "Wiki 提取已取消（已抓取部分已保存）";
-            _log.Info(LastResult);
-            return -2;
         }
         catch (Exception ex)
         {
@@ -424,32 +432,6 @@ public sealed class WikiExportService
             {
                 /* 解析失败不删 */
             }
-        }
-    }
-
-    /// <summary> 行式黑名单读取（兼容 # 注释与逗号分隔，与词典服务同口径）。 </summary>
-    private static void LoadLineFile(string path, HashSet<string> words)
-    {
-        if (!File.Exists(path)) return;
-        try
-        {
-            var text = File.ReadAllText(path, Encoding.UTF8);
-            if (text.Length >= 3 && text[0] == '\uFEFF') text = text[1..];
-            foreach (var rawLine in text.Split('\n'))
-            {
-                var line = rawLine.TrimEnd('\r');
-                var ts = line.IndexOf('#');
-                if (ts >= 0) line = line[..ts];
-                foreach (var t in line.Split(','))
-                {
-                    var w = t.Trim();
-                    if (w.Length > 0) words.Add(w);
-                }
-            }
-        }
-        catch
-        {
-            /* 读取失败忽略 */
         }
     }
 }

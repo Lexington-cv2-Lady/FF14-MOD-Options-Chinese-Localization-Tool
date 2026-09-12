@@ -214,11 +214,16 @@ public class AiSettingsWindow : Window, IDisposable
         {
             cfg.AiTemperature = temp;
         }
+        if (ImGui.IsItemDeactivatedAfterEdit())
+        {
+            cfg.Save(); // 拖动结束才落盘，避免拖动过程每帧写配置文件
+        }
         var batch = cfg.AiBatchSize;
         ImGui.SetNextItemWidth(220 * ImGuiHelpers.GlobalScale);
         if (ImGui.InputInt("单批条数", ref batch, 10, 50))
         {
             cfg.AiBatchSize = Math.Clamp(batch, 1, 500);
+            cfg.Save(); // 修改即保存
         }
         ImGui.SameLine();
         ImGui.TextDisabled("（条目过多自动按平台字符上限拆批）");
@@ -230,6 +235,7 @@ public class AiSettingsWindow : Window, IDisposable
         if (ImGui.Checkbox("关闭深度思考", ref disableThinking))
         {
             cfg.AiDisableThinking = disableThinking;
+            cfg.Save(); // 修改即保存
         }
         if (ImGui.IsItemHovered())
         {
@@ -246,6 +252,7 @@ public class AiSettingsWindow : Window, IDisposable
         if (ImGui.Checkbox("联网搜索", ref webSearch))
         {
             cfg.AiWebSearch = webSearch;
+            cfg.Save(); // 修改即保存
         }
         ImGui.EndDisabled();
         if (ImGui.IsItemHovered())
