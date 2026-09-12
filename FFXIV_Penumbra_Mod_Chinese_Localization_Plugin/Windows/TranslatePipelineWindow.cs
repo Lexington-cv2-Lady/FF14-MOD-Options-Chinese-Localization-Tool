@@ -327,41 +327,11 @@ public class TranslatePipelineWindow : Window, IDisposable
             ? Directory.GetFiles(transDir, "*_未翻译.json", SearchOption.TopDirectoryOnly).ToList()
             : new List<string>();
 
-    /// <summary> 词典预填：翻译空值项。返回命中数。 </summary>
+    /// <summary> 词典预填：委托 ExtractService.PrefillFile（与一键汉化共用同一实现）。返回命中数。 </summary>
     private int Prefill(string path, string modRoot)
     {
-        try
-        {
-            var root = JsonNode.Parse(File.ReadAllText(path, Encoding.UTF8)) as JsonObject;
-            if (root == null) return -1;
-            var hit = 0;
-
-            foreach (var sec in new[] { "_options", "_descriptions" })
-            {
-                if (root[sec] is not JsonObject obj) continue;
-                foreach (var kv in obj.ToList())
-                {
-                    var text = kv.Value?.ToString() ?? "";
-                    if (text.Length > 0) continue;
-                    var parts = kv.Key.Split(new[] { "||" }, StringSplitOptions.None);
-                    if (parts.Length != 3) continue;
-                    var modKey = parts[0];
-                    var translated = Translator.Translate(parts[2], modKey, _dict);
-                    if (translated.Length > 0 && _dict.ContainsChinese(translated))
-                    {
-                        obj[kv.Key] = translated;
-                        hit++;
-                    }
-                }
-            }
-
-            File.WriteAllText(path, root.ToJsonString(JsonFile.Indented), Encoding.UTF8);
-            return hit;
-        }
-        catch (Exception ex)
-        {
-            _result = "预翻译失败：" + ex.Message;
-            return -1;
-        }
+        var n = _extract.PrefillFile(path);
+        if (n < 0) _result = "预翻译失败：文件解析错误";
+        return n;
     }
 }

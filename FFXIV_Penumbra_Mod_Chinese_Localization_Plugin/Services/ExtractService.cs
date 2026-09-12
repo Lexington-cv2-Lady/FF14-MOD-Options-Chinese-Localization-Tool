@@ -17,6 +17,10 @@ public sealed class ExtractService
 
     public string LastResult { get; private set; } = "";
 
+    /// <summary> 最近一次提取实际写出的文件路径（供一键流程的预翻译/AI 翻译按文件续跑）。 </summary>
+    public IReadOnlyList<string> LastOutputPaths => _lastOutputPaths;
+    private readonly List<string> _lastOutputPaths = new();
+
     public ExtractService(DictionaryService dict, ModFileService files, AppLog log)
     {
         _dict = dict;
@@ -85,6 +89,7 @@ public sealed class ExtractService
         var skippedMarked = 0;
         var noFiles = 0;
         var total = 0;
+        _lastOutputPaths.Clear();
         var usedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         // 汇总模式：全部模组收集到一个文件
@@ -163,6 +168,7 @@ public sealed class ExtractService
                 };
                 var perPath = Path.Combine(translationDir, fileName);
                 File.WriteAllText(perPath, perRoot.ToJsonString(JsonFile.Indented), Encoding.UTF8);
+                _lastOutputPaths.Add(perPath);
             }
             else
             {
@@ -192,6 +198,7 @@ public sealed class ExtractService
 
         var outPath = Path.Combine(translationDir, "全部模组_未翻译.json");
         File.WriteAllText(outPath, root.ToJsonString(JsonFile.Indented), Encoding.UTF8);
+        _lastOutputPaths.Add(outPath);
 
         var sb2 = new StringBuilder();
         sb2.Append($"提取完成：{total} 项（{mods.Count - skippedMarked - noFiles} 个模组）→ {outPath}");
@@ -211,5 +218,44 @@ public sealed class ExtractService
             sb.Append(Array.IndexOf(invalid, c) >= 0 ? '_' : c);
         var s = sb.ToString().Trim();
         return s.Length == 0 ? "模组" : s;
+    }
+
+    /// <summary>
+    /// 词典预填（一键流程/② 预翻译共用）：把文件中空值条目按当前词典填上译文后原路写回。
+    /// 返回命中数；解析失败返回 -1。
+    /// </summary>
+    public int PrefillFile(string path)
+    {
+        try
+        {
+            var root = JsonNode.Parse(File.ReadAllText(path, Encoding.UTF8)) as JsonObject;
+            if (root == null) return -1;
+            var hit = 0;
+
+            foreach (var sec in new[] { "_options", "_descriptions" })
+            {
+                if (root[sec] is not JsonObject obj) continue;
+                foreach (var kv in obj.ToList())
+                {
+                    var text = kv.Value?.ToString() ?? "";
+                    if (text.Length > 0) continue;
+                    var parts = kv.Key.Split(new[] { "||" }, StringSplitOptions.None);
+                    if (parts.Length != 3) continue;
+                    var translated = Translator.Translate(parts[2], parts[0], _dict);
+                    if (translated.Length > 0 && _dict.ContainsChinese(translated))
+                    {
+                        obj[kv.Key] = translated;
+                        hit++;
+                    }
+                }
+            }
+
+            File.WriteAllText(path, root.ToJsonString(JsonFile.Indented), Encoding.UTF8);
+            return hit;
+        }
+        catch (Exception)
+        {
+            return -1;
+        }
     }
 }

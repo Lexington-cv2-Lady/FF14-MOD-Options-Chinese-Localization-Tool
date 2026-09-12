@@ -56,6 +56,7 @@ public sealed class Plugin : IDalamudPlugin
     {
         MigrateLegacyConfig(); // 插件 ID 由中文改为英文：先迁移旧配置（含 API Key），再读取
         Configuration = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
+        EnsureDefaultDataDirectories(); // 新用户开箱即用：词典/翻译目录为空时默认建在插件安装目录
         // 旧版单一 API Key 字段一次性迁移：落到「当前服务商」名下（之后按服务商分存，切换/删除不再串 Key）
         Configuration.AiApiKeys ??= new();
         var hasAnyKey = false;
@@ -283,6 +284,59 @@ public sealed class Plugin : IDalamudPlugin
         {
             Log.Warning($"旧插件配置迁移失败（不影响新配置）：{ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// 新用户开箱即用：词典/翻译目录为空时，默认建在插件安装目录下（保留「目录和词典管理」里手动修改与自动迁移功能）。
+    /// 安装版 dll 在 installedPlugins\&lt;ID&gt;\&lt;版本&gt;\ 下——数据放 &lt;ID&gt;\ 层（版本更新不丢）；
+    /// dev 版 dll 在 devPlugins\&lt;ID&gt;\ 下——直接用该层。
+    /// </summary>
+    private void EnsureDefaultDataDirectories()
+    {
+        try
+        {
+            var changed = false;
+            if (string.IsNullOrWhiteSpace(Configuration.DictionaryPath))
+            {
+                Configuration.DictionaryPath = DefaultDataDir("词典目录");
+                changed = true;
+            }
+            if (string.IsNullOrWhiteSpace(Configuration.TranslationPath))
+            {
+                Configuration.TranslationPath = DefaultDataDir("翻译目录");
+                changed = true;
+            }
+            if (changed)
+            {
+                Configuration.Save();
+                Log.Information($"已按默认位置创建数据目录：词典 {Configuration.DictionaryPath} / 翻译 {Configuration.TranslationPath}");
+            }
+            Directory.CreateDirectory(Configuration.DictionaryPath);
+            Directory.CreateDirectory(Configuration.TranslationPath);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning($"默认数据目录创建失败（可在「目录和词典管理」手动设置）：{ex.Message}");
+        }
+    }
+
+    /// <summary> 默认数据根：安装版取 installedPlugins\&lt;ID&gt;\，dev 版取 devPlugins\&lt;ID&gt;\。 </summary>
+    private string DefaultDataDir(string name)
+    {
+        var dllDir = Path.GetDirectoryName(PluginInterface.AssemblyLocation?.FullName) ?? "";
+        var root = dllDir;
+        try
+        {
+            var parent = Directory.GetParent(dllDir);
+            // 安装版：dll 的上级目录就是 <ID>（当前目录是版本号文件夹），数据放 <ID> 层
+            if (parent != null && string.Equals(parent.Name, PluginInterface.InternalName, StringComparison.OrdinalIgnoreCase))
+                root = parent.FullName;
+        }
+        catch
+        {
+            /* 取父目录失败则退回 dll 所在目录 */
+        }
+        return Path.Combine(root, name);
     }
 
     private static void CopyDirIfMissing(string src, string dst)

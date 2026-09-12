@@ -7,6 +7,8 @@ using System.Numerics;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Threading;
+using System.Threading.Tasks;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Utility;
 using Dalamud.Interface.Utility.Raii;
@@ -53,6 +55,12 @@ public class MainWindow : Window, IDisposable
     // 详情区
     private ModFileInfo? _selectedFile;
     private string _result = "";
+
+    // 一键汉化（智能分流）：①提取 → ②词典预填 → ③AI翻译（无Key自动降级）→ ④汇总 → ⑤写入本模组
+    private bool _ocSummary = true; // 提取方式：true=汇总提取（默认），false=按模组提取
+    private Task? _ocTask;
+    private CancellationTokenSource? _ocCts;
+    private string _ocStatus = "";
 
     /// <summary> 翻译管线「仅提取勾选」用：当前勾选的模组列表。 </summary>
     public IReadOnlyList<ModEntry> SelectedMods
@@ -673,6 +681,58 @@ public class MainWindow : Window, IDisposable
             ImGui.SetTooltip("手动备份当前模组的全部文件为 zip（meta.json / group_*.json）");
         }
 
+        // ── 一键汉化（智能分流：有 Key 全自动；无 Key 停在词典预填，等外部 AI）──
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+        ImGui.TextUnformatted("一键汉化（提取 → 词典预填 → AI翻译 → 汇总 → 写入本模组）");
+        if (ImGui.RadioButton("汇总提取（默认）", _ocSummary)) _ocSummary = true;
+        ImGui.SameLine();
+        if (ImGui.RadioButton("按模组提取", !_ocSummary)) _ocSummary = false;
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip("汇总提取：本模组条目合并进 全部模组_未翻译.json\n按模组提取：单独生成 <模组名>_未翻译.json\n两种写回效果相同，只影响文件组织方式");
+        }
+
+        if (_ocTask != null && !_ocTask.IsCompleted)
+        {
+            ImGui.TextWrapped(_ocStatus);
+            if (ImGui.Button("取消一键汉化"))
+            {
+                _ocCts?.Cancel();
+                _ocStatus += "\n正在取消…（AI 请求会被中断，已翻译部分写盘保留）";
+            }
+        }
+        else
+        {
+            if (ImGui.Button("一键汉化本模组", new Vector2(150 * ImGuiHelpers.GlobalScale, 0)))
+            {
+                StartOneClick(mod);
+            }
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("自动完成：提取本模组英文 → 词典预填 → AI 翻译（已配 Key 时）→ 汇总进词典 → 写回本模组并重载。\n未配置 Key 时自动停在词典预填，把生成的 _未翻译.json 交给外部 AI 即可。");
+            }
+            ImGui.SameLine();
+            if (ImGui.Button("汇总并写入"))
+            {
+                SumupAndWrite(mod);
+            }
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("外部 AI 翻完后点这个：把翻译目录里的 _已翻译.json 汇总进词典，再写回本模组并重载。");
+            }
+            // 轮询任务完成：清任务状态 + UI 线程收尾
+            if (_ocTask != null && _ocTask.IsCompleted)
+            {
+                _ocTask = null;
+                _ocCts?.Dispose();
+                _ocCts = null;
+                penumbra.Refresh();
+                ReloadSelectedFile();
+            }
+        }
+
         // 已翻译标记 + 查漏补缺
         ImGui.Spacing();
         ImGui.Separator();
@@ -702,6 +762,146 @@ public class MainWindow : Window, IDisposable
         // 详情区操作结果：带边框统一风格
         ImGui.Spacing();
         Plugin.ResultBox("##MainResult", _result, "操作结果将显示在这里（如：已保存 N 项修改…）");
+    }
+
+    /// <summary>
+    /// 一键汉化本模组（智能分流）：① 提取（默认汇总提取，可选按模组）→ ② 词典预填 →
+    /// 有 Key：③ AI 翻译 → ④ 汇总 → ⑤ 写回本模组；无 Key：停在 ②，引导走外部 AI 后用「汇总并写入」。
+    /// </summary>
+    private void StartOneClick(ModEntry mod)
+    {
+        var modRoot = penumbra.GetModRoot();
+        if (string.IsNullOrEmpty(modRoot) || !Directory.Exists(Path.Combine(modRoot, mod.Directory)))
+        {
+            _result = "无法获取 Penumbra 模组根目录（或模组目录不存在）";
+            return;
+        }
+        var cfg = plugin.Configuration;
+        if (string.IsNullOrWhiteSpace(cfg.DictionaryPath) || !Directory.Exists(cfg.DictionaryPath))
+        {
+            _result = "请先在「目录和词典管理」设置词典目录";
+            return;
+        }
+        var transDir = cfg.TranslationPath;
+        try
+        {
+            if (!Directory.Exists(transDir)) Directory.CreateDirectory(transDir);
+        }
+        catch (Exception ex)
+        {
+            _result = "翻译目录不可用：" + ex.Message;
+            return;
+        }
+
+        var hasKey = !string.IsNullOrWhiteSpace(AiTranslateService.GetApiKey(cfg));
+        var summary = _ocSummary;
+        var mods = new List<ModEntry> { mod };
+        _result = "";
+        _ocStatus = "① 提取英文…";
+        _ocCts = new CancellationTokenSource();
+        var ct = _ocCts.Token;
+
+        _ocTask = Task.Run(() =>
+        {
+            var log = new StringBuilder();
+            try
+            {
+                // ① 提取（只针对本模组；用户显式点按钮，不受「已翻译」标记影响）
+                var n = summary
+                    ? plugin.Extract.Extract(mods, skipMarked: false, transDir, modRoot)
+                    : plugin.Extract.ExtractPerMod(mods, skipMarked: false, transDir, modRoot);
+                if (n < 0)
+                {
+                    _ocStatus = "① 提取失败：" + plugin.Extract.LastResult;
+                    _result = _ocStatus;
+                    return;
+                }
+                var outputs = plugin.Extract.LastOutputPaths.ToList();
+                log.Append(plugin.Extract.LastResult);
+                _ocStatus = $"① 提取完成（{n} 项）→ ② 词典预填…";
+
+                // ② 词典预填（能翻的先翻上，交给 AI 的就少了）
+                var hit = 0;
+                foreach (var f in outputs) hit += Math.Max(0, plugin.Extract.PrefillFile(f));
+                log.Append($"；词典预填 {hit} 项");
+
+                if (!hasKey)
+                {
+                    _ocStatus = "未配置 API Key：已按词典预填完成 ✓";
+                    _result = log +
+                              $"\n把翻译目录里的 {Path.GetFileName(outputs[0])} 交给外部 AI（连同 翻译规则.json），" +
+                              "翻好后改名为 _已翻译.json 放回翻译目录，再点「汇总并写入」。";
+                    return;
+                }
+
+                // ③ AI 翻译
+                foreach (var input in outputs)
+                {
+                    if (ct.IsCancellationRequested) break;
+                    _ocStatus = $"③ AI 翻译：{Path.GetFileName(input)}…";
+                    var output = Path.ChangeExtension(input, null) + "_已翻译.json";
+                    plugin.AiTranslate.TranslateAsync(input, output, cfg, ct).GetAwaiter().GetResult();
+                    log.Append('\n').Append(plugin.AiTranslate.LastResult);
+                }
+                if (ct.IsCancellationRequested)
+                {
+                    _ocStatus = "已取消（已翻译部分写盘保留）";
+                    _result = log + "\n稍后可点「汇总并写入」继续。";
+                    return;
+                }
+
+                // ④ 汇总 + 重载词典 → ⑤ 写回本模组
+                _ocStatus = "④ 汇总已翻译内容…";
+                SumupCore(transDir, log);
+                _ocStatus = "⑤ 翻译写入MOD…";
+                plugin.Import.ApplyDictionary(modRoot, plugin.Dict, mods);
+                log.Append('\n').Append(plugin.Import.LastResult);
+                _ocStatus = "完成 ✓";
+                _result = log.ToString();
+            }
+            catch (Exception ex)
+            {
+                _ocStatus = "出错：" + ex.Message;
+                _result = "一键汉化出错：" + ex.Message;
+            }
+        });
+    }
+
+    /// <summary> 外部 AI 流程收尾：把翻译目录里的 _已翻译.json 汇总进词典，再写回本模组并重载。 </summary>
+    private void SumupAndWrite(ModEntry mod)
+    {
+        var modRoot = penumbra.GetModRoot();
+        if (string.IsNullOrEmpty(modRoot))
+        {
+            _result = "无法获取 Penumbra 模组根目录";
+            return;
+        }
+        var transDir = plugin.Configuration.TranslationPath;
+        var log = new StringBuilder();
+        if (!SumupCore(transDir, log))
+        {
+            _result = "未找到 _已翻译.json：请先把外部 AI 翻好的文件改名为 <名称>_已翻译.json 放回翻译目录。";
+            return;
+        }
+        plugin.Import.ApplyDictionary(modRoot, plugin.Dict, new List<ModEntry> { mod });
+        log.Append('\n').Append(plugin.Import.LastResult);
+        penumbra.Refresh();
+        ReloadSelectedFile();
+        _result = log.ToString();
+    }
+
+    /// <summary> ④ 汇总翻译目录下所有 _已翻译.json 进词典（有新增才重载词典）。返回是否找到并处理了文件。 </summary>
+    private bool SumupCore(string transDir, StringBuilder log)
+    {
+        var files = Directory.Exists(transDir)
+            ? Directory.GetFiles(transDir, "*_已翻译.json", SearchOption.TopDirectoryOnly).ToList()
+            : new List<string>();
+        if (files.Count == 0) return false;
+        var added = 0;
+        foreach (var f in files) added += Math.Max(0, plugin.Sumup.Sumup(f, plugin.Configuration.DictionaryPath));
+        log.Append($"④ 汇总：{files.Count} 个文件，新增 {added} 条");
+        if (added > 0) plugin.ReloadDictionary();
+        return true;
     }
 
     /// <summary> 「创建 / 删除已翻译标记」按钮（带缓存失效）。有选项与无选项模组共用。 </summary>
