@@ -165,6 +165,7 @@ public class MainWindow : Window, IDisposable
                         if (scroll.Success)
                         {
                             _listDrag.Begin();
+                            var interactive = !_listDrag.Active; // 正在框选时屏蔽行点击，避免起拖行被误切换
                             for (var k = 0; k < visible.Count; k++)
                             {
                                 var i = visible[k];
@@ -173,14 +174,14 @@ public class MainWindow : Window, IDisposable
                                 var rowTop = ImGui.GetCursorScreenPos().Y;
                                 // 紧凑行：小内边距 → 勾选框更小、行更矮，窗口缩小时一屏可见更多
                                 ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, new Vector2(3f, 2f) * ImGuiHelpers.GlobalScale);
-                                if (ImGui.Checkbox($"##sel{i}", ref isChecked))
+                                if (ImGui.Checkbox($"##sel{i}", ref isChecked) && interactive)
                                 {
                                     if (isChecked) _selectedSet.Add(i);
                                     else _selectedSet.Remove(i);
                                 }
                                 ImGui.SameLine();
                                 var name = mod.Name.Length > 0 ? mod.Name : mod.Directory;
-                                if (ImGui.Selectable(Truncate(name, ImGui.GetContentRegionAvail().X) + $"##{i}", _selected == i))
+                                if (ImGui.Selectable(Truncate(name, ImGui.GetContentRegionAvail().X) + $"##{i}", _selected == i) && interactive)
                                 {
                                     _selected = i;
                                     _selectedFile = null;
@@ -190,7 +191,7 @@ public class MainWindow : Window, IDisposable
                                 _listDrag.Row(i, rowTop, rowTop + ImGui.GetFrameHeight());
                                 if (ImGui.IsItemHovered())
                                 {
-                                    ImGui.SetTooltip(mod.Directory + "\n（列表空白处按住拖动可框选多个）");
+                                    ImGui.SetTooltip(mod.Directory + "\n按住左键拖动可框选多个（纯点击 = 单选）");
                                 }
                             }
                             // 框选命中 → 勾选（只增不减）

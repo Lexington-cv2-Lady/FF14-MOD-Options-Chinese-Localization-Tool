@@ -155,6 +155,7 @@ public class BackupWindow : Window, IDisposable
                     if (scroll.Success)
                     {
                         _modDrag.Begin();
+                        var modInteractive = !_modDrag.Active; // 框选中屏蔽行点击
                         for (var i = 0; i < mods.Count; i++)
                         {
                             var checkedItem = _modSet.Contains(i);
@@ -162,7 +163,7 @@ public class BackupWindow : Window, IDisposable
                             var rowTop = ImGui.GetCursorScreenPos().Y;
                             // 紧凑行：小内边距 → 勾选框更小、行更矮，窗口缩小时一屏可见更多选项
                             ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, new Vector2(3f, 2f) * ImGuiHelpers.GlobalScale);
-                            if (ImGui.Checkbox($"##m{i}", ref checkedItem))
+                            if (ImGui.Checkbox($"##m{i}", ref checkedItem) && modInteractive)
                             {
                                 if (checkedItem) _modSet.Add(i);
                                 else _modSet.Remove(i);
@@ -171,7 +172,7 @@ public class BackupWindow : Window, IDisposable
                             ImGui.SameLine();
                             // 整行可点击：点击模组名同样切换勾选（超长自动截断省略号，防止溢出左栏边界）
                             var label = (marked ? "[已翻译] " : "") + mods[i].Name;
-                            if (ImGui.Selectable(Truncate(label, ImGui.GetContentRegionAvail().X) + $"##ms{i}", checkedItem))
+                            if (ImGui.Selectable(Truncate(label, ImGui.GetContentRegionAvail().X) + $"##ms{i}", checkedItem) && modInteractive)
                             {
                                 if (checkedItem) { _modSet.Remove(i); }
                                 else { _modSet.Add(i); }
@@ -181,7 +182,7 @@ public class BackupWindow : Window, IDisposable
                             _modDrag.Row(i, rowTop, rowTop + ImGui.GetFrameHeight());
                             if (ImGui.IsItemHovered())
                             {
-                                ImGui.SetTooltip(mods[i].Directory + "\n点击整行切换勾选；空白处拖动可框选多个");
+                                ImGui.SetTooltip(mods[i].Directory + "\n点击整行切换勾选；按住左键拖动可框选多个");
                             }
                         }
                         // 框选命中 → 勾选（只增不减），并联动备份列表
@@ -262,6 +263,7 @@ public class BackupWindow : Window, IDisposable
                     if (scroll.Success)
                     {
                         _bakDrag.Begin();
+                        var bakInteractive = !_bakDrag.Active; // 框选中屏蔽行点击
                         for (var i = 0; i < relevant.Count; i++)
                         {
                             var b = relevant[i];
@@ -269,14 +271,14 @@ public class BackupWindow : Window, IDisposable
                             var rowTop = ImGui.GetCursorScreenPos().Y;
                             // 紧凑行：小内边距 → 勾选框更小、行更矮
                             ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, new Vector2(3f, 2f) * ImGuiHelpers.GlobalScale);
-                            if (ImGui.Checkbox($"##b{i}", ref checkedItem))
+                            if (ImGui.Checkbox($"##b{i}", ref checkedItem) && bakInteractive)
                             {
                                 if (checkedItem) _bakSet.Add(i);
                                 else _bakSet.Remove(i);
                             }
                             ImGui.SameLine();
                             // 整行可点击：点击备份名同样切换勾选（超长自动截断省略号，防止溢出右栏边界）
-                            if (ImGui.Selectable(Truncate($"{b.ModDir}  \\  {b.FileName}", ImGui.GetContentRegionAvail().X) + $"##bs{i}", checkedItem))
+                            if (ImGui.Selectable(Truncate($"{b.ModDir}  \\  {b.FileName}", ImGui.GetContentRegionAvail().X) + $"##bs{i}", checkedItem) && bakInteractive)
                             {
                                 if (checkedItem) _bakSet.Remove(i);
                                 else _bakSet.Add(i);
@@ -285,7 +287,7 @@ public class BackupWindow : Window, IDisposable
                             _bakDrag.Row(i, rowTop, rowTop + ImGui.GetFrameHeight());
                             if (ImGui.IsItemHovered())
                             {
-                                ImGui.SetTooltip($"备份时间：{b.Time:yyyy-MM-dd HH:mm:ss}\n完整路径：{b.BakPath}\n点击整行切换勾选；空白处拖动可框选多个");
+                                ImGui.SetTooltip($"备份时间：{b.Time:yyyy-MM-dd HH:mm:ss}\n完整路径：{b.BakPath}\n点击整行切换勾选；按住左键拖动可框选多个");
                             }
                         }
                         // 框选命中 → 勾选（只增不减）
