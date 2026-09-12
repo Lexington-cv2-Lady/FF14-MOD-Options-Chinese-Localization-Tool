@@ -17,7 +17,10 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Content Include="..\Data\goat.png">
+    <!-- 插件图标：Dalamud 对 dev/本地插件从 <插件目录>\images\icon.png 读取（须为正方形、≤512×512）。
+         放到输出目录的 images\ 子目录，DeployToDev 会连同子目录一并部署到 devPlugins。 -->
+    <Content Include="..\Data\icon.png">
+      <Link>images\icon.png</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Visible>false</Visible>
     </Content>
