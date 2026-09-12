@@ -70,7 +70,7 @@ public sealed class Plugin : IDalamudPlugin
         ModFiles = new ModFileService { MaxBackups = Configuration.BackupCount };
         Snapshot = new EnglishSnapshotService(() => Configuration.DictionaryPath);
         Hanhua = new HanhuaService(Penumbra, Dict, ModFiles, Snapshot);
-        AppLog = new AppLog();
+        AppLog = new AppLog(Path.Combine(PluginInterface.GetPluginConfigDirectory(), "汉化日志.log"));
         Mark = new MarkService(() => Penumbra.GetModRoot() ?? "");
         Extract = new ExtractService(Dict, ModFiles, AppLog);
         AiTranslate = new AiTranslateService(AppLog);
