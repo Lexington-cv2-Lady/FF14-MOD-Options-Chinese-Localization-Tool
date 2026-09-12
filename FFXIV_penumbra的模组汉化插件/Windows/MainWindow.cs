@@ -60,6 +60,24 @@ public class MainWindow : Window, IDisposable
         }
     }
 
+    /// <summary> 当前可见（筛选后）模组是否已全部勾选（供流程窗口的「全选」显示状态）。 </summary>
+    public bool AllVisibleSelected
+    {
+        get
+        {
+            var visible = BuildVisibleList();
+            return visible.Count > 0 && visible.All(i => _selectedSet.Contains(i));
+        }
+    }
+
+    /// <summary> 勾选 / 取消勾选当前可见（筛选后）的全部模组（供流程窗口的「全选」调用）。 </summary>
+    public void SetAllVisibleSelection(bool selected)
+    {
+        _selectedSet.Clear();
+        if (!selected) return;
+        foreach (var i in BuildVisibleList()) _selectedSet.Add(i);
+    }
+
     public MainWindow(Plugin plugin, PenumbraService penumbra, DictionaryService dict, HanhuaService hanhua)
         : base("模组汉化###HanhuaMain", ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse)
     {
@@ -238,7 +256,7 @@ public class MainWindow : Window, IDisposable
         return list;
     }
 
-    /// <summary> 模组列表标题行：标题自适应剩余宽度，全选 / 已翻译 始终靠右缘（随分隔条同步移动）。 </summary>
+    /// <summary> 模组列表标题行：标题自适应剩余宽度，「已翻译」筛选始终靠右缘（随分隔条同步移动）。 </summary>
     private void DrawModListHeader(IReadOnlyList<int> visible)
     {
         var total = penumbra.Mods.Count;
@@ -247,28 +265,13 @@ public class MainWindow : Window, IDisposable
             : $"模组列表（未翻译 {visible.Count}/{total}）";
         var availW = ImGui.GetContentRegionAvail().X;
 
-        // 右侧两个勾选框宽度估算（勾选框 ≈ 帧高，加文字和间距）
+        // 右侧「已翻译」勾选框宽度估算（勾选框 ≈ 帧高，加文字和间距）
         var frameH = ImGui.GetFrameHeight();
-        var checkSelW = frameH + ImGui.CalcTextSize("全选").X + 10f * ImGuiHelpers.GlobalScale;
         var checkMarkW = frameH + ImGui.CalcTextSize("已翻译").X + 10f * ImGuiHelpers.GlobalScale;
-        var rightBlock = checkSelW + checkMarkW + 8f * ImGuiHelpers.GlobalScale;
+        var rightBlock = checkMarkW + 8f * ImGuiHelpers.GlobalScale;
 
         // 标题占用剩余宽度（超长截断）；勾选框靠右缘，随分隔条拖动同步移动
         ImGui.TextUnformatted(FitTitle(title, Math.Max(40f, availW - rightBlock)));
-        ImGui.SameLine(Math.Max(40f, availW - rightBlock));
-        var allSelected = visible.Count > 0 && visible.All(i => _selectedSet.Contains(i));
-        if (ImGui.Checkbox("全选", ref allSelected))
-        {
-            _selectedSet.Clear();
-            if (allSelected)
-            {
-                foreach (var i in visible) _selectedSet.Add(i);
-            }
-        }
-        if (ImGui.IsItemHovered())
-        {
-            ImGui.SetTooltip("勾选当前列表中的全部模组");
-        }
         ImGui.SameLine(Math.Max(40f, availW - checkMarkW));
         if (ImGui.Checkbox("已翻译", ref _showMarked))
         {

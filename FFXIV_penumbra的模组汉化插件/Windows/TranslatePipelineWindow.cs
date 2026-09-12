@@ -68,7 +68,7 @@ public class TranslatePipelineWindow : Window, IDisposable
         ImGui.Spacing();
 
         // ── ① 提取英文 ──
-        ImGui.TextUnformatted("① 提取英文（只处理主窗口勾选的模组，未勾选请先到主窗口点「全选」）");
+        ImGui.TextUnformatted("① 提取英文（只处理主窗口勾选的模组，未勾选可用 ⑤ 旁的「全选」一键勾选）");
         ImGui.Spacing();
         ImGui.Checkbox("跳过已标记「已翻译」的模组", ref _skipMarked);
         ImGui.Spacing();
@@ -254,7 +254,7 @@ public class TranslatePipelineWindow : Window, IDisposable
                 var mods = _plugin.MainWindow.SelectedMods;
                 if (mods.Count == 0)
                 {
-                    _result = "未勾选任何模组，请先到主窗口勾选（或点「全选」）";
+                    _result = "未勾选任何模组，请点右侧「全选」或到主窗口勾选";
                 }
                 else
                 {
@@ -269,6 +269,19 @@ public class TranslatePipelineWindow : Window, IDisposable
                              "用外部 AI 翻译时：先执行 ④ 汇总（把译文编入 我的翻译.json）再点这里写回。\n" +
                              "已含中文的选项不会重复覆盖；写回前自动备份（zip）");
         }
+        ImGui.SameLine();
+        // 全选：勾选主窗口列表中全部模组（按当前「已翻译」筛选），与写入按钮同行便于直接开工
+        var allSel = _plugin.MainWindow.AllVisibleSelected;
+        if (ImGui.Checkbox("全选", ref allSel))
+        {
+            _plugin.MainWindow.SetAllVisibleSelection(allSel);
+        }
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip("勾选主窗口列表中的全部模组（按当前「已翻译」筛选：默认即全部未翻译模组）");
+        }
+        ImGui.SameLine();
+        ImGui.TextDisabled($"已选 {_plugin.MainWindow.SelectedMods.Count} 个");
         ImGui.Spacing();
         ImGui.Separator();
         ImGui.Spacing();
