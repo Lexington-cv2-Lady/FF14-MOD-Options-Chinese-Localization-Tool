@@ -1,0 +1,420 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Net.Http;
+using System.Net.Http.Headers;
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using System.Threading.Tasks;
+
+namespace FFXIVPenumbraHanhua.Services;
+
+/// <summary> AI 翻译：OpenAI 兼容 /chat/completions 接口，翻译「_未翻译.json」→「_已翻译.json」。 </summary>
+public sealed class AiTranslateService
+{
+    private readonly AppLog _log;
+    private static readonly HttpClient Http = new();
+
+    public string LastResult { get; private set; } = "";
+
+    /// <summary> 预置供应商（国内可直连的优先置顶，海外在后；自定义模式见 Combo 首项）。 </summary>
+    public static readonly (string Name, string Model, string BaseUrl, string Note)[] Providers =
+    {
+        ("智谱 GLM", "GLM-4.5-Air", "https://open.bigmodel.cn/api/paas/v4", "智谱 AI 开放平台（OpenAI 兼容）"),
+        ("通义千问", "qwen-plus", "https://dashscope.aliyuncs.com/compatible-mode/v1", "阿里云百炼（OpenAI 兼容，需先开通百炼）"),
+        ("腾讯混元", "hunyuan-turbo", "https://api.hunyuan.cloud.tencent.com/v1", "腾讯云大模型（OpenAI 兼容）"),
+        ("百度千帆", "ernie-4.0-turbo-8k", "https://qianfan.baidubce.com/v2", "百度智能云千帆（OpenAI 兼容）"),
+        ("DeepSeek", "deepseek-chat", "https://api.deepseek.com/v1", "深度求索（OpenAI 兼容，国内可直连，性价比高）"),
+        ("OpenRouter", "openai/gpt-4o-mini", "https://openrouter.ai/api/v1", "海外聚合中转，可调 GPT/Claude/Gemini"),
+        ("Groq", "llama-3.3-70b-versatile", "https://api.groq.com/openai/v1", "开源模型超高速推理（海外）"),
+        ("OpenAI（GPT）", "gpt-4o-mini", "https://api.openai.com/v1", "官方接口：国内网络不可直连，需代理或中转"),
+        ("Google Gemini", "gemini-2.0-flash", "https://generativelanguage.googleapis.com/v1beta/openai", "谷歌官方 OpenAI 兼容端点：国内不可直连"),
+        ("Anthropic Claude", "claude-sonnet-4-20250514", "https://api.anthropic.com/v1", "Anthropic 官方：国内不可直连，需代理"),
+        ("xAI Grok", "grok-2-latest", "https://api.x.ai/v1", "xAI 官方（OpenAI 兼容）：国内不可直连"),
+        ("Mistral", "mistral-small-latest", "https://api.mistral.ai/v1", "Mistral 官方：国内不可直连")
+    };
+
+    public AiTranslateService(AppLog log)
+    {
+        _log = log;
+    }
+
+    /// <summary> 获取生效的 BaseUrl / 模型名。自定义模式（AiProvider &lt; 0）时完全使用用户填写的地址与模型。 </summary>
+    public static (string BaseUrl, string Model) ResolveEndpoint(Configuration cfg)
+    {
+        if (cfg.AiProvider < 0)
+        {
+            var cb = (cfg.AiBaseUrl ?? "").Trim().TrimEnd('/');
+            var cm = (cfg.AiModel ?? "").Trim();
+            if (string.IsNullOrEmpty(cb) || string.IsNullOrEmpty(cm))
+                return ("", ""); // 缺参数，由调用方提示
+            return (cb, cm);
+        }
+        var p = Providers[Math.Clamp(cfg.AiProvider, 0, Providers.Length - 1)];
+        var baseUrl = string.IsNullOrWhiteSpace(cfg.AiBaseUrl) ? p.BaseUrl : cfg.AiBaseUrl.TrimEnd('/');
+        var model = string.IsNullOrWhiteSpace(cfg.AiModel) ? p.Model : cfg.AiModel.Trim();
+        return (baseUrl, model);
+    }
+
+    /// <summary> 当前服务商的名字（自定义模式返回「自定义」）。 </summary>
+    public static string CurrentProviderName(Configuration cfg)
+        => cfg.AiProvider < 0
+            ? "自定义"
+            : Providers[Math.Clamp(cfg.AiProvider, 0, Providers.Length - 1)].Name;
+
+    /// <summary> 单请求输出上限 max_tokens（按平台自动取官方安全值；未知平台沿用旧值避免 400）。 </summary>
+    public static long MaxTokensForModel(Configuration cfg)
+    {
+        var m = (cfg.AiModel ?? "").ToLowerInvariant();
+        var b = (cfg.AiBaseUrl ?? "").ToLowerInvariant();
+        if (b.Contains("deepseek") || m.Contains("deepseek"))
+            return 384000; // DeepSeek V4 官方单请求最大输出
+        if (b.Contains("bigmodel") || b.Contains("moonshot"))
+            return 64000;  // 智谱 GLM / 月之暗面 Kimi：思考链占 token 大，适当放宽
+        if (b.Contains("dashscope") || b.Contains("aliyuncs"))
+            return 32000;  // 通义百炼
+        return 16384;      // 其余平台沿用旧值
+    }
+
+    /// <summary> 单批输入内容字符上限（按平台自动，防止超长被拒；条数上限同时生效）。 </summary>
+    public static int MaxBatchChars(Configuration cfg)
+    {
+        var m = (cfg.AiModel ?? "").ToLowerInvariant();
+        var b = (cfg.AiBaseUrl ?? "").ToLowerInvariant();
+        if (b.Contains("deepseek") || m.Contains("deepseek"))
+            return 30000;  // DeepSeek 上下文大，单批可放宽
+        if (b.Contains("bigmodel") || b.Contains("moonshot") || b.Contains("dashscope") || b.Contains("aliyuncs"))
+            return 20000;
+        return 12000;      // 其余平台保守值
+    }
+
+    /// <summary> 联网搜索：当前平台是否支持 OpenAI 兼容顶层 enable_search（仅通义/百炼）。 </summary>
+    public static bool PlatformSupportsWebSearch(Configuration cfg)
+    {
+        var b = (cfg.AiBaseUrl ?? "").ToLowerInvariant();
+        return b.Contains("dashscope") || b.Contains("aliyuncs");
+    }
+
+    /// <summary> 关闭深度思考：按平台/模型特征附加各家关闭思考参数（未知平台不传，防止 400）。 </summary>
+    private static void ApplyNoDeepThink(JsonObject body, Configuration cfg)
+    {
+        if (!cfg.AiDisableThinking) return;
+        var m = (cfg.AiModel ?? "").ToLowerInvariant();
+        var b = (cfg.AiBaseUrl ?? "").ToLowerInvariant();
+        if (b.Contains("deepseek") || m.Contains("deepseek"))
+        {
+            body["thinking"] = new JsonObject { ["type"] = "disabled" };
+        }
+        else if (b.Contains("bigmodel") && m.Contains("glm-5.2"))
+        {
+            body["thinking"] = new JsonObject { ["type"] = "disabled" };
+        }
+        else if (b.Contains("moonshot") && m.Contains("kimi-k2.6"))
+        {
+            body["thinking"] = new JsonObject { ["type"] = "disabled" };
+        }
+        else if ((b.Contains("dashscope") || b.Contains("aliyuncs")) &&
+                 (m.Contains("qwen3") || m.Contains("qwq")))
+        {
+            body["enable_thinking"] = false; // 通义百炼用独立字段
+        }
+    }
+
+    /// <summary> 联网搜索：仅通义/百炼支持时注入 enable_search。 </summary>
+    private static void ApplyWebSearch(JsonObject body, Configuration cfg)
+    {
+        if (cfg.AiWebSearch && PlatformSupportsWebSearch(cfg))
+        {
+            body["enable_search"] = true;
+        }
+    }
+
+    /// <summary> 读取当前服务商保存的 API Key（旧版单一字段自动迁移兜底）。 </summary>
+    public static string GetApiKey(Configuration cfg)
+    {
+        var name = CurrentProviderName(cfg);
+        if (cfg.AiApiKeys != null && cfg.AiApiKeys.TryGetValue(name, out var k) && !string.IsNullOrWhiteSpace(k))
+            return k;
+        // 兼容旧版单一字段：仅在还没有任何分服务商 Key 时使用
+        if (cfg.AiApiKeys == null || cfg.AiApiKeys.Count == 0)
+            return cfg.AiApiKey ?? "";
+        return "";
+    }
+
+    /// <summary> 保存当前服务商的 API Key。 </summary>
+    public static void SetApiKey(Configuration cfg, string key)
+    {
+        var name = CurrentProviderName(cfg);
+        cfg.AiApiKeys ??= new();
+        if (string.IsNullOrWhiteSpace(key))
+            cfg.AiApiKeys.Remove(name);
+        else
+            cfg.AiApiKeys[name] = key.Trim();
+    }
+
+    /// <summary> 测试连接（返回简短结果）。 </summary>
+    public async Task<string> TestAsync(Configuration cfg)
+    {
+        try
+        {
+            var (baseUrl, model) = ResolveEndpoint(cfg);
+            if (cfg.AiProvider < 0 && (string.IsNullOrEmpty(baseUrl) || string.IsNullOrEmpty(model)))
+                return "自定义模式需填写 API 地址与模型";
+            var apiKey = GetApiKey(cfg);
+            if (string.IsNullOrWhiteSpace(apiKey))
+                return "未填写 API Key";
+            var body = new JsonObject
+            {
+                ["model"] = model,
+                ["messages"] = new JsonArray(
+                    new JsonObject { ["role"] = "user", ["content"] = "你好，请回复：连接成功" }),
+                ["temperature"] = 0.1,
+                ["max_tokens"] = 50
+            };
+            var resp = await PostAsync(baseUrl, apiKey, body);
+            var content = await resp.Content.ReadAsStringAsync();
+            if (!resp.IsSuccessStatusCode)
+                return $"连接失败（HTTP {(int)resp.StatusCode}）：{Truncate(content, 200)}";
+            return "连接成功：" + Truncate(ExtractContent(content) ?? "", 80);
+        }
+        catch (Exception ex)
+        {
+            return "连接异常：" + ex.Message;
+        }
+    }
+
+    /// <summary> 翻译未翻译文件。inputPath → outputPath。返回翻译成功的条目数。 </summary>
+    public async Task<int> TranslateAsync(string inputPath, string outputPath, Configuration cfg)
+    {
+        var apiKey = GetApiKey(cfg);
+        if (string.IsNullOrWhiteSpace(apiKey))
+        {
+            LastResult = "未填写 API Key（请在「AI 设置」中配置）";
+            return -1;
+        }
+        if (!File.Exists(inputPath))
+        {
+            LastResult = "未找到提取文件：" + inputPath;
+            return -1;
+        }
+
+        var (baseUrl, model) = ResolveEndpoint(cfg);
+        if (cfg.AiProvider < 0 && (string.IsNullOrEmpty(baseUrl) || string.IsNullOrEmpty(model)))
+        {
+            LastResult = "自定义模式需填写 API 地址与模型（AI 设置）";
+            return -1;
+        }
+        var root = JsonNode.Parse(File.ReadAllText(inputPath, Encoding.UTF8)) as JsonObject;
+        if (root == null)
+        {
+            LastResult = "提取文件格式错误";
+            return -1;
+        }
+
+        var options = root["_options"] as JsonObject ?? new JsonObject();
+        var descriptions = root["_descriptions"] as JsonObject ?? new JsonObject();
+
+        // 收集未翻译项（值为空/纯英文）
+        var pending = new List<string>();
+        foreach (var o in options)
+            if (IsPending(o.Value)) pending.Add(o.Key);
+        foreach (var d in descriptions)
+            if (IsPending(d.Value)) pending.Add(d.Key);
+
+        if (pending.Count == 0)
+        {
+            LastResult = "没有待翻译项（词典已全部覆盖，可直接「翻译写入MOD」）";
+            return 0;
+        }
+
+        // 规则段
+        var rules = root["翻译规则"] as JsonObject ?? ExtractService.BuildTranslationRules(cfg.DictionaryPath);
+
+        var batchSize = Math.Clamp(cfg.AiBatchSize, 1, 500);
+        var maxBatchChars = MaxBatchChars(cfg);
+        var ok = 0;
+        var errors = new List<string>();
+
+        // 自动分批：条数不超过 batchSize，且内容字符数不超过平台上限（超限自动拆批）
+        var batches = new List<List<string>>();
+        var cur = new List<string>();
+        var curChars = 0;
+        foreach (var k in pending)
+        {
+            var itemChars = k.Length;
+            if (cur.Count >= batchSize || (cur.Count > 0 && curChars + itemChars > maxBatchChars))
+            {
+                batches.Add(cur);
+                cur = new List<string>();
+                curChars = 0;
+            }
+            cur.Add(k);
+            curChars += itemChars;
+        }
+        if (cur.Count > 0) batches.Add(cur);
+
+        for (var bi = 0; bi < batches.Count; bi++)
+        {
+            var batch = batches[bi];
+            var batchObj = new JsonObject();
+            foreach (var k in batch)
+            {
+                if (options.ContainsKey(k)) batchObj[k] = "";
+                else if (descriptions.ContainsKey(k)) batchObj[k] = "";
+            }
+
+            var sysMsg = "你是 FFXIV 模组汉化助手。按以下规则把英文翻译为简体中文（纯中文，不带英文对照）。" +
+                "只输出 JSON，不要输出任何其他文字。JSON 结构：{\"_options\":{...},\"_descriptions\":{...}}，键原样保留。\n\n" +
+                rules.ToJsonString();
+
+            var body = new JsonObject
+            {
+                ["model"] = model,
+                ["messages"] = new JsonArray(
+                    new JsonObject { ["role"] = "system", ["content"] = sysMsg },
+                    new JsonObject { ["role"] = "user", ["content"] = "待翻译内容（键必须原样保留，值填中文译文）：\n" + batchObj.ToJsonString() }),
+                ["temperature"] = cfg.AiTemperature,
+                ["max_tokens"] = MaxTokensForModel(cfg)
+            };
+            ApplyNoDeepThink(body, cfg);
+            ApplyWebSearch(body, cfg);
+
+            try
+            {
+                _log.Info($"AI 翻译批次 {bi + 1}/{batches.Count}（{batch.Count} 项）");
+                var resp = await PostAsync(baseUrl, apiKey, body);
+                var content = await resp.Content.ReadAsStringAsync();
+                if (!resp.IsSuccessStatusCode)
+                {
+                    errors.Add($"批次 {bi + 1}：HTTP {(int)resp.StatusCode} " + Truncate(content, 120));
+                    continue;
+                }
+
+                var text = ExtractContent(content);
+                var parsed = ParseJson(text);
+                if (parsed == null)
+                {
+                    errors.Add("AI 返回无法解析的内容（可能是限流/超长，建议减小批量）");
+                    continue;
+                }
+
+                var got = 0;
+                if (parsed["_options"] is JsonObject po)
+                {
+                    foreach (var kv in po)
+                    {
+                        if (options.ContainsKey(kv.Key) && kv.Value != null && kv.Value.ToString().Length > 0)
+                        {
+                            options[kv.Key] = kv.Value.ToString();
+                            got++;
+                        }
+                    }
+                }
+                if (parsed["_descriptions"] is JsonObject pd)
+                {
+                    foreach (var kv in pd)
+                    {
+                        if (descriptions.ContainsKey(kv.Key) && kv.Value != null && kv.Value.ToString().Length > 0)
+                        {
+                            descriptions[kv.Key] = kv.Value.ToString();
+                            got++;
+                        }
+                    }
+                }
+                ok += got;
+                _log.Info($"批次完成，命中 {got} 项");
+            }
+            catch (Exception ex)
+            {
+                errors.Add("请求异常：" + ex.Message);
+            }
+        }
+
+        // 写出 _已翻译.json（保留翻译规则）
+        root["_options"] = options;
+        root["_descriptions"] = descriptions;
+        try
+        {
+            if (!Directory.Exists(Path.GetDirectoryName(outputPath))) Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
+            File.WriteAllText(outputPath, root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }), Encoding.UTF8);
+        }
+        catch (Exception ex)
+        {
+            errors.Add("写文件失败：" + ex.Message);
+        }
+
+        var sb = new StringBuilder();
+        sb.Append($"AI 翻译完成：命中 {ok}/{pending.Count} 项 → {outputPath}");
+        if (errors.Count > 0)
+            sb.Append("；问题：" + string.Join("；", errors.Take(3)) + (errors.Count > 3 ? $" 等 {errors.Count} 条" : ""));
+        LastResult = sb.ToString();
+        _log.Info(LastResult);
+        return ok;
+    }
+
+    private static bool IsPending(JsonNode? v)
+        => v == null || v.ToString().Trim().Length == 0 || !ContainsChinese(v.ToString());
+
+    private static bool ContainsChinese(string s)
+    {
+        foreach (var c in s)
+            if (c >= 0x4E00 && c <= 0x9FFF) return true;
+        return false;
+    }
+
+    private async Task<HttpResponseMessage> PostAsync(string baseUrl, string apiKey, JsonObject body)
+    {
+        var req = new HttpRequestMessage(HttpMethod.Post, baseUrl + "/chat/completions");
+        req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+        req.Content = new StringContent(body.ToJsonString(), Encoding.UTF8, "application/json");
+        return await Http.SendAsync(req);
+    }
+
+    private static string? ExtractContent(string json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            return doc.RootElement.GetProperty("choices")[0].GetProperty("message").GetProperty("content").GetString();
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    private static JsonObject? ParseJson(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return null;
+        text = text.Trim();
+        // 剥离 ```json 代码块
+        var f = text.IndexOf("```");
+        if (f >= 0)
+        {
+            var s = text.IndexOf('\n', f);
+            var e = text.LastIndexOf("```");
+            if (s >= 0 && e > s) text = text[(s + 1)..e].Trim();
+        }
+        try
+        {
+            return JsonNode.Parse(text) as JsonObject;
+        }
+        catch (Exception)
+        {
+            // 尝试截取第一个 { 到最后一个 }
+            var b = text.IndexOf('{');
+            var en = text.LastIndexOf('}');
+            if (b >= 0 && en > b)
+            {
+                try { return JsonNode.Parse(text[b..(en + 1)]) as JsonObject; }
+                catch (Exception) { return null; }
+            }
+            return null;
+        }
+    }
+
+    private static string Truncate(string s, int n)
+        => s.Length <= n ? s : s[..n] + "…";
+}

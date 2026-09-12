@@ -1,0 +1,269 @@
+using System;
+using System.IO;
+using System.Numerics;
+using Dalamud.Bindings.ImGui;
+using Dalamud.Game.Command;
+using Dalamud.IoC;
+using Dalamud.Plugin;
+using Dalamud.Interface.Windowing;
+using Dalamud.Plugin.Services;
+using FFXIVPenumbraHanhua.Services;
+using FFXIVPenumbraHanhua.Windows;
+
+namespace FFXIVPenumbraHanhua;
+
+public sealed class Plugin : IDalamudPlugin
+{
+    [PluginService] internal static IDalamudPluginInterface PluginInterface { get; private set; } = null!;
+    [PluginService] internal static ITextureProvider TextureProvider { get; private set; } = null!;
+    [PluginService] internal static ICommandManager CommandManager { get; private set; } = null!;
+    [PluginService] internal static IPluginLog Log { get; private set; } = null!;
+
+    private const string CommandName = "/pm";
+
+    private string _initialTranslationPath;
+    private string _initialDictionaryPath;
+
+    public Configuration Configuration { get; init; }
+    public PenumbraService Penumbra { get; init; }
+    public DictionaryService Dict { get; init; }
+    public ModFileService ModFiles { get; init; }
+    public HanhuaService Hanhua { get; init; }
+    public AppLog AppLog { get; init; }
+    public MarkService Mark { get; init; }
+    public EnglishSnapshotService Snapshot { get; init; }
+    public ExtractService Extract { get; init; }
+    public AiTranslateService AiTranslate { get; init; }
+    public ImportService Import { get; init; }
+    public BackupManager Backup { get; init; }
+    public SumupService Sumup { get; init; }
+    public WikiExportService Wiki { get; init; }
+
+    public readonly WindowSystem WindowSystem = new("FFXIVPenumbraHanhua");
+    public ConfigWindow ConfigWindow { get; init; }
+    public MainWindow MainWindow { get; init; }
+    public DictionaryWindow DictionaryWindow { get; init; }
+    public TranslatePipelineWindow PipelineWindow { get; init; }
+    public BackupWindow BackupWindow { get; init; }
+    public AiSettingsWindow AiSettingsWindow { get; init; }
+    public WikiExportWindow WikiExportWindow { get; init; }
+    public LogWindow LogWindow { get; init; }
+
+    public Plugin()
+    {
+        Configuration = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
+        Penumbra = new PenumbraService(PluginInterface);
+        Dict = new DictionaryService();
+        ModFiles = new ModFileService { MaxBackups = Configuration.BackupCount };
+        Snapshot = new EnglishSnapshotService(() => Configuration.DictionaryPath);
+        Hanhua = new HanhuaService(Penumbra, Dict, ModFiles, Snapshot);
+        AppLog = new AppLog();
+        Mark = new MarkService(() => Penumbra.GetModRoot() ?? "");
+        Extract = new ExtractService(Dict, ModFiles, AppLog);
+        AiTranslate = new AiTranslateService(AppLog);
+        Import = new ImportService(ModFiles, Penumbra, AppLog);
+        Backup = new BackupManager(ModFiles, Penumbra, AppLog, Snapshot);
+        Sumup = new SumupService(AppLog, ModFiles, Snapshot);
+        Wiki = new WikiExportService(AppLog);
+
+        ConfigWindow = new ConfigWindow(this);
+        MainWindow = new MainWindow(this, Penumbra, Dict, Hanhua);
+        DictionaryWindow = new DictionaryWindow(this);
+        PipelineWindow = new TranslatePipelineWindow(this);
+        BackupWindow = new BackupWindow(this);
+        AiSettingsWindow = new AiSettingsWindow(this);
+        WikiExportWindow = new WikiExportWindow(this);
+        LogWindow = new LogWindow(AppLog);
+
+        WindowSystem.AddWindow(ConfigWindow);
+        WindowSystem.AddWindow(MainWindow);
+        WindowSystem.AddWindow(DictionaryWindow);
+        WindowSystem.AddWindow(PipelineWindow);
+        WindowSystem.AddWindow(BackupWindow);
+        WindowSystem.AddWindow(AiSettingsWindow);
+        WindowSystem.AddWindow(WikiExportWindow);
+        WindowSystem.AddWindow(LogWindow);
+
+        CommandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
+        {
+            HelpMessage = "打开 FFXIV Penumbra 模组汉化工具主窗口"
+        });
+
+        _initialTranslationPath = Configuration.TranslationPath;
+        _initialDictionaryPath = Configuration.DictionaryPath;
+
+        PluginInterface.UiBuilder.Draw += DrawAll;
+        PluginInterface.UiBuilder.OpenConfigUi += ToggleConfigUi;
+        PluginInterface.UiBuilder.OpenMainUi += ToggleMainUi;
+
+        // 插件加载即尝试连接 Penumbra 并加载词典；确保词典目录下的 .英文快照 目录存在
+        Penumbra.Refresh();
+        ReloadDictionary();
+        Snapshot.EnsureRoot();
+        // 启动清理：删除独立版遗留的旧 .json.bak 垃圾备份（时间戳格式按份数轮转保留）
+        ModFileService.CleanupLegacyBak(Penumbra.GetModRoot(), Configuration.TranslationPath, Configuration.DictionaryPath,
+            Math.Max(1, Configuration.BackupCount));
+        Log.Information("FFXIV_penumbra的模组汉化工具 已加载");
+    }
+
+    /// <summary> 带边框的结果/日志显示区（全插件统一风格：边框 Child + 自动换行，高 56px）。 </summary>
+    internal static void ResultBox(string id, string text, string? placeholder = null, float height = 56f)
+    {
+        if (ImGui.BeginChild(id, new Vector2(-1f, height), true))
+        {
+            if (!string.IsNullOrEmpty(text))
+            {
+                ImGui.TextWrapped(text);
+            }
+            else if (!string.IsNullOrEmpty(placeholder))
+            {
+                ImGui.TextDisabled(placeholder);
+            }
+        }
+        ImGui.EndChild();
+    }
+
+    /// <summary> 统一绘制：给所有窗口加明显边框（窗口边框 + 内部 Child 边框统一），再绘制窗口系统。 </summary>
+    private void DrawAll()
+    {
+        ImGui.PushStyleVar(ImGuiStyleVar.WindowBorderSize, 2.5f);
+        ImGui.PushStyleVar(ImGuiStyleVar.ChildBorderSize, 2f); // Child 边框与窗口边框统一
+        ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding, 6f);
+        ImGui.PushStyleVar(ImGuiStyleVar.ChildRounding, 6f);
+        ImGui.PushStyleColor(ImGuiCol.Border, new Vector4(0.42f, 0.72f, 1f, 0.9f));
+        try
+        {
+            WindowSystem.Draw();
+        }
+        finally
+        {
+            ImGui.PopStyleColor();
+            ImGui.PopStyleVar();
+            ImGui.PopStyleVar();
+            ImGui.PopStyleVar();
+            ImGui.PopStyleVar();
+        }
+    }
+
+    /// <summary> 按当前配置路径重载词典。 </summary>
+    public void ReloadDictionary()
+    {
+        Dict.Load(Configuration.DictionaryPath);
+    }
+
+    /// <summary> 目录变更后自动迁移：翻译目录 → 翻译 json；词典目录 → .英文快照 / wiki / AI知识库 文件夹与词典 json。目标已存在不覆盖。 </summary>
+    public void MigrateDirectories()
+    {
+        // 词典目录变更：迁移 .英文快照、wiki/AI知识库 文件夹与词典 json
+        if (_initialDictionaryPath != Configuration.DictionaryPath)
+        {
+            var oldD = _initialDictionaryPath;
+            var newD = Configuration.DictionaryPath;
+            _initialDictionaryPath = newD;
+            if (!string.IsNullOrEmpty(oldD) && !string.IsNullOrEmpty(newD) && oldD != newD)
+            {
+                var moved = 0;
+                if (TryMoveDir(oldD, newD, "wiki_术语对照")) moved++;
+                if (TryMoveDir(oldD, newD, "AI知识库")) moved++;
+                if (TryMoveDir(oldD, newD, ".英文快照")) moved++;
+                if (TryMoveFile(oldD, newD, "我的翻译.json")) moved++;
+                if (TryMoveFile(oldD, newD, "个性翻译.json")) moved++;
+                if (TryMoveFile(oldD, newD, "内置wiki_术语对照.json")) moved++;
+                AppLog.Info($"[配置] 词典目录变更：迁移 {moved} 项 → {newD}");
+            }
+        }
+
+        // 翻译目录变更：把旧位置遗留的 .英文快照 迁往词典目录（v2.6.7 起快照归属词典目录）
+        if (_initialTranslationPath != Configuration.TranslationPath)
+        {
+            var oldT = _initialTranslationPath;
+            _initialTranslationPath = Configuration.TranslationPath;
+            var legacy = Path.Combine(oldT, ".英文快照");
+            if (Directory.Exists(legacy) && Configuration.DictionaryPath.Length > 0)
+            {
+                var dst = Path.Combine(Configuration.DictionaryPath, ".英文快照");
+                try
+                {
+                    if (!Directory.Exists(dst))
+                    {
+                        Directory.Move(legacy, dst);
+                        AppLog.Info($"[配置] 翻译目录变更：旧 .英文快照 已迁往词典目录 → {dst}");
+                    }
+                    else
+                    {
+                        AppLog.Info($"[配置] 翻译目录变更：旧 .英文快照 仍留在 {oldT}（词典目录已有 .英文快照，不覆盖）");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    AppLog.Info($"[配置] 翻译目录变更：旧 .英文快照 迁移失败（{ex.Message}），保留在 {oldT}");
+                }
+            }
+        }
+    }
+
+    private static bool TryMoveDir(string oldRoot, string newRoot, string name)
+    {
+        var src = Path.Combine(oldRoot, name);
+        var dst = Path.Combine(newRoot, name);
+        if (!Directory.Exists(src) || Directory.Exists(dst)) return false;
+        try
+        {
+            Directory.Move(src, dst);
+            return true;
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
+
+    private static bool TryMoveFile(string oldRoot, string newRoot, string name)
+    {
+        var src = Path.Combine(oldRoot, name);
+        var dst = Path.Combine(newRoot, name);
+        if (!File.Exists(src) || File.Exists(dst)) return false;
+        try
+        {
+            File.Move(src, dst);
+            return true;
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
+
+    public void Dispose()
+    {
+        PluginInterface.UiBuilder.Draw -= DrawAll;
+        PluginInterface.UiBuilder.OpenConfigUi -= ToggleConfigUi;
+        PluginInterface.UiBuilder.OpenMainUi -= ToggleMainUi;
+
+        WindowSystem.RemoveAllWindows();
+
+        ConfigWindow.Dispose();
+        MainWindow.Dispose();
+        PipelineWindow.Dispose();
+        BackupWindow.Dispose();
+        AiSettingsWindow.Dispose();
+        LogWindow.Dispose();
+        Penumbra.Dispose();
+
+        CommandManager.RemoveHandler(CommandName);
+    }
+
+    private void OnCommand(string command, string args)
+    {
+        MainWindow.Toggle();
+    }
+
+    public void ToggleConfigUi() => ConfigWindow.Toggle();
+    public void ToggleMainUi() => MainWindow.Toggle();
+    public void ToggleDictionaryUi() => DictionaryWindow.Toggle();
+    public void TogglePipelineUi() => PipelineWindow.Toggle();
+    public void ToggleBackupUi() => BackupWindow.Toggle();
+    public void ToggleAiSettingsUi() => AiSettingsWindow.Toggle();
+    public void ToggleWikiUi() => WikiExportWindow.Toggle();
+    public void ToggleLogUi() => LogWindow.Toggle();
+}
