@@ -1,4 +1,4 @@
-# FFXIV_penumbra的模组汉化工具
+# FFXIV_penumbra的模组汉化插件
 
 > 卫月（Dalamud）插件：把 Penumbra 模组的英文选项、描述批量汉化成简体中文并写回模组文件，游戏内即时生效。
 
@@ -25,7 +25,7 @@
 **手动安装**
 
 1. 从 [Releases](https://github.com/Lexington-cv2-Lady/FFXIV-Penumbra-Mod-Chinese-Localization-Tool/releases) 下载 `FFXIV-Penumbra-Mod-Localization.zip`
-2. 解压到 `XIVLauncherCN\plugins\FFXIV_penumbra的模组汉化工具\`
+2. 解压到 `XIVLauncherCN\plugins\FFXIV_penumbra的模组汉化插件\`
 3. 重启游戏或重新加载卫月
 
 ## 使用流程
@@ -44,7 +44,7 @@
 
 ```powershell
 $env:DALAMUD_HOME = "$env:APPDATA\XIVLauncherCN\addon\Hooks\dev"
-dotnet build "FFXIV_penumbra的模组汉化工具\FFXIV_penumbra的模组汉化工具.csproj" -c Debug
+dotnet build "FFXIV_penumbra的模组汉化插件\FFXIV_penumbra的模组汉化插件.csproj" -c Debug
 ```
 
 打包：将 `bin\Debug` 中的 dll、json（manifest）与依赖一并压缩为 zip 后发布到 Releases。

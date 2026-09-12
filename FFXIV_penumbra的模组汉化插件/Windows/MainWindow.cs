@@ -304,6 +304,15 @@ public class MainWindow : Window, IDisposable
             plugin.ToggleLogUi();
         }
         ImGui.SameLine();
+        if (ImGui.Button("AI 设置"))
+        {
+            plugin.ToggleAiSettingsUi();
+        }
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip("供应商 / API Key / 模型 / AI 配置列表（自定义服务商、清空预设配置）/ 测试连接");
+        }
+        ImGui.SameLine();
         if (ImGui.Button("设置"))
         {
             plugin.ToggleConfigUi();
@@ -345,7 +354,7 @@ public class MainWindow : Window, IDisposable
             var transMissing = string.IsNullOrWhiteSpace(cfg.TranslationPath) || !Directory.Exists(cfg.TranslationPath);
             if (dictMissing || transMissing)
             {
-                ImGui.TextUnformatted("欢迎使用模组汉化工具！开始前需要先设置两个目录：");
+                ImGui.TextUnformatted("欢迎使用模组汉化插件！开始前需要先设置两个目录：");
                 ImGui.Spacing();
                 if (dictMissing)
                 {
@@ -450,7 +459,8 @@ public class MainWindow : Window, IDisposable
         }
 
         var rowW = ImGui.GetContentRegionAvail().X;
-        var inputW = Math.Max(120f, rowW - 230f * ImGuiHelpers.GlobalScale);
+        var pasteW = 44f * ImGuiHelpers.GlobalScale;
+        var inputW = Math.Max(120f, rowW - 230f * ImGuiHelpers.GlobalScale - pasteW - 8f * ImGuiHelpers.GlobalScale);
         var shown = 0;
         var limit = _showAllOptions ? int.MaxValue : 30;
         var truncated = false;
@@ -466,9 +476,15 @@ public class MainWindow : Window, IDisposable
                 ImGui.TextDisabled(string.IsNullOrEmpty(g.Description) ? "组名：" : $"组名（{g.Description}）：");
                 ImGui.SetNextItemWidth(inputW);
                 if (ImGui.InputText($"##g{g.Index}", ref gv, 1024)) _editBufs[gk] = gv;
+                ImGui.SameLine();
+                if (ImGui.Button($"贴##gp{g.Index}", new Vector2(pasteW, 0)))
+                {
+                    var clip = ImGui.GetClipboardText();
+                    if (!string.IsNullOrWhiteSpace(clip)) _editBufs[gk] = clip.Trim();
+                }
                 if (ImGui.IsItemHovered())
                 {
-                    ImGui.SetTooltip("组名（可直接改中英文）\n原文：" + g.Name);
+                    ImGui.SetTooltip("组名（可直接改中英文）\n原文：" + g.Name + "\n「贴」= 读取剪贴板覆盖本框");
                 }
                 shown++;
             }
@@ -482,7 +498,13 @@ public class MainWindow : Window, IDisposable
                 if (ImGui.InputText($"##e{shown}", ref v, 1024)) _editBufs[k] = v;
                 if (ImGui.IsItemHovered())
                 {
-                    ImGui.SetTooltip("输入框内可直接改中英文\n原文：" + o.Name);
+                    ImGui.SetTooltip("输入框内可直接改中英文\n原文：" + o.Name + "\n「贴」= 读取剪贴板覆盖本框");
+                }
+                ImGui.SameLine();
+                if (ImGui.Button($"贴##ep{shown}", new Vector2(pasteW, 0)))
+                {
+                    var clip = ImGui.GetClipboardText();
+                    if (!string.IsNullOrWhiteSpace(clip)) _editBufs[k] = clip.Trim();
                 }
                 ImGui.SameLine();
                 var orig = o.Name.Length > 22 ? o.Name.Substring(0, 22) + "…" : o.Name;

@@ -46,12 +46,26 @@ public sealed class Plugin : IDalamudPlugin
     public TranslatePipelineWindow PipelineWindow { get; init; }
     public BackupWindow BackupWindow { get; init; }
     public AiSettingsWindow AiSettingsWindow { get; init; }
+    public AiConfigWindow AiConfigWindow { get; init; }
     public WikiExportWindow WikiExportWindow { get; init; }
     public LogWindow LogWindow { get; init; }
 
     public Plugin()
     {
         Configuration = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
+        // 旧版单一 API Key 字段一次性迁移：落到「当前服务商」名下（之后按服务商分存，切换/删除不再串 Key）
+        Configuration.AiApiKeys ??= new();
+        var hasAnyKey = false;
+        foreach (var kvp in Configuration.AiApiKeys)
+            if (!string.IsNullOrWhiteSpace(kvp.Value)) { hasAnyKey = true; break; }
+        if (!hasAnyKey && !string.IsNullOrWhiteSpace(Configuration.AiApiKey))
+        {
+            var legacyName = AiTranslateService.CurrentProviderName(Configuration);
+            Configuration.AiApiKeys[legacyName] = Configuration.AiApiKey;
+            Configuration.AiApiKey = "";
+            Configuration.Save();
+            Log.Information($"已把旧版单一 API Key 迁移到「{legacyName}」（按服务商分存）");
+        }
         Penumbra = new PenumbraService(PluginInterface);
         Dict = new DictionaryService();
         ModFiles = new ModFileService { MaxBackups = Configuration.BackupCount };
@@ -72,6 +86,7 @@ public sealed class Plugin : IDalamudPlugin
         PipelineWindow = new TranslatePipelineWindow(this);
         BackupWindow = new BackupWindow(this);
         AiSettingsWindow = new AiSettingsWindow(this);
+        AiConfigWindow = new AiConfigWindow(this);
         WikiExportWindow = new WikiExportWindow(this);
         LogWindow = new LogWindow(AppLog);
 
@@ -81,12 +96,13 @@ public sealed class Plugin : IDalamudPlugin
         WindowSystem.AddWindow(PipelineWindow);
         WindowSystem.AddWindow(BackupWindow);
         WindowSystem.AddWindow(AiSettingsWindow);
+        WindowSystem.AddWindow(AiConfigWindow);
         WindowSystem.AddWindow(WikiExportWindow);
         WindowSystem.AddWindow(LogWindow);
 
         CommandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
         {
-            HelpMessage = "打开 FFXIV Penumbra 模组汉化工具主窗口"
+            HelpMessage = "打开 FFXIV Penumbra 模组汉化插件主窗口"
         });
 
         _initialTranslationPath = Configuration.TranslationPath;
@@ -103,7 +119,7 @@ public sealed class Plugin : IDalamudPlugin
         // 启动清理：删除独立版遗留的旧 .json.bak 垃圾备份（时间戳格式按份数轮转保留）
         ModFileService.CleanupLegacyBak(Penumbra.GetModRoot(), Configuration.TranslationPath, Configuration.DictionaryPath,
             Math.Max(1, Configuration.BackupCount));
-        Log.Information("FFXIV_penumbra的模组汉化工具 已加载");
+        Log.Information("FFXIV_penumbra的模组汉化插件 已加载");
     }
 
     /// <summary> 带边框的结果/日志显示区（全插件统一风格：边框 Child + 自动换行，高 56px）。 </summary>
@@ -264,6 +280,7 @@ public sealed class Plugin : IDalamudPlugin
     public void TogglePipelineUi() => PipelineWindow.Toggle();
     public void ToggleBackupUi() => BackupWindow.Toggle();
     public void ToggleAiSettingsUi() => AiSettingsWindow.Toggle();
+    public void ToggleAiConfigUi() => AiConfigWindow.Toggle();
     public void ToggleWikiUi() => WikiExportWindow.Toggle();
     public void ToggleLogUi() => LogWindow.Toggle();
 }

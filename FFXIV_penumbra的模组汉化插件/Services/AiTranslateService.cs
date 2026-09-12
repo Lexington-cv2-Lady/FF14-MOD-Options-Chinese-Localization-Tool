@@ -41,9 +41,51 @@ public sealed class AiTranslateService
         _log = log;
     }
 
-    /// <summary> 获取生效的 BaseUrl / 模型名。自定义模式（AiProvider &lt; 0）时完全使用用户填写的地址与模型。 </summary>
+    /// <summary> 全部可选服务商：自定义置顶 + 内置 12 家。 </summary>
+    public static List<(string Name, string Model, string BaseUrl, string Note)> GetAllProviders(Configuration cfg)
+    {
+        var list = new List<(string, string, string, string)>();
+        if (cfg.CustomProviders != null)
+        {
+            foreach (var cp in cfg.CustomProviders)
+            {
+                if (string.IsNullOrWhiteSpace(cp.Name)) continue;
+                list.Add((cp.Name.Trim(), cp.DefaultModel ?? "", cp.BaseUrl ?? "", "自定义供应商（可在 AI 设置中修改）"));
+            }
+        }
+        list.AddRange(Providers);
+        return list;
+    }
+
+    /// <summary> 按名称解析生效服务商（优先自定义，其次内置）；找不到返回 null（回退旧下标逻辑）。 </summary>
+    private static (string Name, string Model, string BaseUrl, string Note)? FindByName(Configuration cfg)
+    {
+        var n = (cfg.AiProviderName ?? "").Trim();
+        if (string.IsNullOrEmpty(n)) return null;
+        if (cfg.CustomProviders != null)
+        {
+            foreach (var cp in cfg.CustomProviders)
+            {
+                if (string.IsNullOrWhiteSpace(cp.Name)) continue;
+                if (cp.Name.Trim() == n)
+                    return (cp.Name.Trim(), cp.DefaultModel ?? "", cp.BaseUrl ?? "", "自定义供应商");
+            }
+        }
+        foreach (var p in Providers)
+            if (p.Name == n) return p;
+        return null;
+    }
+
+    /// <summary> 获取生效的 BaseUrl / 模型名。按名称优先（自定义/内置）；名称未设时回退旧下标：AiProvider &lt; 0 为手工自定义模式。 </summary>
     public static (string BaseUrl, string Model) ResolveEndpoint(Configuration cfg)
     {
+        var named = FindByName(cfg);
+        if (named != null)
+        {
+            var baseUrl = string.IsNullOrWhiteSpace(cfg.AiBaseUrl) ? named.Value.BaseUrl : cfg.AiBaseUrl.TrimEnd('/');
+            var model = string.IsNullOrWhiteSpace(cfg.AiModel) ? named.Value.Model : cfg.AiModel.Trim();
+            return (baseUrl, model);
+        }
         if (cfg.AiProvider < 0)
         {
             var cb = (cfg.AiBaseUrl ?? "").Trim().TrimEnd('/');
@@ -53,16 +95,20 @@ public sealed class AiTranslateService
             return (cb, cm);
         }
         var p = Providers[Math.Clamp(cfg.AiProvider, 0, Providers.Length - 1)];
-        var baseUrl = string.IsNullOrWhiteSpace(cfg.AiBaseUrl) ? p.BaseUrl : cfg.AiBaseUrl.TrimEnd('/');
-        var model = string.IsNullOrWhiteSpace(cfg.AiModel) ? p.Model : cfg.AiModel.Trim();
-        return (baseUrl, model);
+        var pb = string.IsNullOrWhiteSpace(cfg.AiBaseUrl) ? p.BaseUrl : cfg.AiBaseUrl.TrimEnd('/');
+        var pm = string.IsNullOrWhiteSpace(cfg.AiModel) ? p.Model : cfg.AiModel.Trim();
+        return (pb, pm);
     }
 
-    /// <summary> 当前服务商的名字（自定义模式返回「自定义」）。 </summary>
+    /// <summary> 当前服务商的名字（名称优先；手工自定义模式返回「自定义」）。 </summary>
     public static string CurrentProviderName(Configuration cfg)
-        => cfg.AiProvider < 0
+    {
+        var named = FindByName(cfg);
+        if (named != null) return named.Value.Name;
+        return cfg.AiProvider < 0
             ? "自定义"
             : Providers[Math.Clamp(cfg.AiProvider, 0, Providers.Length - 1)].Name;
+    }
 
     /// <summary> 单请求输出上限 max_tokens（按平台自动取官方安全值；未知平台沿用旧值避免 400）。 </summary>
     public static long MaxTokensForModel(Configuration cfg)

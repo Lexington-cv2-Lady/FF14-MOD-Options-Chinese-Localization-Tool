@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Numerics;
 using System.Threading.Tasks;
 using Dalamud.Bindings.ImGui;
@@ -42,47 +43,79 @@ public class AiSettingsWindow : Window, IDisposable
         ImGui.Separator();
         ImGui.Spacing();
 
-        // 供应商（自定义置顶，国内优先，海外在后；可选自定义覆盖）
-        ImGui.TextUnformatted("供应商（自定义置顶；国内优先；可选自定义覆盖）：");
-        var current = Math.Clamp(cfg.AiProvider, 0, AiTranslateService.Providers.Length - 1);
-        var customMode = cfg.AiProvider < 0;
-        var shown = customMode ? "自定义（使用下方 API 地址）" : AiTranslateService.Providers[current].Name;
+        // 供应商（自定义置顶，国内优先，海外在后；可增删改自定义服务商）
+        ImGui.TextUnformatted("供应商（自定义置顶；国内优先；可增删改自定义服务商）：");
+        var allProviders = AiTranslateService.GetAllProviders(cfg);
+        var currentName = AiTranslateService.CurrentProviderName(cfg);
+        var manualMode = cfg.AiProviderName == "" && cfg.AiProvider < 0;
+        var shown = manualMode ? "自定义（手工填写 API 地址）" : currentName;
         if (ImGui.BeginCombo("##Provider", shown))
         {
-            if (ImGui.Selectable("自定义（使用下方 API 地址）", customMode))
+            foreach (var item in allProviders)
             {
-                cfg.AiProvider = -1;
-                _testResult = "已切换为「自定义」，Key 各服务商独立保存";
-            }
-            if (customMode) ImGui.SetItemDefaultFocus();
-            for (var i = 0; i < AiTranslateService.Providers.Length; i++)
-            {
-                var sel = !customMode && i == current;
-                if (ImGui.Selectable(AiTranslateService.Providers[i].Name, sel))
+                var sel = !manualMode && item.Name == currentName;
+                if (ImGui.Selectable(item.Name, sel))
                 {
-                    cfg.AiProvider = i;
-                    _testResult = $"已切换为「{AiTranslateService.Providers[i].Name}」，Key 各服务商独立保存";
+                    cfg.AiProviderName = item.Name;
+                    cfg.AiProvider = -2; // 名称优先解析；下标仅兜底
+                    _testResult = $"已切换为「{item.Name}」，Key 各服务商独立保存";
                 }
                 if (sel) ImGui.SetItemDefaultFocus();
             }
+            if (ImGui.Selectable("自定义（手工填写 API 地址与模型）", manualMode))
+            {
+                cfg.AiProviderName = "";
+                cfg.AiProvider = -1;
+                _testResult = "已切换为「自定义」，Key 各服务商独立保存";
+            }
+            if (manualMode) ImGui.SetItemDefaultFocus();
             ImGui.EndCombo();
         }
         if (ImGui.IsItemHovered())
         {
-            ImGui.SetTooltip(customMode
-                ? "自定义模式：完全使用下方「API 地址 + 模型」，需自行填写"
-                : AiTranslateService.Providers[current].Note);
+            var tip = "";
+            if (manualMode)
+            {
+                tip = "自定义模式：完全使用下方「API 地址 + 模型」，需自行填写";
+            }
+            else
+            {
+                var hit = allProviders.FirstOrDefault(x => x.Name == currentName);
+                if (hit.Name != null) tip = hit.Note;
+            }
+            if (tip.Length > 0) ImGui.SetTooltip(tip);
         }
 
         ImGui.Spacing();
 
         // BaseUrl
-        ImGui.TextUnformatted("API 地址（留空 = 供应商预设）：");
+        ImGui.TextUnformatted("API 地址（留空 = 服务商预设）：");
         var baseUrl = cfg.AiBaseUrl;
-        ImGui.SetNextItemWidth(ImGui.GetContentRegionAvail().X);
+        var pasteW = 64f * ImGuiHelpers.GlobalScale;
+        ImGui.SetNextItemWidth(Math.Max(120f, ImGui.GetContentRegionAvail().X - pasteW - 8f * ImGuiHelpers.GlobalScale));
         if (ImGui.InputText("##AiBaseUrl", ref baseUrl, 512))
         {
             cfg.AiBaseUrl = baseUrl;
+            cfg.Save(); // 修改即保存，避免重启丢失
+        }
+        ImGui.SameLine();
+        if (ImGui.Button("粘贴##AiBaseUrlPaste", new Vector2(pasteW, 0)))
+        {
+            var clip = ImGui.GetClipboardText();
+            if (!string.IsNullOrWhiteSpace(clip))
+            {
+                cfg.AiBaseUrl = clip.Trim();
+                cfg.Save();
+                _testResult = "已从剪贴板粘贴 API 地址";
+            }
+            else
+            {
+                _testResult = "剪贴板为空，粘贴失败";
+            }
+        }
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip("直接读取剪贴板填入，无需 Ctrl+V（避开游戏内焦点问题）");
         }
         ImGui.TextDisabled($"当前生效：{AiTranslateService.ResolveEndpoint(cfg).BaseUrl}/chat/completions");
 
@@ -91,13 +124,13 @@ public class AiSettingsWindow : Window, IDisposable
         // API Key（按服务商独立保存；带「显示/隐藏」+「粘贴」按钮：绕过游戏内焦点问题）
         ImGui.TextUnformatted("API Key（仅当前服务商）：");
         var key = AiTranslateService.GetApiKey(cfg);
-        var pasteW = 64f * ImGuiHelpers.GlobalScale;
         var showW = 52f * ImGuiHelpers.GlobalScale;
         ImGui.SetNextItemWidth(Math.Max(120f, ImGui.GetContentRegionAvail().X - pasteW - showW - 16f * ImGuiHelpers.GlobalScale));
         var keyFlags = _showKey ? ImGuiInputTextFlags.None : ImGuiInputTextFlags.Password;
         if (ImGui.InputText("##AiKey", ref key, 512, keyFlags))
         {
             AiTranslateService.SetApiKey(cfg, key);
+            cfg.Save(); // 修改即保存
         }
         ImGui.SameLine();
         if (ImGui.Button(_showKey ? "隐藏" : "显示", new Vector2(showW, 0)))
@@ -115,6 +148,7 @@ public class AiSettingsWindow : Window, IDisposable
             if (!string.IsNullOrWhiteSpace(clip))
             {
                 AiTranslateService.SetApiKey(cfg, clip);
+                cfg.Save();
                 _testResult = "已从剪贴板粘贴 API Key";
             }
             else
@@ -136,10 +170,30 @@ public class AiSettingsWindow : Window, IDisposable
         // 模型
         ImGui.TextUnformatted("模型（留空 = 供应商预设）：");
         var model = cfg.AiModel;
-        ImGui.SetNextItemWidth(ImGui.GetContentRegionAvail().X);
+        ImGui.SetNextItemWidth(Math.Max(120f, ImGui.GetContentRegionAvail().X - pasteW - 8f * ImGuiHelpers.GlobalScale));
         if (ImGui.InputText("##AiModel", ref model, 256))
         {
             cfg.AiModel = model;
+            cfg.Save(); // 修改即保存
+        }
+        ImGui.SameLine();
+        if (ImGui.Button("粘贴##AiModelPaste", new Vector2(pasteW, 0)))
+        {
+            var clip = ImGui.GetClipboardText();
+            if (!string.IsNullOrWhiteSpace(clip))
+            {
+                cfg.AiModel = clip.Trim();
+                cfg.Save();
+                _testResult = "已从剪贴板粘贴模型名";
+            }
+            else
+            {
+                _testResult = "剪贴板为空，粘贴失败";
+            }
+        }
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip("直接读取剪贴板填入，无需 Ctrl+V（避开游戏内焦点问题）");
         }
         ImGui.TextDisabled($"当前生效：{AiTranslateService.ResolveEndpoint(cfg).Model}");
 
@@ -192,6 +246,21 @@ public class AiSettingsWindow : Window, IDisposable
                 : "当前平台（地址）不支持联网搜索：仅通义/百炼（dashscope/aliyuncs）支持");
         }
 
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+
+        // ── AI 配置列表（独立三级窗口）──
+        ImGui.TextUnformatted("自定义服务商 / 内置服务商 / 清空预设配置：");
+        ImGui.Spacing();
+        if (ImGui.Button("AI 配置列表"))
+        {
+            _plugin.ToggleAiConfigUi();
+        }
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip("打开 AI 配置列表（三级窗口）：新增 / 删除自定义服务商、查看内置预设、清空预设配置");
+        }
         ImGui.Spacing();
         ImGui.Separator();
         ImGui.Spacing();

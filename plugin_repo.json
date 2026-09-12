@@ -1,8 +1,8 @@
 [
   {
     "Author": "Lexington-cv2-Lady",
-    "Name": "FFXIV_penumbra的模组汉化工具",
-    "InternalName": "FFXIV_penumbra的模组汉化工具",
+    "Name": "FFXIV_penumbra的模组汉化插件",
+    "InternalName": "FFXIV_penumbra的模组汉化插件",
     "AssemblyVersion": "1.0.0.0",
     "Description": "读取 Penumbra 模组的选项与描述，调用词典（我的翻译 / 个性翻译 / wiki 术语 / AI 知识库）与 AI 翻译批量汉化，写回 meta.json / group_*.json 后自动触发 Penumbra 重载。应用前自动备份，可随时撤销。支持 Penumbra 新旧双格式、纯中文输出、黑名单保留专名。",
     "ApplicableVersion": "any",

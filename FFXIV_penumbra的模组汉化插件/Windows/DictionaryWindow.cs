@@ -36,10 +36,20 @@ public class DictionaryWindow : Window
         ImGui.Spacing();
 
         var dictPath = configuration.DictionaryPath;
-        ImGui.SetNextItemWidth(ImGui.GetContentRegionAvail().X - 110 * ImGuiHelpers.GlobalScale);
+        var pasteW = 64f * ImGuiHelpers.GlobalScale;
+        ImGui.SetNextItemWidth(Math.Max(120f, ImGui.GetContentRegionAvail().X - 110f * ImGuiHelpers.GlobalScale - pasteW - 8f * ImGuiHelpers.GlobalScale));
         if (ImGui.InputText("##DictPath", ref dictPath, 512))
         {
             configuration.DictionaryPath = dictPath;
+        }
+        ImGui.SameLine();
+        if (ImGui.Button("粘贴##DictPaste", new Vector2(pasteW, 0)))
+        {
+            var clip = ImGui.GetClipboardText();
+            if (!string.IsNullOrWhiteSpace(clip))
+            {
+                configuration.DictionaryPath = clip.Trim();
+            }
         }
         ImGui.SameLine();
         if (ImGui.Button("应用并重载", new Vector2(100 * ImGuiHelpers.GlobalScale, 0)))

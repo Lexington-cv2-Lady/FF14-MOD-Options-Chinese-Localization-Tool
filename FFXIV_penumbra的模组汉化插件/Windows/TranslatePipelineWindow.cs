@@ -29,7 +29,6 @@ public class TranslatePipelineWindow : Window, IDisposable
     private string _result = "";
     private Task<int>? _task;
     private string _taskStatus = "";
-    private float _warnX = -1f; // 「未填写 API Key」提示的起点 X（供 AI 设置按钮对齐）
 
     public TranslatePipelineWindow(Plugin plugin) : base("汉化流程###HanhuaPipeline")
     {
@@ -145,16 +144,12 @@ public class TranslatePipelineWindow : Window, IDisposable
         // ── ③ AI 翻译 ──
         ImGui.TextUnformatted("③ AI 翻译（把仍未翻译的项交给所选供应商）");
         ImGui.Spacing();
-        _warnX = -1f;
-        var providerName = cfg.AiProvider < 0
-            ? "自定义"
-            : AiTranslateService.Providers[Math.Clamp(cfg.AiProvider, 0, AiTranslateService.Providers.Length - 1)].Name;
+        var providerName = AiTranslateService.CurrentProviderName(cfg);
         ImGui.TextDisabled($"供应商：{providerName}" +
                            $"（{AiTranslateService.ResolveEndpoint(cfg).Model}）");
         if (string.IsNullOrWhiteSpace(AiTranslateService.GetApiKey(cfg)))
         {
             ImGui.SameLine();
-            _warnX = ImGui.GetCursorPosX(); // 记录「未填写」起点，供下方 AI 设置按钮对齐
             ImGui.TextDisabled("　⚠ 未填写 API Key");
         }
         ImGui.Spacing();
@@ -204,25 +199,6 @@ public class TranslatePipelineWindow : Window, IDisposable
             if (ImGui.IsItemHovered())
             {
                 ImGui.SetTooltip("取消后续批次（当前批次可能仍会完成）");
-            }
-            // AI 设置：未填写时对齐「未填写 API Key」提示；已填写则水平居中
-            var aiBtnW = 110 * ImGuiHelpers.GlobalScale;
-            if (_warnX > 0)
-            {
-                ImGui.SameLine(_warnX);
-            }
-            else
-            {
-                var half = ImGui.GetContentRegionAvail().X * 0.5f;
-                ImGui.SameLine(Math.Max(half - aiBtnW * 0.5f, 4f));
-            }
-            if (ImGui.Button("AI 设置"))
-            {
-                _plugin.ToggleAiSettingsUi();
-            }
-            if (ImGui.IsItemHovered())
-            {
-                ImGui.SetTooltip("配置供应商 / API Key / 模型 / 温度 / 批量（也可测试连接）");
             }
         }
         ImGui.Spacing();

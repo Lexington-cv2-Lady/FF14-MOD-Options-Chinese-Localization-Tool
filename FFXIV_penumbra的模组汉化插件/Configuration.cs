@@ -22,8 +22,14 @@ public class Configuration : IPluginConfiguration
     public int BackupCount { get; set; } = 5;
 
     // ── AI 翻译设置 ──
-    /// <summary> 已选 AI 供应商（OpenAI 兼容端点预置表的下标）。 </summary>
+    /// <summary> 已选 AI 供应商（OpenAI 兼容端点预置表的下标；-1 = 手工自定义模式）。 </summary>
     public int AiProvider { get; set; }
+
+    /// <summary> 当前选中的服务商名（内置名或自定义服务商名；空 = 回退使用 AiProvider 下标，兼容旧配置）。 </summary>
+    public string AiProviderName { get; set; } = "";
+
+    /// <summary> 用户自定义供应商列表（自定义置顶显示，可在 AI 设置中增删改）。 </summary>
+    public List<CustomProvider> CustomProviders { get; set; } = new();
 
     /// <summary> 自定义 API 地址（覆盖供应商预设；空 = 用预设）。 </summary>
     public string AiBaseUrl { get; set; } = "";
@@ -53,4 +59,18 @@ public class Configuration : IPluginConfiguration
     {
         Plugin.PluginInterface.SavePluginConfig(this);
     }
+}
+
+/// <summary> 用户自定义 AI 供应商。 </summary>
+[Serializable]
+public class CustomProvider
+{
+    /// <summary> 供应商名称（用于下拉显示与 Key 分存键）。 </summary>
+    public string Name { get; set; } = "";
+
+    /// <summary> API 地址（OpenAI 兼容 /chat/completions 端点）。 </summary>
+    public string BaseUrl { get; set; } = "";
+
+    /// <summary> 默认模型名。 </summary>
+    public string DefaultModel { get; set; } = "";
 }
