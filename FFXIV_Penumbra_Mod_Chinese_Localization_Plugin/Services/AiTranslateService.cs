@@ -403,7 +403,7 @@ public sealed class AiTranslateService
         try
         {
             if (!Directory.Exists(Path.GetDirectoryName(outputPath))) Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
-            File.WriteAllText(outputPath, root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }), Encoding.UTF8);
+            File.WriteAllText(outputPath, root.ToJsonString(JsonFile.Indented), Encoding.UTF8);
         }
         catch (Exception ex)
         {

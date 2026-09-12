@@ -343,7 +343,7 @@ public class TranslatePipelineWindow : Window, IDisposable
                 }
             }
 
-            File.WriteAllText(path, root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }), Encoding.UTF8);
+            File.WriteAllText(path, root.ToJsonString(JsonFile.Indented), Encoding.UTF8);
             return hit;
         }
         catch (Exception ex)

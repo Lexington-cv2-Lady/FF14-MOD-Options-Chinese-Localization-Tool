@@ -264,7 +264,7 @@ public sealed class ModFileService
                 }
             }
 
-            var options = new JsonSerializerOptions { WriteIndented = true };
+            var options = JsonFile.Indented;
             File.WriteAllText(filePath, node.ToJsonString(options));
             return true;
         }

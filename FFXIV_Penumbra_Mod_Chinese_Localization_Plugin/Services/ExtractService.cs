@@ -162,7 +162,7 @@ public sealed class ExtractService
                     ["_descriptions"] = descriptions
                 };
                 var perPath = Path.Combine(translationDir, fileName);
-                File.WriteAllText(perPath, perRoot.ToJsonString(new JsonSerializerOptions { WriteIndented = true }), Encoding.UTF8);
+                File.WriteAllText(perPath, perRoot.ToJsonString(JsonFile.Indented), Encoding.UTF8);
             }
             else
             {
@@ -191,7 +191,7 @@ public sealed class ExtractService
         };
 
         var outPath = Path.Combine(translationDir, "全部模组_未翻译.json");
-        File.WriteAllText(outPath, root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }), Encoding.UTF8);
+        File.WriteAllText(outPath, root.ToJsonString(JsonFile.Indented), Encoding.UTF8);
 
         var sb2 = new StringBuilder();
         sb2.Append($"提取完成：{total} 项（{mods.Count - skippedMarked - noFiles} 个模组）→ {outPath}");

@@ -885,7 +885,7 @@ public class MainWindow : Window, IDisposable
                 }
             }
 
-            File.WriteAllText(file.Path, node.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+            File.WriteAllText(file.Path, node.ToJsonString(JsonFile.Indented));
             _result = $"已保存 {changed} 项修改（原文件已自动备份）";
 
             ReloadSelectedFile();

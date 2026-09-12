@@ -237,7 +237,7 @@ public sealed class SumupService
         try
         {
             if (!Directory.Exists(dictionaryDir)) Directory.CreateDirectory(dictionaryDir);
-            File.WriteAllText(dictPath, dict.ToJsonString(new JsonSerializerOptions { WriteIndented = true }), Encoding.UTF8);
+            File.WriteAllText(dictPath, dict.ToJsonString(JsonFile.Indented), Encoding.UTF8);
             return null;
         }
         catch (Exception ex)

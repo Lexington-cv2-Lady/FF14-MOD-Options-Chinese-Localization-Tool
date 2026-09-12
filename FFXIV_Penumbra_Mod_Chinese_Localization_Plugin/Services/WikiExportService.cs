@@ -264,7 +264,7 @@ public sealed class WikiExportService
                     var outObj = new JsonObject { ["terms"] = kv.Value.DeepClone() };
                     var fileName = CategoryFileNameZh(DisplayOf(kv.Key)) + ".json";
                     File.WriteAllText(Path.Combine(catDir, fileName),
-                        outObj.ToJsonString(new JsonSerializerOptions { WriteIndented = true }), Encoding.UTF8);
+                        outObj.ToJsonString(JsonFile.Indented), Encoding.UTF8);
                     catFiles++;
                 }
                 if (catEmpty > 0)
@@ -276,7 +276,7 @@ public sealed class WikiExportService
             {
                 var outObj = new JsonObject { ["terms"] = summary.DeepClone() };
                 File.WriteAllText(Path.Combine(catDir, "汇总.json"),
-                    outObj.ToJsonString(new JsonSerializerOptions { WriteIndented = true }), Encoding.UTF8);
+                    outObj.ToJsonString(JsonFile.Indented), Encoding.UTF8);
                 log?.Invoke("[完成] wiki 术语词典已更新（wiki_术语对照\\汇总.json，独立只读底料，读取时自动生效）");
             }
 

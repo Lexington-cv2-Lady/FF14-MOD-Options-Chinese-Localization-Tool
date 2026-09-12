@@ -204,7 +204,7 @@ public sealed class BackupManager
                 return false;
             }
 
-            File.WriteAllText(currentMetaPath, cur.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+            File.WriteAllText(currentMetaPath, cur.ToJsonString(JsonFile.Indented));
             return true;
         }
         catch (Exception)
