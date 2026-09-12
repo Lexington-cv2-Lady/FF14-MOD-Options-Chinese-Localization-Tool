@@ -24,15 +24,15 @@ public sealed class AiTranslateService
     {
         ("智谱 GLM", "GLM-4.5-Air", "https://open.bigmodel.cn/api/paas/v4", "智谱 AI 开放平台（OpenAI 兼容）"),
         ("通义千问", "qwen-plus", "https://dashscope.aliyuncs.com/compatible-mode/v1", "阿里云百炼（OpenAI 兼容，需先开通百炼）"),
-        ("腾讯混元", "hunyuan-turbo", "https://api.hunyuan.cloud.tencent.com/v1", "腾讯云大模型（OpenAI 兼容）"),
-        ("百度千帆", "ernie-4.0-turbo-8k", "https://qianfan.baidubce.com/v2", "百度智能云千帆（OpenAI 兼容）"),
-        ("DeepSeek", "deepseek-chat", "https://api.deepseek.com/v1", "深度求索（OpenAI 兼容，国内可直连，性价比高）"),
+        ("腾讯混元", "hunyuan-turbos-latest", "https://api.hunyuan.cloud.tencent.com/v1", "腾讯云大模型（OpenAI 兼容）"),
+        ("百度千帆", "ernie-4.5-turbo-32k", "https://qianfan.baidubce.com/v2", "百度智能云千帆（OpenAI 兼容）"),
+        ("DeepSeek", "deepseek-flash", "https://api.deepseek.com/v1", "深度求索（OpenAI 兼容，国内可直连，性价比高）"),
         ("OpenRouter", "openai/gpt-4o-mini", "https://openrouter.ai/api/v1", "海外聚合中转，可调 GPT/Claude/Gemini"),
-        ("Groq", "llama-3.3-70b-versatile", "https://api.groq.com/openai/v1", "开源模型超高速推理（海外）"),
-        ("OpenAI（GPT）", "gpt-4o-mini", "https://api.openai.com/v1", "官方接口：国内网络不可直连，需代理或中转"),
-        ("Google Gemini", "gemini-2.0-flash", "https://generativelanguage.googleapis.com/v1beta/openai", "谷歌官方 OpenAI 兼容端点：国内不可直连"),
-        ("Anthropic Claude", "claude-sonnet-4-20250514", "https://api.anthropic.com/v1", "Anthropic 官方：国内不可直连，需代理"),
-        ("xAI Grok", "grok-2-latest", "https://api.x.ai/v1", "xAI 官方（OpenAI 兼容）：国内不可直连"),
+        ("Groq", "openai/gpt-oss-120b", "https://api.groq.com/openai/v1", "开源模型超高速推理（海外）"),
+        ("OpenAI（GPT）", "gpt-5.4-mini", "https://api.openai.com/v1", "官方接口：国内网络不可直连，需代理或中转"),
+        ("Google Gemini", "gemini-3.8-flash", "https://generativelanguage.googleapis.com/v1beta/openai", "谷歌官方 OpenAI 兼容端点：国内不可直连"),
+        ("Anthropic Claude", "claude-sonnet-4-6", "https://api.anthropic.com/v1", "Anthropic 官方：国内不可直连，需代理"),
+        ("xAI Grok", "grok-4.3", "https://api.x.ai/v1", "xAI 官方（OpenAI 兼容）：国内不可直连"),
         ("Mistral", "mistral-small-latest", "https://api.mistral.ai/v1", "Mistral 官方：国内不可直连")
     };
 
