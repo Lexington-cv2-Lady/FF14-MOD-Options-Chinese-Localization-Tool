@@ -343,8 +343,8 @@ public sealed class AiTranslateService
             try
             {
                 _log.Info($"AI 翻译：{Path.GetFileName(inputPath)} 批次 {bi + 1}/{batches.Count}（{batch.Count} 项，当前：{KeySummary(batch[0])}）");
-                var resp = await PostAsync(baseUrl, apiKey, body);
-                var content = await resp.Content.ReadAsStringAsync();
+                var resp = await PostAsync(baseUrl, apiKey, body, ct);
+                var content = await resp.Content.ReadAsStringAsync(ct);
                 if (!resp.IsSuccessStatusCode)
                 {
                     errors.Add($"批次 {bi + 1}：HTTP {(int)resp.StatusCode} " + Truncate(content, 120));
@@ -384,6 +384,12 @@ public sealed class AiTranslateService
                 }
                 ok += got;
                 _log.Info($"AI 翻译：{Path.GetFileName(inputPath)} 已完成 {ok}/{pending.Count} 条");
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                // 用户取消：中断在飞请求，已完成的批次照常写出，不再记为错误
+                _log.Info($"AI 翻译：已取消（{Path.GetFileName(inputPath)}，已完成 {ok}/{pending.Count} 条）");
+                break;
             }
             catch (Exception ex)
             {
@@ -432,12 +438,13 @@ public sealed class AiTranslateService
         return false;
     }
 
-    private async Task<HttpResponseMessage> PostAsync(string baseUrl, string apiKey, JsonObject body)
+    private async Task<HttpResponseMessage> PostAsync(string baseUrl, string apiKey, JsonObject body,
+        CancellationToken ct = default)
     {
         var req = new HttpRequestMessage(HttpMethod.Post, baseUrl + "/chat/completions");
         req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
         req.Content = new StringContent(body.ToJsonString(), Encoding.UTF8, "application/json");
-        return await Http.SendAsync(req);
+        return await Http.SendAsync(req, ct); // 传入 token：取消时立即中断在飞请求，而非等它自然返回
     }
 
     private static string? ExtractContent(string json)

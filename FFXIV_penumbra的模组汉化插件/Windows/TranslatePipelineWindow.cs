@@ -162,12 +162,12 @@ public class TranslatePipelineWindow : Window, IDisposable
             if (ImGui.Button("取消 AI 翻译"))
             {
                 _cts?.Cancel();
-                _taskStatus = "正在取消…（当前已发出的批次请求仍会完成，后续批次停止）";
-                _log.Info("AI 翻译：已请求取消，等待当前批次结束");
+                _taskStatus = "正在取消…（已中断当前请求，已完成的部分会保存）";
+                _log.Info("AI 翻译：已请求取消，正在中断当前请求");
             }
             if (ImGui.IsItemHovered())
             {
-                ImGui.SetTooltip("停止后续批次；当前已发出的请求仍会完成");
+                ImGui.SetTooltip("立即中断：正在进行的批次请求也会被取消，已完成的条目照常写出");
             }
             ImGui.TextDisabled("翻译进行中…（可切到其他窗口，完成后回来查看）");
         }
