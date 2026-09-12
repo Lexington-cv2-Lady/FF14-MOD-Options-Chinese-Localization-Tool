@@ -28,6 +28,8 @@ public class MainWindow : Window, IDisposable
 
     // 多选集合（批量翻译 / 批量备份）
     private readonly HashSet<int> _selectedSet = new();
+    // 列表鼠标框选（空白处拖动拉框多选）
+    private readonly ListDragSelect _listDrag = new();
 
     // 左右分栏比例（分隔条可拖动）
     private float _split = 0.34f;
@@ -157,16 +159,18 @@ public class MainWindow : Window, IDisposable
                 }
                 else
                 {
-                    // 列表独立滚动区：头部（全选）固定置顶
+                    // 列表独立滚动区：头部（已翻译筛选）固定置顶
                     using (var scroll = ImRaii.Child("##ModListScroll", new Vector2(-1, -1), false))
                     {
                         if (scroll.Success)
                         {
+                            _listDrag.Begin();
                             for (var k = 0; k < visible.Count; k++)
                             {
                                 var i = visible[k];
                                 var mod = penumbra.Mods[i];
                                 var isChecked = _selectedSet.Contains(i);
+                                var rowTop = ImGui.GetCursorScreenPos().Y;
                                 // 紧凑行：小内边距 → 勾选框更小、行更矮，窗口缩小时一屏可见更多
                                 ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, new Vector2(3f, 2f) * ImGuiHelpers.GlobalScale);
                                 if (ImGui.Checkbox($"##sel{i}", ref isChecked))
@@ -183,11 +187,14 @@ public class MainWindow : Window, IDisposable
                                     _result = "";
                                 }
                                 ImGui.PopStyleVar();
+                                _listDrag.Row(i, rowTop, rowTop + ImGui.GetFrameHeight());
                                 if (ImGui.IsItemHovered())
                                 {
-                                    ImGui.SetTooltip(mod.Directory);
+                                    ImGui.SetTooltip(mod.Directory + "\n（列表空白处按住拖动可框选多个）");
                                 }
                             }
+                            // 框选命中 → 勾选（只增不减）
+                            foreach (var i in _listDrag.End()) _selectedSet.Add(i);
                         }
                     }
                 }

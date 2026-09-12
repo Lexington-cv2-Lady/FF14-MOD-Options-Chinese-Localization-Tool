@@ -23,6 +23,9 @@ public class BackupWindow : Window, IDisposable
     // 备份多选（勾选模组时自动同步全选其备份）
     private readonly HashSet<int> _bakSet = new();
     private bool _syncBak;
+    // 两个列表各自的鼠标框选状态
+    private readonly ListDragSelect _modDrag = new();
+    private readonly ListDragSelect _bakDrag = new();
 
     private string _result = "";
     private bool _needRefresh;
@@ -151,10 +154,12 @@ public class BackupWindow : Window, IDisposable
                 {
                     if (scroll.Success)
                     {
+                        _modDrag.Begin();
                         for (var i = 0; i < mods.Count; i++)
                         {
                             var checkedItem = _modSet.Contains(i);
                             var marked = _mark.HasMark(mods[i].Directory);
+                            var rowTop = ImGui.GetCursorScreenPos().Y;
                             // 紧凑行：小内边距 → 勾选框更小、行更矮，窗口缩小时一屏可见更多选项
                             ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, new Vector2(3f, 2f) * ImGuiHelpers.GlobalScale);
                             if (ImGui.Checkbox($"##m{i}", ref checkedItem))
@@ -173,10 +178,18 @@ public class BackupWindow : Window, IDisposable
                                 _syncBak = true;
                             }
                             ImGui.PopStyleVar();
+                            _modDrag.Row(i, rowTop, rowTop + ImGui.GetFrameHeight());
                             if (ImGui.IsItemHovered())
                             {
-                                ImGui.SetTooltip(mods[i].Directory + "\n点击整行切换勾选");
+                                ImGui.SetTooltip(mods[i].Directory + "\n点击整行切换勾选；空白处拖动可框选多个");
                             }
+                        }
+                        // 框选命中 → 勾选（只增不减），并联动备份列表
+                        var hitMods = _modDrag.End();
+                        if (hitMods.Count > 0)
+                        {
+                            foreach (var i in hitMods) _modSet.Add(i);
+                            _syncBak = true;
                         }
                     }
                 }
@@ -248,10 +261,12 @@ public class BackupWindow : Window, IDisposable
                 {
                     if (scroll.Success)
                     {
+                        _bakDrag.Begin();
                         for (var i = 0; i < relevant.Count; i++)
                         {
                             var b = relevant[i];
                             var checkedItem = _bakSet.Contains(i);
+                            var rowTop = ImGui.GetCursorScreenPos().Y;
                             // 紧凑行：小内边距 → 勾选框更小、行更矮
                             ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, new Vector2(3f, 2f) * ImGuiHelpers.GlobalScale);
                             if (ImGui.Checkbox($"##b{i}", ref checkedItem))
@@ -267,11 +282,14 @@ public class BackupWindow : Window, IDisposable
                                 else _bakSet.Add(i);
                             }
                             ImGui.PopStyleVar();
+                            _bakDrag.Row(i, rowTop, rowTop + ImGui.GetFrameHeight());
                             if (ImGui.IsItemHovered())
                             {
-                                ImGui.SetTooltip($"备份时间：{b.Time:yyyy-MM-dd HH:mm:ss}\n完整路径：{b.BakPath}\n点击整行切换勾选");
+                                ImGui.SetTooltip($"备份时间：{b.Time:yyyy-MM-dd HH:mm:ss}\n完整路径：{b.BakPath}\n点击整行切换勾选；空白处拖动可框选多个");
                             }
                         }
+                        // 框选命中 → 勾选（只增不减）
+                        foreach (var i in _bakDrag.End()) _bakSet.Add(i);
                     }
                 }
             }
