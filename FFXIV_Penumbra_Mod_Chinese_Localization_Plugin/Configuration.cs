@@ -9,11 +9,11 @@ public class Configuration : IPluginConfiguration
 {
     public int Version { get; set; } = 0;
 
-    /// <summary> 词典目录（复用独立版的 E:\<MOD_ROOT>\词典目录）。 </summary>
-    public string DictionaryPath { get; set; } = "E:\\<MOD_ROOT>\\词典目录";
+    /// <summary> 词典目录（默认留空：首次使用时由主窗口引导配置）。 </summary>
+    public string DictionaryPath { get; set; } = "";
 
-    /// <summary> 翻译目录（独立版的 E:\<MOD_ROOT>\翻译目录，AI 翻译管线使用）。 </summary>
-    public string TranslationPath { get; set; } = "E:\\<MOD_ROOT>\\翻译目录";
+    /// <summary> 翻译目录（AI 翻译管线的输入输出；默认留空，首次使用时由主窗口引导配置）。 </summary>
+    public string TranslationPath { get; set; } = "";
 
     /// <summary> 是否自动刷新模组列表。 </summary>
     public bool AutoRefresh { get; set; } = true;
