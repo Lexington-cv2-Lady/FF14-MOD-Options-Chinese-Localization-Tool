@@ -125,129 +125,129 @@ public class AiConfigWindow : Window, IDisposable
 
         ImGui.Spacing();
 
-            var editing = (cfg.CustomProviders ?? []).FirstOrDefault(x => x.Name == currentName);
-            if (editing != null)
-            {
-                // ── 自定义服务商编辑表单 ──
-                var formW = ImGui.GetContentRegionAvail().X;
+        var editing = (cfg.CustomProviders ?? []).FirstOrDefault(x => x.Name == currentName);
+        if (editing != null)
+        {
+            // ── 自定义服务商编辑表单 ──
+            var formW = ImGui.GetContentRegionAvail().X;
 
-                ImGui.TextUnformatted("名称：");
-                var editName = editing.Name;
-                ImGui.SetNextItemWidth(Math.Max(120f, formW - pasteW - 8f * ImGuiHelpers.GlobalScale));
-                if (ImGui.InputText("##CpName", ref editName, 128))
+            ImGui.TextUnformatted("名称：");
+            var editName = editing.Name;
+            ImGui.SetNextItemWidth(Math.Max(120f, formW - pasteW - 8f * ImGuiHelpers.GlobalScale));
+            if (ImGui.InputText("##CpName", ref editName, 128))
+            {
+                var trimmed = editName.Trim();
+                if (trimmed.Length > 0 && (cfg.CustomProviders ?? []).All(x => x == editing || x.Name != trimmed))
                 {
-                    var trimmed = editName.Trim();
-                    if (trimmed.Length > 0 && (cfg.CustomProviders ?? []).All(x => x == editing || x.Name != trimmed))
+                    RenameProvider(cfg, editing, trimmed);
+                    cfg.Save(); // 修改即保存
+                }
+            }
+            ImGui.SameLine();
+            if (ImGui.Button("粘贴##CpNamePaste", new Vector2(pasteW, 0)))
+            {
+                var clip = ImGui.GetClipboardText();
+                if (!string.IsNullOrWhiteSpace(clip))
+                {
+                    var trimmed = clip.Trim();
+                    if ((cfg.CustomProviders ?? []).All(x => x == editing || x.Name != trimmed))
                     {
                         RenameProvider(cfg, editing, trimmed);
-                        cfg.Save(); // 修改即保存
+                        cfg.Save();
+                        _result = "已从剪贴板粘贴名称";
                     }
-                }
-                ImGui.SameLine();
-                if (ImGui.Button("粘贴##CpNamePaste", new Vector2(pasteW, 0)))
-                {
-                    var clip = ImGui.GetClipboardText();
-                    if (!string.IsNullOrWhiteSpace(clip))
-                    {
-                        var trimmed = clip.Trim();
-                        if ((cfg.CustomProviders ?? []).All(x => x == editing || x.Name != trimmed))
-                        {
-                            RenameProvider(cfg, editing, trimmed);
-                            cfg.Save();
-                            _result = "已从剪贴板粘贴名称";
-                        }
-                        else _result = "名称与其他服务商重复，未应用";
-                    }
-                    else _result = "剪贴板为空，粘贴失败";
-                }
-
-            ImGui.TextUnformatted("API 地址（OpenAI 兼容端点）：");
-            var editBase = editing.BaseUrl;
-            ImGui.SetNextItemWidth(Math.Max(120f, formW - pasteW - 8f * ImGuiHelpers.GlobalScale));
-            if (ImGui.InputText("##CpBase", ref editBase, 512))
-            {
-                editing.BaseUrl = editBase.Trim();
-                cfg.Save(); // 修改即保存
-            }
-            ImGui.SameLine();
-            if (ImGui.Button("粘贴##CpBasePaste", new Vector2(pasteW, 0)))
-            {
-                var clip = ImGui.GetClipboardText();
-                if (!string.IsNullOrWhiteSpace(clip))
-                {
-                    editing.BaseUrl = clip.Trim();
-                    cfg.Save();
-                    _result = "已从剪贴板粘贴 API 地址";
+                    else _result = "名称与其他服务商重复，未应用";
                 }
                 else _result = "剪贴板为空，粘贴失败";
             }
 
-            ImGui.TextUnformatted("默认模型：");
-            var editModel = editing.DefaultModel;
-            ImGui.SetNextItemWidth(Math.Max(120f, formW - pasteW - 8f * ImGuiHelpers.GlobalScale));
-            if (ImGui.InputText("##CpModel", ref editModel, 256))
+        ImGui.TextUnformatted("API 地址（OpenAI 兼容端点）：");
+        var editBase = editing.BaseUrl;
+        ImGui.SetNextItemWidth(Math.Max(120f, formW - pasteW - 8f * ImGuiHelpers.GlobalScale));
+        if (ImGui.InputText("##CpBase", ref editBase, 512))
+        {
+            editing.BaseUrl = editBase.Trim();
+            cfg.Save(); // 修改即保存
+        }
+        ImGui.SameLine();
+        if (ImGui.Button("粘贴##CpBasePaste", new Vector2(pasteW, 0)))
+        {
+            var clip = ImGui.GetClipboardText();
+            if (!string.IsNullOrWhiteSpace(clip))
             {
-                editing.DefaultModel = editModel.Trim();
-                cfg.Save(); // 修改即保存
-            }
-            ImGui.SameLine();
-            if (ImGui.Button("粘贴##CpModelPaste", new Vector2(pasteW, 0)))
-            {
-                var clip = ImGui.GetClipboardText();
-                if (!string.IsNullOrWhiteSpace(clip))
-                {
-                    editing.DefaultModel = clip.Trim();
-                    cfg.Save();
-                    _result = "已从剪贴板粘贴模型名";
-                }
-                else _result = "剪贴板为空，粘贴失败";
-            }
-
-            ImGui.TextUnformatted("API Key（仅该服务商）：");
-            var cpKey = AiTranslateService.GetApiKey(cfg);
-            var cpKeyFlags = _showCpKey ? ImGuiInputTextFlags.None : ImGuiInputTextFlags.Password;
-            ImGui.SetNextItemWidth(Math.Max(120f, formW - pasteW - showW - 16f * ImGuiHelpers.GlobalScale));
-            if (ImGui.InputText("##CpKey", ref cpKey, 512, cpKeyFlags))
-            {
-                AiTranslateService.SetApiKey(cfg, cpKey);
-                cfg.Save(); // 修改即保存
-            }
-            ImGui.SameLine();
-            if (ImGui.Button(_showCpKey ? "隐藏" : "显示", new Vector2(showW, 0)))
-            {
-                _showCpKey = !_showCpKey;
-            }
-            if (ImGui.IsItemHovered())
-            {
-                ImGui.SetTooltip(_showCpKey ? "隐藏 API Key（恢复密文）" : "显示 API Key 明文（确认是否输错）");
-            }
-            ImGui.SameLine();
-            if (ImGui.Button("粘贴##CpKeyPaste", new Vector2(pasteW, 0)))
-            {
-                var clip = ImGui.GetClipboardText();
-                if (!string.IsNullOrWhiteSpace(clip))
-                {
-                    AiTranslateService.SetApiKey(cfg, clip.Trim());
-                    cfg.Save();
-                    _result = "已从剪贴板粘贴 API Key";
-                }
-                else _result = "剪贴板为空，粘贴失败";
-            }
-            if (ImGui.IsItemHovered())
-            {
-                ImGui.SetTooltip("直接读取剪贴板填入，无需 Ctrl+V（避开游戏内焦点问题）");
-            }
-            if (string.IsNullOrWhiteSpace(AiTranslateService.GetApiKey(cfg)))
-            {
-                ImGui.TextColored(new Vector4(1f, 0.5f, 0.2f, 1f), "该服务商未填写 Key：切换后 AI 翻译不可用");
-            }
-
-            ImGui.Spacing();
-            if (ImGui.Button("保存修改"))
-            {
+                editing.BaseUrl = clip.Trim();
                 cfg.Save();
-                _result = "自定义服务商已保存";
+                _result = "已从剪贴板粘贴 API 地址";
             }
+            else _result = "剪贴板为空，粘贴失败";
+        }
+
+        ImGui.TextUnformatted("默认模型：");
+        var editModel = editing.DefaultModel;
+        ImGui.SetNextItemWidth(Math.Max(120f, formW - pasteW - 8f * ImGuiHelpers.GlobalScale));
+        if (ImGui.InputText("##CpModel", ref editModel, 256))
+        {
+            editing.DefaultModel = editModel.Trim();
+            cfg.Save(); // 修改即保存
+        }
+        ImGui.SameLine();
+        if (ImGui.Button("粘贴##CpModelPaste", new Vector2(pasteW, 0)))
+        {
+            var clip = ImGui.GetClipboardText();
+            if (!string.IsNullOrWhiteSpace(clip))
+            {
+                editing.DefaultModel = clip.Trim();
+                cfg.Save();
+                _result = "已从剪贴板粘贴模型名";
+            }
+            else _result = "剪贴板为空，粘贴失败";
+        }
+
+        ImGui.TextUnformatted("API Key（仅该服务商）：");
+        var cpKey = AiTranslateService.GetApiKey(cfg);
+        var cpKeyFlags = _showCpKey ? ImGuiInputTextFlags.None : ImGuiInputTextFlags.Password;
+        ImGui.SetNextItemWidth(Math.Max(120f, formW - pasteW - showW - 16f * ImGuiHelpers.GlobalScale));
+        if (ImGui.InputText("##CpKey", ref cpKey, 512, cpKeyFlags))
+        {
+            AiTranslateService.SetApiKey(cfg, cpKey);
+            cfg.Save(); // 修改即保存
+        }
+        ImGui.SameLine();
+        if (ImGui.Button(_showCpKey ? "隐藏" : "显示", new Vector2(showW, 0)))
+        {
+            _showCpKey = !_showCpKey;
+        }
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip(_showCpKey ? "隐藏 API Key（恢复密文）" : "显示 API Key 明文（确认是否输错）");
+        }
+        ImGui.SameLine();
+        if (ImGui.Button("粘贴##CpKeyPaste", new Vector2(pasteW, 0)))
+        {
+            var clip = ImGui.GetClipboardText();
+            if (!string.IsNullOrWhiteSpace(clip))
+            {
+                AiTranslateService.SetApiKey(cfg, clip.Trim());
+                cfg.Save();
+                _result = "已从剪贴板粘贴 API Key";
+            }
+            else _result = "剪贴板为空，粘贴失败";
+        }
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip("直接读取剪贴板填入，无需 Ctrl+V（避开游戏内焦点问题）");
+        }
+        if (string.IsNullOrWhiteSpace(AiTranslateService.GetApiKey(cfg)))
+        {
+            ImGui.TextColored(new Vector4(1f, 0.5f, 0.2f, 1f), "该服务商未填写 Key：切换后 AI 翻译不可用");
+        }
+
+        ImGui.Spacing();
+        if (ImGui.Button("保存修改"))
+        {
+            cfg.Save();
+            _result = "自定义服务商已保存";
+        }
         }
         else if (!manualMode)
         {

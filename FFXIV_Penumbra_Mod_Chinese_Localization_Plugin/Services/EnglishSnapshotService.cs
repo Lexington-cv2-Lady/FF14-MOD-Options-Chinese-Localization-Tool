@@ -1,6 +1,5 @@
 using System;
 using System.IO;
-using System.Linq;
 
 namespace FFXIVPenumbraHanhua.Services;
 
@@ -34,27 +33,6 @@ public sealed class EnglishSnapshotService
         catch (Exception)
         {
             /* 创建失败不阻断启动 */
-        }
-    }
-
-    /// <summary> 词典目录变更时迁移 .英文快照（目标已存在时不覆盖）。返回是否迁移。 </summary>
-    public bool MigrateFrom(string oldDictionaryDir)
-    {
-        try
-        {
-            var current = _dictionaryDirGetter() ?? "";
-            if (string.IsNullOrEmpty(oldDictionaryDir) || string.IsNullOrEmpty(current) ||
-                oldDictionaryDir == current) return false;
-            var src = Path.Combine(oldDictionaryDir, ".英文快照");
-            if (!Directory.Exists(src)) return false;
-            var dst = Root;
-            if (Directory.Exists(dst)) return false; // 目标已存在，不覆盖
-            Directory.Move(src, dst);
-            return true;
-        }
-        catch (Exception)
-        {
-            return false;
         }
     }
 

@@ -25,54 +25,9 @@ public sealed class HanhuaService
         _snapshot = snapshot;
     }
 
-    /// <summary> 批量翻译多个模组。返回成功处理的模组数；全部失败返回 -1。 </summary>
-    public int TranslateMods(IReadOnlyList<ModEntry> mods)
-    {
-        if (mods.Count == 0)
-        {
-            LastResult = "未选择任何模组";
-            return -1;
-        }
-
-        var okCount = 0;
-        var totalChanged = 0;
-        var totalBackups = 0;
-        var skipped = 0;
-        var errors = new List<string>();
-
-        foreach (var mod in mods)
-        {
-            var changed = TranslateMod(mod.Directory, mod.Name);
-            if (changed < 0)
-            {
-                errors.Add($"{mod.Name}：{LastResult}");
-                continue;
-            }
-            if (changed == 0)
-            {
-                skipped++;
-                continue;
-            }
-            okCount++;
-            totalChanged += changed;
-            totalBackups += _lastBackupCount;
-        }
-
-        var sb = new StringBuilder();
-        sb.Append($"批量完成：成功 {okCount} 个模组 / 翻译 {totalChanged} 项 / 备份 {totalBackups} 个模组（zip）");
-        if (skipped > 0) sb.Append($"，{skipped} 个无需修改");
-        if (errors.Count > 0)
-            sb.Append("；失败 " + errors.Count + " 个：" + string.Join("；", errors.Take(3)) + (errors.Count > 3 ? " 等" : ""));
-        LastResult = sb.ToString();
-        return okCount;
-    }
-
-    private int _lastBackupCount;
-
     /// <summary> 翻译并写入一个模组。返回翻译修改的条目数；失败返回 -1。 </summary>
     public int TranslateMod(string modDirectory, string modName)
     {
-        _lastBackupCount = 0;
         var modRoot = _penumbra.GetModRoot();
         if (string.IsNullOrEmpty(modRoot))
         {
@@ -102,7 +57,6 @@ public sealed class HanhuaService
             LastResult = "备份失败，已跳过写回（无 meta.json / group_*.json 或打包异常）";
             return -1;
         }
-        _lastBackupCount = 1;
 
         var totalChanged = 0;
         var totalFiles = 0;

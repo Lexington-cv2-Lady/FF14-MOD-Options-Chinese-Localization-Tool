@@ -20,7 +20,6 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static IPluginLog Log { get; private set; } = null!;
 
     private const string CommandName = "/pmh";
-    private const string LegacyCommandName = "/pm"; // 旧指令，保留兼容
 
     /// <summary> 旧版中文插件 ID（InternalName）；用于把旧配置文件迁移到新的英文 ID。 </summary>
     private const string LegacyInternalName = "FFXIV_penumbra的模组汉化插件";
@@ -105,10 +104,6 @@ public sealed class Plugin : IDalamudPlugin
         CommandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
         {
             HelpMessage = "打开 FFXIV Penumbra 模组汉化插件主窗口"
-        });
-        CommandManager.AddHandler(LegacyCommandName, new CommandInfo(OnCommand)
-        {
-            HelpMessage = "打开 FFXIV Penumbra 模组汉化插件主窗口（旧指令，同 /pmh）"
         });
 
         _initialTranslationPath = Configuration.TranslationPath;
@@ -318,7 +313,6 @@ public sealed class Plugin : IDalamudPlugin
         Penumbra.Dispose();
 
         CommandManager.RemoveHandler(CommandName);
-        CommandManager.RemoveHandler(LegacyCommandName);
     }
 
     private void OnCommand(string command, string args)

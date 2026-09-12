@@ -303,14 +303,12 @@ public class BackupWindow : Window, IDisposable
         // 最左：创建选中备份
         if (ImGui.Button("创建选中备份"))
         {
-            var n = 0;
             var m = 0;
             foreach (var i in _modSet)
             {
                 if (i < 0 || i >= mods.Count) continue;
                 var dir = Path.Combine(modRoot, mods[i].Directory);
-                var got = _backup.ManualBackup(dir, _plugin.Configuration.BackupCount);
-                if (got > 0) { n += got; m++; }
+                if (_backup.ManualBackup(dir, _plugin.Configuration.BackupCount) > 0) m++;
             }
             _result = _modSet.Count == 0
                 ? "未勾选模组（左侧勾选要备份的模组）"

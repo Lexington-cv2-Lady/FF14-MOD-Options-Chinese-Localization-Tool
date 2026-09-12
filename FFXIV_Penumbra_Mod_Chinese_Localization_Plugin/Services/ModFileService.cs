@@ -130,33 +130,6 @@ public sealed class ModFileService
         }
     }
 
-    /// <summary> 备份文件（.json.bak_yyyyMMdd_HHmmss，轮转保留 MaxBackups 份）。 </summary>
-    public string? Backup(string filePath)
-    {
-        try
-        {
-            var dir = Path.GetDirectoryName(filePath) ?? "";
-            var name = Path.GetFileName(filePath);
-            var stamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
-            var bak = Path.Combine(dir, $"{name}.bak_{stamp}");
-            File.Copy(filePath, bak, true);
-
-            // 轮转：只保留最新 MaxBackups 份
-            var backups = Directory.GetFiles(dir, $"{name}.bak_*")
-                .OrderByDescending(x => x, StringComparer.Ordinal)
-                .ToList();
-            foreach (var old in backups.Skip(MaxBackups))
-            {
-                try { File.Delete(old); } catch { /* 忽略删除失败 */ }
-            }
-            return bak;
-        }
-        catch (Exception)
-        {
-            return null;
-        }
-    }
-
     /// <summary>
     /// 启动清理：删除旧格式 .json.bak / .json.bak2（独立版遗留的完整备份），
     /// 时间戳格式 *.json.bak_YYYYMMDD_HHMMSS 按前缀分组、每组只保留最新 maxBackups 份。
