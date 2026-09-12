@@ -39,7 +39,8 @@ public sealed class ImportService
         var totalWritten = 0;
         var totalBackups = 0;
         var errors = new List<string>();
-        var reloaded = new Dictionary<string, string>(); // 目录 → 显示名（ReloadMod 需按二元组匹配）
+        var reloaded = new Dictionary<string, string>();  // 目录 → 显示名（ReloadMod 需按二元组匹配）
+        var completed = new Dictionary<string, string>(); // 本次有写入或已无待翻译内容的模组（用于建「已翻译」标记）
         var modBackedUp = new HashSet<string>();
 
         foreach (var mod in mods)
@@ -55,6 +56,8 @@ public sealed class ImportService
             if (files.Count == 0) continue; // 无 meta.json / group_*.json 的模组（本身没有选项）
 
             var wroteAny = false;
+            var anyContent = false;              // 是否存在可翻译条目（避免空 group 文件被误判为已完成）
+            var allDone = true;                  // 该模组是否已无待翻译内容（全中文 / 黑名单专名 / 词典可覆盖）
             foreach (var fileInfo in files)
             {
                 var groupNames = new Dictionary<int, string>();
@@ -64,11 +67,16 @@ public sealed class ImportService
 
                 foreach (var g in fileInfo.Groups)
                 {
+                    if (g.Name.Length > 0) anyContent = true;
+                    if (!IsDone(dict, fileName, "Name", g.Name)) allDone = false;
                     var gName = ApplyLookup(dict, fileName, "Name", g.Name);
                     if (gName != null) groupNames[g.Index] = gName;
 
                     foreach (var o in g.Options)
                     {
+                        if (o.Name.Length > 0 || o.Description.Length > 0) anyContent = true;
+                        if (!IsDone(dict, fileName, "Opt", o.Name)) allDone = false;
+                        if (!IsDone(dict, fileName, "Description", o.Description)) allDone = false;
                         var oName = ApplyLookup(dict, fileName, "Opt", o.Name);
                         if (oName != null) optionNames[(g.Index, o.Index)] = oName;
                         var oDesc = ApplyLookup(dict, fileName, "Description", o.Description);
@@ -103,6 +111,8 @@ public sealed class ImportService
                 }
             }
             if (wroteAny) reloaded[mod.Directory] = mod.Name;
+            // 有写入 或（有内容且已全部译好）→ 视为已完成汉化，建标记
+            if (wroteAny || (anyContent && allDone)) completed[mod.Directory] = mod.Name;
         }
 
         foreach (var kv in reloaded)
@@ -110,10 +120,11 @@ public sealed class ImportService
             _penumbra.Reload(kv.Key, kv.Value);
         }
 
-        // 为有实际写入的模组创建无后缀「已翻译」标记（与独立版 5. 翻译写入MOD 一致）：
-        // ① 提取英文自动跳过该模组；查漏补缺不受影响；恢复备份自动删除标记。
+        // 为已完成汉化的模组创建无后缀「已翻译」标记：
+        // 既覆盖「本次新写入」的模组，也覆盖「本次无写入但已全中文」的模组（避免重复点 ⑤ 时漏建）。
+        // 效果：① 提取英文自动跳过该模组；查漏补缺不受影响；恢复备份自动删除标记。
         var marked = 0;
-        foreach (var modDir in reloaded.Keys)
+        foreach (var modDir in completed.Keys)
         {
             // Create 对已存在的标记也返回 true：先判断，仅统计本次新建的
             if (!_mark.HasMark(modDir) && _mark.Create(modDir)) marked++;
@@ -129,6 +140,24 @@ public sealed class ImportService
         if (marked > 0)
             _log.Info($"[标记] 已为 {marked} 个模组创建「已翻译」标记（① 提取英文自动跳过；恢复备份或手动删除后恢复提取）");
         return totalWritten;
+    }
+
+    /// <summary> 该条目是否无需再翻译：空 / 已含中文 / 黑名单专名 / 不含英文字母 / 词典已有对应译文。 </summary>
+    private static bool IsDone(DictionaryService dict, string fileName, string field, string english)
+    {
+        if (string.IsNullOrWhiteSpace(english)) return true;
+        if (dict.ContainsChinese(english)) return true;
+        if (dict.IsBlacklisted(english)) return true;
+        if (!HasAsciiLetter(english)) return true;
+        var zh = dict.LookupMod($"{fileName}||{field}||{english}") ?? dict.LookupTerm(english);
+        return !string.IsNullOrWhiteSpace(zh);
+    }
+
+    private static bool HasAsciiLetter(string s)
+    {
+        foreach (var c in s)
+            if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) return true;
+        return false;
     }
 
     /// <summary> 查词典译文：原文为空 / 已含中文（不重复覆盖）/ 黑名单 → 不写回。mods 层精确键优先，再 terms 层。 </summary>
