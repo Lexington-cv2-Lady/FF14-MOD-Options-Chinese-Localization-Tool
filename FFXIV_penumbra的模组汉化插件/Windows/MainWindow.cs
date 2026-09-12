@@ -467,7 +467,23 @@ public class MainWindow : Window, IDisposable
 
         if (files.Count == 0)
         {
-            ImGui.TextDisabled("未找到 meta.json / group_*.json（该模组可能没有选项）");
+            // 有 meta.json 但无 Groups（纯文件替换模组，如动画/武器替换）与完全无选项文件，都走这里
+            var metaPath = string.IsNullOrEmpty(modRoot)
+                ? ""
+                : System.IO.Path.Combine(modRoot, mod.Directory, "meta.json");
+            if (metaPath.Length > 0 && File.Exists(metaPath))
+            {
+                ImGui.TextWrapped("该模组没有可汉化的选项：meta.json 中没有 Groups（属纯文件替换模组，如动画/武器替换），无需翻译。");
+            }
+            else
+            {
+                ImGui.TextWrapped("该模组没有可汉化的选项：未找到 meta.json / group_*.json。");
+            }
+            ImGui.Spacing();
+            ImGui.TextDisabled("可创建「已翻译」标记，将其从主列表「未翻译」筛选中隐藏：");
+            DrawMarkButton(mod); // 无选项模组同样允许手动标记
+            ImGui.Spacing();
+            Plugin.ResultBox("##MainResult", _result, "操作结果将显示在这里");
             return;
         }
 
@@ -630,28 +646,7 @@ public class MainWindow : Window, IDisposable
         ImGui.Separator();
         ImGui.Spacing();
 
-        var mark = plugin.Mark;
-        var marked = mark.HasMark(mod.Directory);
-        if (ImGui.Button(marked ? "删除「已翻译」标记" : "创建「已翻译」标记"))
-        {
-            if (marked)
-            {
-                _result = mark.Remove(mod.Directory)
-                    ? "已删除标记，提取英文时将重新处理该模组"
-                    : "删除标记失败：无法写入模组目录";
-            }
-            else
-            {
-                _result = mark.Create(mod.Directory)
-                    ? "已创建标记，提取英文时将自动跳过该模组"
-                    : "创建标记失败：无法写入模组目录（请确认模组目录存在且可写）";
-            }
-            _markCache.Remove(mod.Directory); // 立即失效标记缓存，列表筛选即时更新
-        }
-        if (ImGui.IsItemHovered())
-        {
-            ImGui.SetTooltip("模组目录创建无后缀「已翻译」文件：提取英文/翻译时自动跳过；查漏补缺不受影响；备份还原时自动删除");
-        }
+        DrawMarkButton(mod);
         ImGui.SameLine();
         if (ImGui.Button("查漏补缺"))
         {
@@ -675,6 +670,33 @@ public class MainWindow : Window, IDisposable
         // 详情区操作结果：带边框统一风格
         ImGui.Spacing();
         Plugin.ResultBox("##MainResult", _result, "操作结果将显示在这里（如：已保存 N 项修改…）");
+    }
+
+    /// <summary> 「创建 / 删除已翻译标记」按钮（带缓存失效）。有选项与无选项模组共用。 </summary>
+    private void DrawMarkButton(ModEntry mod)
+    {
+        var mark = plugin.Mark;
+        var marked = mark.HasMark(mod.Directory);
+        if (ImGui.Button(marked ? "删除「已翻译」标记" : "创建「已翻译」标记"))
+        {
+            if (marked)
+            {
+                _result = mark.Remove(mod.Directory)
+                    ? "已删除标记，提取英文时将重新处理该模组"
+                    : "删除标记失败：无法写入模组目录";
+            }
+            else
+            {
+                _result = mark.Create(mod.Directory)
+                    ? "已创建标记，提取英文时将自动跳过该模组"
+                    : "创建标记失败：无法写入模组目录（请确认模组目录存在且可写）";
+            }
+            _markCache.Remove(mod.Directory); // 立即失效标记缓存，列表筛选即时更新
+        }
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip("模组目录创建无后缀「已翻译」文件：提取英文/翻译时自动跳过；查漏补缺不受影响；备份还原时自动删除");
+        }
     }
 
     /// <summary> 查漏补缺：列出模组文件中仍为英文的选项/组名/描述。 </summary>
