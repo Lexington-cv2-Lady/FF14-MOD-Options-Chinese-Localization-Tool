@@ -17,12 +17,14 @@
 **自定义仓库安装（推荐）**
 
 1. 打开卫月设置 → 「实验性」→ 自定义插件仓库
-2. 添加仓库地址：`https://raw.githubusercontent.com/Lexington-cv2-Lady/FFXIV-Penumbra-Mod-Chinese-Localization-Tool/main/plugin_repo.json`
+2. 添加仓库地址（任选其一）：
+   - `https://raw.githubusercontent.com/Lexington-cv2-Lady/FFXIV-Penumbra-Mod-Chinese-Localization-Tool/main/plugin_repo.json`
+   - 镜像：`https://cdn.jsdelivr.net/gh/Lexington-cv2-Lady/FFXIV-Penumbra-Mod-Chinese-Localization-Tool@main/plugin_repo.json`
 3. 在插件安装器中搜索「模组汉化」安装
 
 **手动安装**
 
-1. 从 [Releases](https://github.com/Lexington-cv2-Lady/FFXIV-Penumbra-Mod-Chinese-Localization-Tool/releases) 下载 `FFXIV_penumbra的模组汉化工具.zip`
+1. 从 [Releases](https://github.com/Lexington-cv2-Lady/FFXIV-Penumbra-Mod-Chinese-Localization-Tool/releases) 下载 `FFXIV_penumbra.zip`
 2. 解压到 `XIVLauncherCN\plugins\FFXIV_penumbra的模组汉化工具\`
 3. 重启游戏或重新加载卫月
 
