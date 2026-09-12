@@ -74,7 +74,7 @@ public sealed class Plugin : IDalamudPlugin
         Mark = new MarkService(() => Penumbra.GetModRoot() ?? "");
         Extract = new ExtractService(Dict, ModFiles, AppLog);
         AiTranslate = new AiTranslateService(AppLog);
-        Import = new ImportService(ModFiles, Penumbra, AppLog);
+        Import = new ImportService(ModFiles, Penumbra, AppLog, Mark);
         Backup = new BackupManager(ModFiles, Penumbra, AppLog, Snapshot, Mark);
         Sumup = new SumupService(AppLog, ModFiles, Snapshot);
         Wiki = new WikiExportService(AppLog);

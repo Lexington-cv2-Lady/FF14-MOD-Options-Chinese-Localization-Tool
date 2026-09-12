@@ -12,14 +12,16 @@ public sealed class ImportService
     private readonly ModFileService _files;
     private readonly PenumbraService _penumbra;
     private readonly AppLog _log;
+    private readonly MarkService _mark;
 
     public string LastResult { get; private set; } = "";
 
-    public ImportService(ModFileService files, PenumbraService penumbra, AppLog log)
+    public ImportService(ModFileService files, PenumbraService penumbra, AppLog log, MarkService mark)
     {
         _files = files;
         _penumbra = penumbra;
         _log = log;
+        _mark = mark;
     }
 
     /// <summary>
@@ -108,12 +110,24 @@ public sealed class ImportService
             _penumbra.Reload(kv.Key, kv.Value);
         }
 
+        // 为有实际写入的模组创建无后缀「已翻译」标记（与独立版 5. 翻译写入MOD 一致）：
+        // ① 提取英文自动跳过该模组；查漏补缺不受影响；恢复备份自动删除标记。
+        var marked = 0;
+        foreach (var modDir in reloaded.Keys)
+        {
+            // Create 对已存在的标记也返回 true：先判断，仅统计本次新建的
+            if (!_mark.HasMark(modDir) && _mark.Create(modDir)) marked++;
+        }
+
         var sb = new StringBuilder();
         sb.Append($"翻译写入完成：写入 {totalWritten} 项 / 备份 {totalBackups} 个模组（zip）/ 重载 {reloaded.Count} 个模组");
+        if (marked > 0) sb.Append($"/ 创建「已翻译」标记 {marked} 个");
         if (errors.Count > 0)
             sb.Append("；问题：" + string.Join("；", errors.Take(3)) + (errors.Count > 3 ? $" 等 {errors.Count} 条" : ""));
         LastResult = sb.ToString();
         _log.Info(LastResult);
+        if (marked > 0)
+            _log.Info($"[标记] 已为 {marked} 个模组创建「已翻译」标记（① 提取英文自动跳过；恢复备份或手动删除后恢复提取）");
         return totalWritten;
     }
 
