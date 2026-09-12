@@ -319,9 +319,13 @@ public class MainWindow : Window, IDisposable
             ImGui.SetTooltip("创建 / 还原 / 删除备份");
         }
         ImGui.SameLine();
-        if (ImGui.Button("词典管理"))
+        if (ImGui.Button("目录和词典管理"))
         {
             plugin.ToggleDictionaryUi();
+        }
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip("词典目录 / 翻译目录 / 备份份数设置，以及词典加载状态与各来源词条统计");
         }
         ImGui.SameLine();
         if (ImGui.Button("Wiki提取"))
@@ -345,11 +349,6 @@ public class MainWindow : Window, IDisposable
         if (ImGui.IsItemHovered())
         {
             ImGui.SetTooltip("供应商 / API Key / 模型 / AI 配置列表（自定义服务商、清空预设配置）/ 测试连接");
-        }
-        ImGui.SameLine();
-        if (ImGui.Button("设置"))
-        {
-            plugin.ToggleConfigUi();
         }
         ImGui.Separator();
     }
@@ -409,13 +408,13 @@ public class MainWindow : Window, IDisposable
                     ImGui.TextColored(new Vector4(0.55f, 0.9f, 0.55f, 1f), "✓ 翻译目录已设置");
                 }
                 ImGui.Spacing();
-                if (ImGui.Button("打开设置，配置目录"))
+                if (ImGui.Button("打开目录和词典管理，配置目录"))
                 {
-                    plugin.ToggleConfigUi();
+                    plugin.ToggleDictionaryUi();
                 }
                 if (ImGui.IsItemHovered())
                 {
-                    ImGui.SetTooltip("在设置窗口中填写词典目录与翻译目录并点击「保存设置」");
+                    ImGui.SetTooltip("在「目录和词典管理」窗口中填写词典目录与翻译目录并点击「保存设置」");
                 }
                 ImGui.Spacing();
                 ImGui.TextDisabled("目录设置完成后，本提示自动消失，可正常开始汉化。");

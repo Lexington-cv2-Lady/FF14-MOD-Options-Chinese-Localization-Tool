@@ -40,7 +40,6 @@ public sealed class Plugin : IDalamudPlugin
     public WikiExportService Wiki { get; init; }
 
     public readonly WindowSystem WindowSystem = new("FFXIVPenumbraHanhua");
-    public ConfigWindow ConfigWindow { get; init; }
     public MainWindow MainWindow { get; init; }
     public DictionaryWindow DictionaryWindow { get; init; }
     public TranslatePipelineWindow PipelineWindow { get; init; }
@@ -80,7 +79,6 @@ public sealed class Plugin : IDalamudPlugin
         Sumup = new SumupService(AppLog, ModFiles, Snapshot);
         Wiki = new WikiExportService(AppLog);
 
-        ConfigWindow = new ConfigWindow(this);
         MainWindow = new MainWindow(this, Penumbra, Dict, Hanhua);
         DictionaryWindow = new DictionaryWindow(this);
         PipelineWindow = new TranslatePipelineWindow(this);
@@ -90,7 +88,6 @@ public sealed class Plugin : IDalamudPlugin
         WikiExportWindow = new WikiExportWindow(this);
         LogWindow = new LogWindow(AppLog);
 
-        WindowSystem.AddWindow(ConfigWindow);
         WindowSystem.AddWindow(MainWindow);
         WindowSystem.AddWindow(DictionaryWindow);
         WindowSystem.AddWindow(PipelineWindow);
@@ -109,7 +106,7 @@ public sealed class Plugin : IDalamudPlugin
         _initialDictionaryPath = Configuration.DictionaryPath;
 
         PluginInterface.UiBuilder.Draw += DrawAll;
-        PluginInterface.UiBuilder.OpenConfigUi += ToggleConfigUi;
+        PluginInterface.UiBuilder.OpenConfigUi += ToggleDictionaryUi;
         PluginInterface.UiBuilder.OpenMainUi += ToggleMainUi;
 
         // 插件加载即尝试连接 Penumbra 并加载词典；确保词典目录下的 .英文快照 目录存在
@@ -253,12 +250,11 @@ public sealed class Plugin : IDalamudPlugin
     public void Dispose()
     {
         PluginInterface.UiBuilder.Draw -= DrawAll;
-        PluginInterface.UiBuilder.OpenConfigUi -= ToggleConfigUi;
+        PluginInterface.UiBuilder.OpenConfigUi -= ToggleDictionaryUi;
         PluginInterface.UiBuilder.OpenMainUi -= ToggleMainUi;
 
         WindowSystem.RemoveAllWindows();
 
-        ConfigWindow.Dispose();
         MainWindow.Dispose();
         PipelineWindow.Dispose();
         BackupWindow.Dispose();
@@ -276,7 +272,6 @@ public sealed class Plugin : IDalamudPlugin
         MainWindow.Toggle();
     }
 
-    public void ToggleConfigUi() => ConfigWindow.Toggle();
     public void ToggleMainUi() => MainWindow.Toggle();
     public void ToggleDictionaryUi() => DictionaryWindow.Toggle();
     public void TogglePipelineUi() => PipelineWindow.Toggle();
