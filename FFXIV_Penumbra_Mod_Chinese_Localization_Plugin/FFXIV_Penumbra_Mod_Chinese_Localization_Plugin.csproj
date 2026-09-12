@@ -20,9 +20,13 @@
     <IconUrl>https://raw.githubusercontent.com/Lexington-cv2-Lady/FFXIV_Penumbra_Mod_Chinese_Localization_Plugin/main/Data/icon.png</IconUrl>
     <Tags>汉化;翻译;模组;penumbra;ffxiv;chinese;localization;中文</Tags>
     <CategoryTags>utility</CategoryTags>
-    <!-- dev 插件部署目录（构建后自动复制） -->
-    <DevPluginDir>C:\Users\<USER>\AppData\Roaming\XIVLauncherCN\devPlugins\FFXIV_Penumbra_Mod_Chinese_Localization_Plugin</DevPluginDir>
+    <!-- dev 插件部署目录（构建后自动复制）。用 $(APPDATA) 环境变量，避免写死个人用户名路径；
+         本机若用非默认启动器目录，可在 gitignore 的 local.props 里覆盖 DevPluginDir。 -->
+    <DevPluginDir Condition="'$(DevPluginDir)' == ''">$(APPDATA)\XIVLauncherCN\devPlugins\FFXIV_Penumbra_Mod_Chinese_Localization_Plugin</DevPluginDir>
   </PropertyGroup>
+
+  <!-- 本机私有覆盖（不入库）：可在此设置 DevPluginDir 等机器相关属性 -->
+  <Import Project="local.props" Condition="Exists('local.props')" />
 
   <ItemGroup>
     <!-- 插件图标：Dalamud 对 dev/本地插件从 <插件目录>\images\icon.png 读取（须为正方形、≤512×512）。
