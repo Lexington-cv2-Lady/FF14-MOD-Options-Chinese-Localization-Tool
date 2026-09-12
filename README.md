@@ -24,7 +24,7 @@
 
 **手动安装**
 
-1. 从 [Releases](https://github.com/Lexington-cv2-Lady/FFXIV-Penumbra-Mod-Chinese-Localization-Tool/releases) 下载 `FFXIV_penumbra.zip`
+1. 从 [Releases](https://github.com/Lexington-cv2-Lady/FFXIV-Penumbra-Mod-Chinese-Localization-Tool/releases) 下载 `FFXIV-Penumbra-Mod-Localization.zip`
 2. 解压到 `XIVLauncherCN\plugins\FFXIV_penumbra的模组汉化工具\`
 3. 重启游戏或重新加载卫月
 
