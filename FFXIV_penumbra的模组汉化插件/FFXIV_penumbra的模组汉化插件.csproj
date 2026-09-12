@@ -10,7 +10,7 @@
     <Punchline>把 Penumbra 模组的英文选项翻译成简体中文并写回，游戏内即时生效。</Punchline>
     <Description>读取 Penumbra 模组的选项与描述，调用词典（我的翻译 / 个性翻译 / wiki 术语 / AI 知识库）与 AI 翻译批量汉化，写回 meta.json / group_*.json 后自动触发 Penumbra 重载。应用前自动备份，可随时撤销。
 支持 Penumbra 新旧双格式、纯中文输出、黑名单保留专名。</Description>
-    <RepoUrl>https://github.com/Lexington-cv2-Lady/FFXIV-Penumbra-Mod-Chinese-Localization-Tool</RepoUrl>
+    <RepoUrl>https://github.com/Lexington-cv2-Lady/FFXIV_Penumbra_Mod_Chinese_Localization_Plugin</RepoUrl>
     <Tags>汉化;翻译;模组;penumbra;ffxiv;chinese;localization</Tags>
     <!-- dev 插件部署目录（构建后自动复制） -->
     <DevPluginDir>C:\Users\<USER>\AppData\Roaming\XIVLauncherCN\devPlugins\FFXIV_Penumbra_Mod_Chinese_Localization_Plugin</DevPluginDir>
