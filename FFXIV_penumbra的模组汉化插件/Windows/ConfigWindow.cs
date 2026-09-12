@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.ImGuiFileDialog;
@@ -13,6 +14,7 @@ public class ConfigWindow : Window, IDisposable
     private readonly Plugin plugin;
     private readonly Configuration configuration;
     private readonly FileDialogManager _fileDialog = new();
+    private string _openMsg = "";
 
     public ConfigWindow(Plugin plugin) : base("设置###HanhuaConfig")
     {
@@ -32,15 +34,21 @@ public class ConfigWindow : Window, IDisposable
 
     public override void Draw()
     {
-        // 词典目录（带浏览/粘贴）
+        // 词典目录（打开 / 浏览 / 粘贴）
         ImGui.TextUnformatted("词典目录（我的翻译 / 个性翻译 / wiki / AI知识库）：");
         var dictPath = configuration.DictionaryPath;
-        var btnW = 60f * ImGuiHelpers.GlobalScale;
-        ImGui.SetNextItemWidth(Math.Max(120f, ImGui.GetContentRegionAvail().X - btnW * 2 - 16f * ImGuiHelpers.GlobalScale));
+        var btnW = 56f * ImGuiHelpers.GlobalScale;
+        ImGui.SetNextItemWidth(Math.Max(120f, ImGui.GetContentRegionAvail().X - btnW * 3 - 24f * ImGuiHelpers.GlobalScale));
         if (ImGui.InputText("##DictPath", ref dictPath, 512))
         {
             configuration.DictionaryPath = dictPath;
         }
+        ImGui.SameLine();
+        if (ImGui.Button("打开##DictOpen", new Vector2(btnW, 0)))
+        {
+            OpenFolder(configuration.DictionaryPath);
+        }
+        if (ImGui.IsItemHovered()) ImGui.SetTooltip("用资源管理器打开该目录");
         ImGui.SameLine();
         if (ImGui.Button("浏览##DictBrowse", new Vector2(btnW, 0)))
         {
@@ -68,14 +76,20 @@ public class ConfigWindow : Window, IDisposable
         ImGui.Separator();
         ImGui.Spacing();
 
-        // 翻译目录（带浏览/粘贴）
+        // 翻译目录（打开 / 浏览 / 粘贴）
         ImGui.TextUnformatted("翻译目录（AI 翻译管线的输入输出目录）：");
         var transPath = configuration.TranslationPath;
-        ImGui.SetNextItemWidth(Math.Max(120f, ImGui.GetContentRegionAvail().X - btnW * 2 - 16f * ImGuiHelpers.GlobalScale));
+        ImGui.SetNextItemWidth(Math.Max(120f, ImGui.GetContentRegionAvail().X - btnW * 3 - 24f * ImGuiHelpers.GlobalScale));
         if (ImGui.InputText("##TransPath", ref transPath, 512))
         {
             configuration.TranslationPath = transPath;
         }
+        ImGui.SameLine();
+        if (ImGui.Button("打开##TransOpen", new Vector2(btnW, 0)))
+        {
+            OpenFolder(configuration.TranslationPath);
+        }
+        if (ImGui.IsItemHovered()) ImGui.SetTooltip("用资源管理器打开该目录");
         ImGui.SameLine();
         if (ImGui.Button("浏览##TransBrowse", new Vector2(btnW, 0)))
         {
@@ -121,6 +135,12 @@ public class ConfigWindow : Window, IDisposable
         ImGui.Separator();
         ImGui.Spacing();
 
+        if (_openMsg.Length > 0)
+        {
+            ImGui.TextColored(new Vector4(1f, 0.5f, 0.2f, 1f), _openMsg);
+            ImGui.Spacing();
+        }
+
         ImGui.SameLine(ImGui.GetContentRegionAvail().X - 110 * ImGuiHelpers.GlobalScale);
         if (ImGui.Button("保存设置", new Vector2(100 * ImGuiHelpers.GlobalScale, 0)))
         {
@@ -132,5 +152,25 @@ public class ConfigWindow : Window, IDisposable
 
         // 文件选择对话框（浏览文件夹用）
         _fileDialog.Draw();
+    }
+
+    private void OpenFolder(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return;
+        if (System.IO.Directory.Exists(path))
+        {
+            try
+            {
+                Process.Start(new ProcessStartInfo("explorer.exe", $"\"{path}\"") { UseShellExecute = true });
+            }
+            catch (Exception ex)
+            {
+                _openMsg = "打开目录失败：" + ex.Message;
+            }
+        }
+        else
+        {
+            _openMsg = "目录不存在，无法打开：" + path;
+        }
     }
 }

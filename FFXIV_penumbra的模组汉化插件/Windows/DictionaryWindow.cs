@@ -13,6 +13,7 @@ namespace FFXIVPenumbraHanhua.Windows;
 public class DictionaryWindow : Window
 {
     private readonly Plugin plugin;
+    private string _openMsg = "";
 
     public DictionaryWindow(Plugin plugin)
         : base("词典管理###HanhuaDict", ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse)
@@ -36,12 +37,18 @@ public class DictionaryWindow : Window
         ImGui.Spacing();
 
         var dictPath = configuration.DictionaryPath;
-        var pasteW = 64f * ImGuiHelpers.GlobalScale;
-        ImGui.SetNextItemWidth(Math.Max(120f, ImGui.GetContentRegionAvail().X - 110f * ImGuiHelpers.GlobalScale - pasteW - 8f * ImGuiHelpers.GlobalScale));
+        var pasteW = 56f * ImGuiHelpers.GlobalScale;
+        ImGui.SetNextItemWidth(Math.Max(120f, ImGui.GetContentRegionAvail().X - 110f * ImGuiHelpers.GlobalScale - pasteW * 2 - 16f * ImGuiHelpers.GlobalScale));
         if (ImGui.InputText("##DictPath", ref dictPath, 512))
         {
             configuration.DictionaryPath = dictPath;
         }
+        ImGui.SameLine();
+        if (ImGui.Button("打开##DictOpen", new Vector2(pasteW, 0)))
+        {
+            OpenFolder(configuration.DictionaryPath);
+        }
+        if (ImGui.IsItemHovered()) ImGui.SetTooltip("用资源管理器打开该目录");
         ImGui.SameLine();
         if (ImGui.Button("粘贴##DictPaste", new Vector2(pasteW, 0)))
         {
@@ -56,6 +63,11 @@ public class DictionaryWindow : Window
         {
             configuration.Save();
             plugin.ReloadDictionary();
+        }
+        if (_openMsg.Length > 0)
+        {
+            ImGui.TextColored(new Vector4(1f, 0.5f, 0.2f, 1f), _openMsg);
+            ImGui.Spacing();
         }
 
         ImGui.Spacing();
@@ -92,6 +104,26 @@ public class DictionaryWindow : Window
         ImGui.TextDisabled("  ├ wiki_术语对照\\    —— 分类术语只读兜底（不覆盖用户词条）");
         ImGui.TextDisabled("  │   └ wiki_术语对照_黑名单.json —— 剔除污染词");
         ImGui.TextDisabled("  └ AI知识库\\AI知识库.json —— 只读底料，优先级最低");
+    }
+
+    private void OpenFolder(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return;
+        if (Directory.Exists(path))
+        {
+            try
+            {
+                Process.Start(new ProcessStartInfo("explorer.exe", $"\"{path}\"") { UseShellExecute = true });
+            }
+            catch (Exception ex)
+            {
+                _openMsg = "打开目录失败：" + ex.Message;
+            }
+        }
+        else
+        {
+            _openMsg = "目录不存在，无法打开：" + path;
+        }
     }
 
     private void DrawStatRow(string name, string path, int count)

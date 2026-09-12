@@ -45,6 +45,15 @@ public class AiSettingsWindow : Window, IDisposable
 
         // 供应商（自定义置顶，国内优先，海外在后；可增删改自定义服务商）
         ImGui.TextUnformatted("供应商（自定义置顶；国内优先；可增删改自定义服务商）：");
+        ImGui.SameLine();
+        if (ImGui.Button("AI 配置列表"))
+        {
+            _plugin.ToggleAiConfigUi();
+        }
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip("打开 AI 配置列表（三级窗口）：新增 / 删除自定义服务商、查看内置预设、清空预设配置");
+        }
         var allProviders = AiTranslateService.GetAllProviders(cfg);
         var currentName = AiTranslateService.CurrentProviderName(cfg);
         var manualMode = cfg.AiProviderName == "" && cfg.AiProvider < 0;
@@ -246,21 +255,6 @@ public class AiSettingsWindow : Window, IDisposable
                 : "当前平台（地址）不支持联网搜索：仅通义/百炼（dashscope/aliyuncs）支持");
         }
 
-        ImGui.Spacing();
-        ImGui.Separator();
-        ImGui.Spacing();
-
-        // ── AI 配置列表（独立三级窗口）──
-        ImGui.TextUnformatted("自定义服务商 / 内置服务商 / 清空预设配置：");
-        ImGui.Spacing();
-        if (ImGui.Button("AI 配置列表"))
-        {
-            _plugin.ToggleAiConfigUi();
-        }
-        if (ImGui.IsItemHovered())
-        {
-            ImGui.SetTooltip("打开 AI 配置列表（三级窗口）：新增 / 删除自定义服务商、查看内置预设、清空预设配置");
-        }
         ImGui.Spacing();
         ImGui.Separator();
         ImGui.Spacing();
