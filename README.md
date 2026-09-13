@@ -16,11 +16,11 @@
 **① 插件清单库（推荐）**——作者的插件总库，以后新增插件会自动出现在列表里，无需改配置
 
 ```
-https://raw.githubusercontent.com/Lexington-cv2-Lady/XIVCN-PluginRepo/main/plugin_repo.json
+https://raw.githubusercontent.com/Lexington-cv2-Lady/Lexington_CV-2_Repository/main/plugin_repo.json
 ```
 
 ```
-https://cdn.jsdmirror.com/gh/Lexington-cv2-Lady/XIVCN-PluginRepo@main/plugin_repo.json
+https://cdn.jsdmirror.com/gh/Lexington-cv2-Lady/Lexington_CV-2_Repository@main/plugin_repo.json
 ```
 
 （第一个是主地址，第二个是镜像；两行任选其一即可）
