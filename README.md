@@ -22,7 +22,7 @@ https://raw.githubusercontent.com/Lexington-cv2-Lady/FFXIV_Penumbra_Mod_Chinese_
 **② 镜像地址**（主地址加载慢时改用这个）
 
 ```
-https://cdn.jsdelivr.net/gh/Lexington-cv2-Lady/FFXIV_Penumbra_Mod_Chinese_Localization_Plugin@main/plugin_repo.json
+https://cdn.jsdmirror.com/gh/Lexington-cv2-Lady/FFXIV_Penumbra_Mod_Chinese_Localization_Plugin@main/plugin_repo.json
 ```
 
 **添加步骤**
