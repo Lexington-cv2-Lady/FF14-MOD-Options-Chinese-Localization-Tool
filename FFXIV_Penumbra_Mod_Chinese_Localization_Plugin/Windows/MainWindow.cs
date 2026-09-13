@@ -207,12 +207,14 @@ public class MainWindow : Window, IDisposable
                                     _selected = i;
                                     _selectedFile = null;
                                     _result = "";
+                                    // 点击模组名同时切换勾选（与备份管理一致）
+                                    if (!_selectedSet.Add(i)) _selectedSet.Remove(i);
                                 }
                                 ImGui.PopStyleVar();
                                 _listDrag.Row(i, rowTop, rowTop + ImGui.GetFrameHeight());
                                 if (ImGui.IsItemHovered())
                                 {
-                                    ImGui.SetTooltip(mod.Directory + "\n按住左键拖动可框选多个（纯点击 = 单选）");
+                                    ImGui.SetTooltip(mod.Directory + "\n点击 = 选中查看详情并切换勾选；按住左键拖动 = 框选多选");
                                 }
                             }
                             // 框选命中 → 勾选（只增不减）
