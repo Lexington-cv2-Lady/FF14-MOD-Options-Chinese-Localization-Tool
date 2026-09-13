@@ -45,7 +45,7 @@ public class AiSettingsWindow : Window, IDisposable
 
         // 供应商（自定义置顶，国内优先，海外在后；可增删改自定义服务商）
         ImGui.TextUnformatted("供应商（自定义置顶；国内优先；可增删改自定义服务商）：");
-        ImGui.SameLine();
+        Ui.SameLineIfFits(Ui.ButtonWidth("AI 配置列表"));
         if (ImGui.Button("AI 配置列表"))
         {
             _plugin.ToggleAiConfigUi();
@@ -126,7 +126,7 @@ public class AiSettingsWindow : Window, IDisposable
         {
             ImGui.SetTooltip("直接读取剪贴板填入，无需 Ctrl+V（避开游戏内焦点问题）");
         }
-        ImGui.TextDisabled($"当前生效：{AiTranslateService.ResolveEndpoint(cfg).BaseUrl}/chat/completions");
+        Ui.Hint($"当前生效：{AiTranslateService.ResolveEndpoint(cfg).BaseUrl}/chat/completions");
 
         ImGui.Spacing();
 
@@ -171,7 +171,7 @@ public class AiSettingsWindow : Window, IDisposable
         }
         if (string.IsNullOrWhiteSpace(AiTranslateService.GetApiKey(cfg)))
         {
-            ImGui.TextColored(new Vector4(1f, 0.5f, 0.2f, 1f), "未填写 Key：AI 翻译不可用，可改用外部 AI 翻译（导出 _未翻译.json → 外部翻译 → ④ 汇总 → ⑤ 写回）。");
+            Ui.ColoredWrapped(new Vector4(1f, 0.5f, 0.2f, 1f), "未填写 Key：AI 翻译不可用，可改用外部 AI 翻译（导出 _未翻译.json → 外部翻译 → ④ 汇总 → ⑤ 写回）。");
         }
 
         ImGui.Spacing();
@@ -204,7 +204,7 @@ public class AiSettingsWindow : Window, IDisposable
         {
             ImGui.SetTooltip("直接读取剪贴板填入，无需 Ctrl+V（避开游戏内焦点问题）");
         }
-        ImGui.TextDisabled($"当前生效：{AiTranslateService.ResolveEndpoint(cfg).Model}");
+        Ui.Hint($"当前生效：{AiTranslateService.ResolveEndpoint(cfg).Model}");
 
         ImGui.Spacing();
 
@@ -297,6 +297,6 @@ public class AiSettingsWindow : Window, IDisposable
         ImGui.Spacing();
         ImGui.Separator();
         ImGui.Spacing();
-        ImGui.TextDisabled("提示：无 Key 可走「免费AI」——在翻译管线里导出 _未翻译.json，交给外部 AI 翻译后放回翻译目录，再点「翻译写入MOD」。");
+        Ui.Hint("提示：无 Key 可走「免费AI」——在翻译管线里导出 _未翻译.json，交给外部 AI 翻译后放回翻译目录，再点「翻译写入MOD」。");
     }
 }

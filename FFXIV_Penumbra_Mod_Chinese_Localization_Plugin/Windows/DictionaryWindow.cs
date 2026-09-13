@@ -137,7 +137,7 @@ public class DictionaryWindow : Window
     private void DrawDirectoryRow(string label, string idPrefix, string dialogTitle, string browseHint,
         Func<string> get, Action<string> set)
     {
-        ImGui.TextUnformatted(label);
+        ImGui.TextWrapped(label);
         var path = get();
         var btnW = 56f * ImGuiHelpers.GlobalScale;
         ImGui.SetNextItemWidth(Math.Max(120f, ImGui.GetContentRegionAvail().X - btnW * 3 - 24f * ImGuiHelpers.GlobalScale));

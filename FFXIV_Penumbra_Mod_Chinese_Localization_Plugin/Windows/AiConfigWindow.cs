@@ -239,7 +239,7 @@ public class AiConfigWindow : Window, IDisposable
         }
         if (string.IsNullOrWhiteSpace(AiTranslateService.GetApiKey(cfg)))
         {
-            ImGui.TextColored(new Vector4(1f, 0.5f, 0.2f, 1f), "该服务商未填写 Key：切换后 AI 翻译不可用");
+            Ui.ColoredWrapped(new Vector4(1f, 0.5f, 0.2f, 1f), "该服务商未填写 Key：切换后 AI 翻译不可用");
         }
 
         ImGui.Spacing();
@@ -258,7 +258,7 @@ public class AiConfigWindow : Window, IDisposable
                 ImGui.TextUnformatted($"服务商：{builtin.Name}（内置预设）");
                 ImGui.TextDisabled($"预设地址：{builtin.BaseUrl}/chat/completions");
                 ImGui.TextDisabled($"预设模型：{builtin.Model}");
-                ImGui.TextDisabled($"说明：{builtin.Note}");
+                Ui.Hint($"说明：{builtin.Note}");
                 ImGui.Spacing();
 
                 ImGui.TextUnformatted("API Key（仅该服务商）：");
@@ -290,7 +290,7 @@ public class AiConfigWindow : Window, IDisposable
                 }
                 if (string.IsNullOrWhiteSpace(AiTranslateService.GetApiKey(cfg)))
                 {
-                    ImGui.TextColored(new Vector4(1f, 0.5f, 0.2f, 1f), "该服务商未填写 Key：切换后 AI 翻译不可用");
+                    Ui.ColoredWrapped(new Vector4(1f, 0.5f, 0.2f, 1f), "该服务商未填写 Key：切换后 AI 翻译不可用");
                 }
             }
         }

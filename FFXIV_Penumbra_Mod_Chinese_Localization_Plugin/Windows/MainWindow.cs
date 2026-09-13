@@ -360,7 +360,7 @@ public class MainWindow : Window, IDisposable
         {
             ImGui.SetTooltip("① 提取英文 → ② 预翻译 → ③ AI 翻译 → ④ 汇总已翻译内容 → ⑤ 翻译写入MOD\n（⑤ 直写版即本页：勾选模组 → 翻译并写入）");
         }
-        ImGui.SameLine();
+        Ui.SameLineIfFits(Ui.ButtonWidth("备份管理"));
         if (ImGui.Button("备份管理"))
         {
             plugin.ToggleBackupUi();
@@ -369,7 +369,7 @@ public class MainWindow : Window, IDisposable
         {
             ImGui.SetTooltip("创建 / 还原 / 删除备份");
         }
-        ImGui.SameLine();
+        Ui.SameLineIfFits(Ui.ButtonWidth("目录和词典管理"));
         if (ImGui.Button("目录和词典管理"))
         {
             plugin.ToggleDictionaryUi();
@@ -378,7 +378,7 @@ public class MainWindow : Window, IDisposable
         {
             ImGui.SetTooltip("词典目录 / 翻译目录 / 备份份数设置，以及词典加载状态与各来源词条统计");
         }
-        ImGui.SameLine();
+        Ui.SameLineIfFits(Ui.ButtonWidth("Wiki提取"));
         if (ImGui.Button("Wiki提取"))
         {
             plugin.ToggleWikiUi();
@@ -387,12 +387,12 @@ public class MainWindow : Window, IDisposable
         {
             ImGui.SetTooltip("从灰机 wiki 抓取官方中/英名，按分类写入 词典目录\\wiki_术语对照\\");
         }
-        ImGui.SameLine();
+        Ui.SameLineIfFits(Ui.ButtonWidth("日志"));
         if (ImGui.Button("日志"))
         {
             plugin.ToggleLogUi();
         }
-        ImGui.SameLine();
+        Ui.SameLineIfFits(Ui.ButtonWidth("AI 设置"));
         if (ImGui.Button("AI 设置"))
         {
             plugin.ToggleAiSettingsUi();
@@ -440,23 +440,23 @@ public class MainWindow : Window, IDisposable
             var transMissing = string.IsNullOrWhiteSpace(cfg.TranslationPath) || !Directory.Exists(cfg.TranslationPath);
             if (dictMissing || transMissing)
             {
-                ImGui.TextUnformatted("欢迎使用模组汉化插件！开始前需要先设置两个目录：");
+                ImGui.TextWrapped("欢迎使用模组汉化插件！开始前需要先设置两个目录：");
                 ImGui.Spacing();
                 if (dictMissing)
                 {
-                    ImGui.TextColored(new Vector4(1f, 0.75f, 0.3f, 1f), "⚠ 词典目录未设置（存放 我的翻译 / 个性翻译 / wiki 术语 / AI知识库）");
+                    Ui.ColoredWrapped(new Vector4(1f, 0.75f, 0.3f, 1f), "⚠ 词典目录未设置（存放 我的翻译 / 个性翻译 / wiki 术语 / AI知识库）");
                 }
                 else
                 {
-                    ImGui.TextColored(new Vector4(0.55f, 0.9f, 0.55f, 1f), "✓ 词典目录已设置");
+                    Ui.ColoredWrapped(new Vector4(0.55f, 0.9f, 0.55f, 1f), "✓ 词典目录已设置");
                 }
                 if (transMissing)
                 {
-                    ImGui.TextColored(new Vector4(1f, 0.75f, 0.3f, 1f), "⚠ 翻译目录未设置（提取英文 / AI翻译 的输入输出目录）");
+                    Ui.ColoredWrapped(new Vector4(1f, 0.75f, 0.3f, 1f), "⚠ 翻译目录未设置（提取英文 / AI翻译 的输入输出目录）");
                 }
                 else
                 {
-                    ImGui.TextColored(new Vector4(0.55f, 0.9f, 0.55f, 1f), "✓ 翻译目录已设置");
+                    Ui.ColoredWrapped(new Vector4(0.55f, 0.9f, 0.55f, 1f), "✓ 翻译目录已设置");
                 }
                 ImGui.Spacing();
                 if (ImGui.Button("打开目录和词典管理，配置目录"))
@@ -471,7 +471,7 @@ public class MainWindow : Window, IDisposable
                 ImGui.TextDisabled("目录设置完成后，本提示自动消失，可正常开始汉化。");
                 return;
             }
-            ImGui.TextDisabled("← 左侧选择一个模组可单独编辑/精翻；或不选模组，直接一键汉化当前列表：");
+            Ui.Hint("← 左侧选择一个模组可单独编辑/精翻；或不选模组，直接一键汉化当前列表：");
             ImGui.Spacing();
             DrawOneClickAll();
             return;
@@ -496,7 +496,7 @@ public class MainWindow : Window, IDisposable
         {
             ImGui.SetTooltip("点击打开模组文件夹\n" + modFullPath);
         }
-        ImGui.TextDisabled($"目录：{mod.Directory}");
+        Ui.Hint($"目录：{mod.Directory}");
         ImGui.Spacing();
 
         // 文件列表
@@ -689,7 +689,7 @@ public class MainWindow : Window, IDisposable
         ImGui.Spacing();
         ImGui.TextUnformatted("一键汉化（提取 → 词典预填 → AI翻译 → 汇总 → 写入本模组）");
         if (ImGui.RadioButton("汇总提取（默认）", _ocSummary)) _ocSummary = true;
-        ImGui.SameLine();
+        Ui.SameLineIfFits(Ui.ButtonWidth("按模组提取") + ImGui.GetFrameHeight());
         if (ImGui.RadioButton("按模组提取", !_ocSummary)) _ocSummary = false;
         if (ImGui.IsItemHovered())
         {
@@ -715,7 +715,7 @@ public class MainWindow : Window, IDisposable
             {
                 ImGui.SetTooltip("自动完成：提取本模组英文 → 词典预填 → AI 翻译（已配 Key 时）→ 汇总进词典 → 写回本模组并重载。\n未配置 Key 时自动停在词典预填，把生成的 _未翻译.json 交给外部 AI 即可。");
             }
-            ImGui.SameLine();
+            Ui.SameLineIfFits(Ui.ButtonWidth("汇总并写入"));
             if (ImGui.Button("汇总并写入"))
             {
                 SumupAndWrite(new List<ModEntry> { mod });
@@ -741,7 +741,7 @@ public class MainWindow : Window, IDisposable
         ImGui.Spacing();
 
         DrawMarkButton(mod);
-        ImGui.SameLine();
+        Ui.SameLineIfFits(Ui.ButtonWidth("查漏补缺"));
         if (ImGui.Button("查漏补缺"))
         {
             _result = CheckGaps(files);
@@ -750,7 +750,7 @@ public class MainWindow : Window, IDisposable
         {
             ImGui.SetTooltip("扫描当前模组未翻译的选项/描述（不受「已翻译」标记影响）");
         }
-        ImGui.SameLine();
+        Ui.SameLineIfFits(Ui.ButtonWidth("并入我的翻译"));
         if (ImGui.Button("并入我的翻译"))
         {
             plugin.Sumup.SumupFromMod(modRoot ?? "", mod.Directory, plugin.Configuration.DictionaryPath);
@@ -924,7 +924,7 @@ public class MainWindow : Window, IDisposable
     private void DrawOneClickAll()
     {
         if (ImGui.RadioButton("汇总提取（默认）", _ocSummary)) _ocSummary = true;
-        ImGui.SameLine();
+        Ui.SameLineIfFits(Ui.ButtonWidth("按模组提取") + ImGui.GetFrameHeight());
         if (ImGui.RadioButton("按模组提取", !_ocSummary)) _ocSummary = false;
         if (ImGui.IsItemHovered())
         {
@@ -951,7 +951,7 @@ public class MainWindow : Window, IDisposable
                 ImGui.SetTooltip("对当前列表（默认即全部未翻译模组）自动完成：提取 → 词典预填 → AI 翻译（已配 Key 时）→ 汇总 → 写回并重载。\n" +
                                  "称「伪」：未配 Key 时会停在词典预填，需要人工把 _未翻译.json 交给外部 AI、翻好放回后点「汇总并写入」。");
             }
-            ImGui.SameLine();
+            Ui.SameLineIfFits(Ui.ButtonWidth("汇总并写入"));
             if (ImGui.Button("汇总并写入"))
             {
                 SumupAndWrite(BuildVisibleList().Select(i => penumbra.Mods[i]).ToList());

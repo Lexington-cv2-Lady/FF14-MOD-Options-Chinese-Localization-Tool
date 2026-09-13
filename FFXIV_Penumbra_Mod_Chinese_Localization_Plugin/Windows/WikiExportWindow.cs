@@ -48,7 +48,7 @@ public class WikiExportWindow : Window, IDisposable
 
         ImGui.TextWrapped("从灰机 wiki（cdn.huijiwiki.com/ff14）抓取 FFXIV 官方中/英名，写入 词典目录\\wiki_术语对照\\。");
         ImGui.Spacing();
-        ImGui.TextDisabled($"词典目录：{dictDir}（{(dictOk ? "存在" : "不存在，请先在「目录和词典管理」里配置词典目录")}）");
+        Ui.Hint($"词典目录：{dictDir}（{(dictOk ? "存在" : "不存在，请先在「目录和词典管理」里配置词典目录")}）");
         ImGui.Spacing();
         ImGui.Separator();
         ImGui.Spacing();

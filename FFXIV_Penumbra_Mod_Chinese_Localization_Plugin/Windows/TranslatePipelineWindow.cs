@@ -62,13 +62,13 @@ public class TranslatePipelineWindow : Window, IDisposable
 
         ImGui.TextWrapped("流程：① 提取英文 → ② 预翻译（词典预填）→ ③ AI 翻译 → ④ 汇总已翻译内容（编入词典）→ ⑤ 翻译写入MOD。");
         ImGui.Spacing();
-        ImGui.TextDisabled($"翻译目录：{transDir}（{(Directory.Exists(transDir) ? "存在" : "不存在，提取时会自动创建")}）");
+        Ui.Hint($"翻译目录：{transDir}（{(Directory.Exists(transDir) ? "存在" : "不存在，提取时会自动创建")}）");
         ImGui.Spacing();
         ImGui.Separator();
         ImGui.Spacing();
 
         // ── ① 提取英文 ──
-        ImGui.TextUnformatted("① 提取英文（只处理主窗口勾选的模组，未勾选可用 ⑤ 旁的「全选」一键勾选）");
+        ImGui.TextWrapped("① 提取英文（只处理主窗口勾选的模组，未勾选可用下方「全选」一键勾选）");
         ImGui.Spacing();
         ImGui.Checkbox("跳过已标记「已翻译」的模组", ref _skipMarked);
         ImGui.Spacing();
@@ -91,7 +91,7 @@ public class TranslatePipelineWindow : Window, IDisposable
                              $"键格式：模组目录/文件||字段||原文（含翻译规则段）\n" +
                              $"文件名用简洁模组名，键内仍带完整目录，⑤ 写回不受影响");
         }
-        ImGui.SameLine();
+        Ui.SameLineIfFits(Ui.ButtonWidth("汇总提取"));
         if (ImGui.Button("汇总提取"))
         {
             if (notFound)
@@ -109,7 +109,7 @@ public class TranslatePipelineWindow : Window, IDisposable
         {
             ImGui.SetTooltip($"所有模组合并生成 {Path.Combine(transDir, "全部模组_未翻译.json")}\n适合整批交给外部 AI 翻译");
         }
-        ImGui.SameLine();
+        Ui.SameLineIfFits(Ui.ButtonWidth("全选"));
         // 全选（一键勾选全部未翻译模组，免去回主窗口逐个勾选）
         if (ImGui.Button("全选"))
         {
@@ -119,14 +119,14 @@ public class TranslatePipelineWindow : Window, IDisposable
         {
             ImGui.SetTooltip("勾选主窗口列表中的全部模组（按当前「已翻译」筛选：默认即全部未翻译模组）");
         }
-        ImGui.SameLine();
-        ImGui.TextDisabled($"已选 {_plugin.MainWindow.SelectedMods.Count} 个");
+        Ui.SameLineIfFits(ImGui.CalcTextSize($"已选 {_plugin.MainWindow.SelectedMods.Count} 个").X);
+        Ui.Hint($"已选 {_plugin.MainWindow.SelectedMods.Count} 个");
         ImGui.Spacing();
         ImGui.Separator();
         ImGui.Spacing();
 
         // ── ② 预翻译 ──
-        ImGui.TextUnformatted("② 预翻译（词典预填：我的翻译/个性翻译/wiki/AI知识库 能翻的自动填上）");
+        ImGui.TextWrapped("② 预翻译（词典预填：我的翻译/个性翻译/wiki/AI知识库 能翻的自动填上）");
         ImGui.Spacing();
         if (ImGui.Button("预翻译"))
         {
@@ -156,11 +156,10 @@ public class TranslatePipelineWindow : Window, IDisposable
         ImGui.Spacing();
 
         // ── ③ AI 翻译 ──
-        ImGui.TextUnformatted("③ AI 翻译（把仍未翻译的项交给所选供应商）");
+        ImGui.TextWrapped("③ AI 翻译（把仍未翻译的项交给所选供应商）");
         ImGui.Spacing();
         var providerName = AiTranslateService.CurrentProviderName(cfg);
-        ImGui.TextDisabled($"供应商：{providerName}" +
-                           $"（{AiTranslateService.ResolveEndpoint(cfg).Model}）");
+        Ui.Hint($"供应商：{providerName}（{AiTranslateService.ResolveEndpoint(cfg).Model}）");
         if (string.IsNullOrWhiteSpace(AiTranslateService.GetApiKey(cfg)))
         {
             ImGui.SameLine();
@@ -222,7 +221,7 @@ public class TranslatePipelineWindow : Window, IDisposable
         ImGui.Spacing();
 
         // ── ④ 汇总已翻译内容 ──
-        ImGui.TextUnformatted("④ 汇总已翻译内容（把 _已翻译.json 的译文编入 我的翻译.json，已有译文不覆盖）");
+        ImGui.TextWrapped("④ 汇总已翻译内容（把 _已翻译.json 的译文编入 我的翻译.json，已有译文不覆盖）");
         ImGui.Spacing();
         if (ImGui.Button("汇总已翻译内容"))
         {
@@ -253,7 +252,7 @@ public class TranslatePipelineWindow : Window, IDisposable
         ImGui.Spacing();
 
         // ── ⑤ 翻译写入MOD ──
-        ImGui.TextUnformatted("⑤ 翻译写入MOD（读取词典译文：我的翻译/个性翻译/wiki/AI知识库，写回勾选的模组文件并重载）");
+        ImGui.TextWrapped("⑤ 翻译写入MOD（读取词典译文：我的翻译/个性翻译/wiki/AI知识库，写回勾选的模组文件并重载）");
         ImGui.Spacing();
         if (ImGui.Button("翻译写入MOD"))
         {
@@ -281,7 +280,7 @@ public class TranslatePipelineWindow : Window, IDisposable
                              "用外部 AI 翻译时：先执行 ④ 汇总（把译文编入 我的翻译.json）再点这里写回。\n" +
                              "已含中文的选项不会重复覆盖；写回前自动备份（zip）");
         }
-        ImGui.SameLine();
+        Ui.SameLineIfFits(Ui.ButtonWidth("全选") + ImGui.GetFrameHeight());
         // 全选：勾选主窗口列表中全部模组（按当前「已翻译」筛选），与写入按钮同行便于直接开工
         var allSel = _plugin.MainWindow.AllVisibleSelected;
         if (ImGui.Checkbox("全选", ref allSel))
@@ -292,8 +291,8 @@ public class TranslatePipelineWindow : Window, IDisposable
         {
             ImGui.SetTooltip("勾选主窗口列表中的全部模组（按当前「已翻译」筛选：默认即全部未翻译模组）");
         }
-        ImGui.SameLine();
-        ImGui.TextDisabled($"已选 {_plugin.MainWindow.SelectedMods.Count} 个");
+        Ui.SameLineIfFits(ImGui.CalcTextSize($"已选 {_plugin.MainWindow.SelectedMods.Count} 个").X);
+        Ui.Hint($"已选 {_plugin.MainWindow.SelectedMods.Count} 个");
         ImGui.Spacing();
         ImGui.Separator();
         ImGui.Spacing();
