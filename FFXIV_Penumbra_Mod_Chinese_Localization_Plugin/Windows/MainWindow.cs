@@ -62,6 +62,9 @@ public class MainWindow : Window, IDisposable
     private CancellationTokenSource? _ocCts;
     private string _ocStatus = "";
     private bool _ocGuidePending; // 无 Key 完成第一段后弹指引窗
+    // 模组还原（HS API / 手动安装 PMP）
+    private Task? _restoreTask;
+    private string _restoreStatus = "";
 
     /// <summary> 翻译管线「仅提取勾选」用：当前勾选的模组列表。 </summary>
     public IReadOnlyList<ModEntry> SelectedMods
@@ -536,10 +539,25 @@ public class MainWindow : Window, IDisposable
         var modRoot2 = penumbra.GetModRoot();
         var modFullPath = Path.Combine(modRoot2 ?? "", mod.Directory);
 
-        // 模组行：最左「打开」按钮（带阴影） + 模组名（可点击打开文件夹）
+        // 模组行：HS 模组=「重新下载」（Heliosphere 还原）；其它=「打开」；模组名可点击打开文件夹
         var openW = 56f * ImGuiHelpers.GlobalScale;
-        ButtonWithShadow("打开", new Vector2(openW, 0), () => OpenModFolder(modFullPath),
+        var isHsMod = ModRestoreService.HasHsMeta(modFullPath);
+        if (isHsMod && _restoreTask != null && !_restoreTask.IsCompleted)
+        {
+            ImGui.BeginDisabled();
+            ButtonWithShadow("还原中…", new Vector2(openW + 24f * ImGuiHelpers.GlobalScale, 0), () => { }, null);
+            ImGui.EndDisabled();
+        }
+        else if (isHsMod)
+        {
+            ButtonWithShadow("重新下载", new Vector2(openW, 0), () => StartRestore(mod, modFullPath),
+                "从 Heliosphere 重新获取该模组的原始选项信息");
+        }
+        else
+        {
+            ButtonWithShadow("打开", new Vector2(openW, 0), () => OpenModFolder(modFullPath),
             "打开模组文件夹\n" + modFullPath);
+            }
         ImGui.SameLine();
         ImGui.TextUnformatted("模组：");
         ImGui.SameLine();
@@ -550,6 +568,38 @@ public class MainWindow : Window, IDisposable
         if (ImGui.IsItemHovered())
         {
             ImGui.SetTooltip("点击打开模组文件夹\n" + modFullPath);
+        }
+        if (isHsMod)
+        {
+            ImGui.SameLine();
+            ImGui.TextColored(new Vector4(1f, 0.75f, 0.3f, 1f), "打开"); // 文案提示：点模组名即打开文件夹
+        }
+        if (_restoreTask != null && !_restoreTask.IsCompleted)
+        {
+            Ui.Hint(_restoreStatus);
+        }
+        else if (_restoreTask != null && _restoreTask.IsCompleted)
+        {
+            _result = _restoreStatus;
+            _restoreTask = null;
+            penumbra.Refresh();
+            ReloadSelectedFile();
+        }
+        if (isHsMod)
+        {
+            ImGui.SameLine();
+            ImGui.TextColored(new Vector4(1f, 0.75f, 0.3f, 1f), "打开"); // 文案提示：点模组名即打开文件夹
+        }
+        if (_restoreTask != null && !_restoreTask.IsCompleted)
+        {
+            Ui.Hint(_restoreStatus);
+        }
+        else if (_restoreTask != null && _restoreTask.IsCompleted)
+        {
+            _result = _restoreStatus;
+            _restoreTask = null;
+            penumbra.Refresh();
+            ReloadSelectedFile();
         }
         Ui.Hint($"目录：{mod.Directory}");
         ImGui.Spacing();
@@ -1064,6 +1114,54 @@ public class MainWindow : Window, IDisposable
         {
             ImGui.SetTooltip("模组目录创建无后缀「已翻译」文件：提取英文/翻译时自动跳过；查漏补缺不受影响；备份还原时自动删除");
         }
+    }
+
+    /// <summary>
+    /// 重新下载（还原）：HS 模组走 Heliosphere API 取英文选项树；
+    /// 手动安装模组从 手动安装 目录匹配原始 PMP 还原自带文本。均先自动备份。
+    /// </summary>
+    private void StartRestore(ModEntry mod, string modFullPath)
+    {
+        var zip = plugin.Backup.CreateModZip(modFullPath, plugin.Configuration.BackupCount);
+        if (zip == null)
+        {
+            _result = "还原前备份失败，已取消";
+            return;
+        }
+        _result = "";
+        _restoreStatus = "正在获取原始选项…";
+        var isHs = ModRestoreService.HasHsMeta(modFullPath);
+        var modRoot = penumbra.GetModRoot() ?? "";
+        var manualDir = Path.Combine(Path.GetDirectoryName(modRoot) ?? "", "手动安装");
+        _restoreTask = Task.Run(async () =>
+        {
+            try
+            {
+                _restoreStatus = isHs ? "正在从 Heliosphere 获取原始选项…" : "正在从原始 PMP 还原…";
+                string msg;
+                if (isHs)
+                    msg = await plugin.ModRestore.RestoreFromHeliosphereAsync(modFullPath);
+                else
+                {
+                    var pmp = ModRestoreService.FindOriginalPmp(Path.GetFileName(modFullPath), mod.Name, manualDir);
+                    if (pmp == null)
+                    {
+                        _restoreStatus = "未在 手动安装 目录找到匹配的原始 PMP";
+                        _result = _restoreStatus;
+                        return;
+                    }
+                    msg = plugin.ModRestore.RestoreFromPmp(modFullPath, pmp);
+                }
+                plugin.Penumbra.Reload(mod.Directory, mod.Name);
+                _restoreStatus = msg + " ✓";
+                _result = msg;
+            }
+            catch (Exception ex)
+            {
+                _restoreStatus = "还原失败：" + ex.Message;
+                _result = _restoreStatus;
+            }
+        });
     }
 
     /// <summary> 查漏补缺：列出模组文件中仍为英文的选项/组名/描述。 </summary>

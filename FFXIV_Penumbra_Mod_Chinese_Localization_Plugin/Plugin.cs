@@ -41,6 +41,7 @@ public sealed class Plugin : IDalamudPlugin
     public BackupManager Backup { get; init; }
     public SumupService Sumup { get; init; }
     public WikiExportService Wiki { get; init; }
+    public ModRestoreService ModRestore { get; init; }
 
     public readonly WindowSystem WindowSystem = new("FFXIVPenumbraHanhua");
     public MainWindow MainWindow { get; init; }
@@ -83,6 +84,7 @@ public sealed class Plugin : IDalamudPlugin
         Backup = new BackupManager(ModFiles, Penumbra, AppLog, Snapshot, Mark);
         Sumup = new SumupService(AppLog, ModFiles, Snapshot);
         Wiki = new WikiExportService(AppLog);
+        ModRestore = new ModRestoreService();
 
         MainWindow = new MainWindow(this, Penumbra, Dict, Hanhua);
         DictionaryWindow = new DictionaryWindow(this);
