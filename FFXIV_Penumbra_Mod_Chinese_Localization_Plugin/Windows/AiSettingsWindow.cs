@@ -172,6 +172,7 @@ public class AiSettingsWindow : Window, IDisposable
         if (string.IsNullOrWhiteSpace(AiTranslateService.GetApiKey(cfg)))
         {
             Ui.ColoredWrapped(new Vector4(1f, 0.5f, 0.2f, 1f), "未填写 Key：AI 翻译不可用，可改用外部 AI 翻译（导出 _未翻译.json → 外部翻译 → ④ 汇总 → ⑤ 写回）。");
+            Ui.Hint("免费 AI 路线：在「汉化流程」① 导出 _未翻译.json（连同 翻译规则.json）交给外部 AI，翻好改名为 _已翻译.json 放回翻译目录，再点 ④ 汇总 → ⑤ 翻译写入MOD。");
         }
 
         ImGui.Spacing();
@@ -293,10 +294,5 @@ public class AiSettingsWindow : Window, IDisposable
             // 测试结果日志区：带边框统一风格
             Plugin.ResultBox("##AiResult", _testResult, "测试结果将显示在这里（如：连接成功…）");
         }
-
-        ImGui.Spacing();
-        ImGui.Separator();
-        ImGui.Spacing();
-        Ui.Hint("提示：无 Key 可走「免费AI」——在翻译管线里导出 _未翻译.json，交给外部 AI 翻译后放回翻译目录，再点「翻译写入MOD」。");
     }
 }
