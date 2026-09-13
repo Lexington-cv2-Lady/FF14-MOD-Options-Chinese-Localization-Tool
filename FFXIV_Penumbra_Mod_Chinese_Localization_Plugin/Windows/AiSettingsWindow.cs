@@ -44,7 +44,7 @@ public class AiSettingsWindow : Window, IDisposable
         ImGui.Spacing();
 
         // 供应商（自定义置顶，国内优先，海外在后；可增删改自定义服务商）
-        ImGui.TextUnformatted("供应商（自定义置顶；国内优先；可增删改自定义服务商）：");
+        ImGui.TextWrapped("供应商（自定义置顶；国内优先；可增删改自定义服务商）：");
         Ui.SameLineIfFits(Ui.ButtonWidth("AI 配置列表"));
         if (ImGui.Button("AI 配置列表"))
         {
@@ -226,8 +226,8 @@ public class AiSettingsWindow : Window, IDisposable
             cfg.AiBatchSize = Math.Clamp(batch, 1, 500);
             cfg.Save(); // 修改即保存
         }
-        ImGui.SameLine();
-        ImGui.TextDisabled("（条目过多自动按平台字符上限拆批）");
+        Ui.SameLineIfFits(ImGui.CalcTextSize("（条目过多自动按平台字符上限拆批）").X);
+        Ui.Hint("（条目过多自动按平台字符上限拆批）");
 
         ImGui.Spacing();
 

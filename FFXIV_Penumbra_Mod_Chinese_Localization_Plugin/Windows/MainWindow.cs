@@ -174,7 +174,7 @@ public class MainWindow : Window, IDisposable
                 ImGui.Spacing();
                 if (visible.Count == 0)
                 {
-                    ImGui.TextDisabled(_showMarked
+                    Ui.Hint(_showMarked
                         ? "没有「已翻译」标记的模组（取消勾选查看未翻译）"
                         : "没有未翻译的模组（勾选「已翻译」查看已翻译）");
                 }
@@ -406,17 +406,17 @@ public class MainWindow : Window, IDisposable
 
     private void DrawStatusBar()
     {
-        ImGui.TextUnformatted(penumbra.Status);
-        ImGui.SameLine();
+        ImGui.TextWrapped(penumbra.Status);
+        Ui.SameLineIfFits(ImGui.CalcTextSize("|").X);
         ImGui.TextColored(new Vector4(0.6f, 0.85f, 1f, 1f), "|");
-        ImGui.SameLine();
-        ImGui.TextUnformatted(dict.Status);
-        ImGui.SameLine();
+        Ui.SameLineIfFits(ImGui.CalcTextSize(dict.Status).X);
+        ImGui.TextWrapped(dict.Status);
+        Ui.SameLineIfFits(Ui.ButtonWidth("刷新"));
         if (ImGui.Button("刷新"))
         {
             penumbra.Refresh();
         }
-        ImGui.SameLine();
+        Ui.SameLineIfFits(Ui.ButtonWidth("重载词典"));
         if (ImGui.Button("重载词典"))
         {
             plugin.ReloadDictionary();
@@ -468,7 +468,7 @@ public class MainWindow : Window, IDisposable
                     ImGui.SetTooltip("在「目录和词典管理」窗口中填写词典目录与翻译目录并点击「保存设置」");
                 }
                 ImGui.Spacing();
-                ImGui.TextDisabled("目录设置完成后，本提示自动消失，可正常开始汉化。");
+                Ui.Hint("目录设置完成后，本提示自动消失，可正常开始汉化。");
                 return;
             }
             Ui.Hint("← 左侧选择一个模组可单独编辑/精翻；或不选模组，直接一键汉化当前列表：");
@@ -522,7 +522,7 @@ public class MainWindow : Window, IDisposable
                 ImGui.TextWrapped("该模组没有可汉化的选项：未找到 meta.json / group_*.json。");
             }
             ImGui.Spacing();
-            ImGui.TextDisabled("可创建「已翻译」标记，将其从主列表「未翻译」筛选中隐藏：");
+            Ui.Hint("可创建「已翻译」标记，将其从主列表「未翻译」筛选中隐藏：");
             DrawMarkButton(mod); // 无选项模组同样允许手动标记
             ImGui.Spacing();
             Plugin.ResultBox("##MainResult", _result, "操作结果将显示在这里");
@@ -551,7 +551,7 @@ public class MainWindow : Window, IDisposable
 
         // 选项编辑（可直接修改中英文）
         var file = _selectedFile!;
-        ImGui.TextUnformatted($"选项编辑（{CountOptions(file)} 项，直接改中英文，点保存写回）：");
+        ImGui.TextWrapped($"选项编辑（{CountOptions(file)} 项，直接改中英文，点保存写回）：");
         ImGui.Spacing();
 
         // 切换文件时重置编辑缓冲
@@ -577,7 +577,7 @@ public class MainWindow : Window, IDisposable
                 if (shown >= limit) { truncated = true; break; }
                 var gk = $"{file.Path}|G{g.Index}";
                 if (!_editBufs.TryGetValue(gk, out var gv)) _editBufs[gk] = gv = g.Name;
-                ImGui.TextDisabled(string.IsNullOrEmpty(g.Description) ? "组名：" : $"组名（{g.Description}）：");
+                Ui.Hint(string.IsNullOrEmpty(g.Description) ? "组名：" : $"组名（{g.Description}）：");
                 ImGui.SetNextItemWidth(inputW);
                 if (ImGui.InputText($"##g{g.Index}", ref gv, 1024)) _editBufs[gk] = gv;
                 ImGui.SameLine();
@@ -687,7 +687,7 @@ public class MainWindow : Window, IDisposable
         ImGui.Spacing();
         ImGui.Separator();
         ImGui.Spacing();
-        ImGui.TextUnformatted("一键汉化（提取 → 词典预填 → AI翻译 → 汇总 → 写入本模组）");
+        ImGui.TextWrapped("一键汉化（提取 → 词典预填 → AI翻译 → 汇总 → 写入本模组）");
         if (ImGui.RadioButton("汇总提取（默认）", _ocSummary)) _ocSummary = true;
         Ui.SameLineIfFits(Ui.ButtonWidth("按模组提取") + ImGui.GetFrameHeight());
         if (ImGui.RadioButton("按模组提取", !_ocSummary)) _ocSummary = false;

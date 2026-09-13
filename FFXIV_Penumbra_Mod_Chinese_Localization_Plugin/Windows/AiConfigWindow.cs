@@ -256,8 +256,8 @@ public class AiConfigWindow : Window, IDisposable
             if (builtin.Name != null)
             {
                 ImGui.TextUnformatted($"服务商：{builtin.Name}（内置预设）");
-                ImGui.TextDisabled($"预设地址：{builtin.BaseUrl}/chat/completions");
-                ImGui.TextDisabled($"预设模型：{builtin.Model}");
+                Ui.Hint($"预设地址：{builtin.BaseUrl}/chat/completions");
+                Ui.Hint($"预设模型：{builtin.Model}");
                 Ui.Hint($"说明：{builtin.Note}");
                 ImGui.Spacing();
 
@@ -296,7 +296,7 @@ public class AiConfigWindow : Window, IDisposable
         }
         else
         {
-            ImGui.TextDisabled("手工自定义模式：使用 AI 设置上方的「API 地址 + 模型」与 Key 输入框。");
+            Ui.Hint("手工自定义模式：使用 AI 设置上方的「API 地址 + 模型」与 Key 输入框。");
         }
 
         ImGui.Spacing();

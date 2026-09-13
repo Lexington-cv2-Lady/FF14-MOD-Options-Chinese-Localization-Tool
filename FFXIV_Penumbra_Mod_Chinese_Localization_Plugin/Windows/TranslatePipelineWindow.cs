@@ -162,8 +162,8 @@ public class TranslatePipelineWindow : Window, IDisposable
         Ui.Hint($"供应商：{providerName}（{AiTranslateService.ResolveEndpoint(cfg).Model}）");
         if (string.IsNullOrWhiteSpace(AiTranslateService.GetApiKey(cfg)))
         {
-            ImGui.SameLine();
-            ImGui.TextDisabled("　⚠ 未填写 API Key");
+            Ui.SameLineIfFits(ImGui.CalcTextSize("　⚠ 未填写 API Key").X);
+            Ui.Hint("　⚠ 未填写 API Key");
         }
         ImGui.Spacing();
 
@@ -180,7 +180,7 @@ public class TranslatePipelineWindow : Window, IDisposable
             {
                 ImGui.SetTooltip("立即中断：正在进行的批次请求也会被取消，已完成的条目照常写出");
             }
-            ImGui.TextDisabled("翻译进行中…（可切到其他窗口，完成后回来查看）");
+            Ui.Hint("翻译进行中…（可切到其他窗口，完成后回来查看）");
         }
         else
         {
