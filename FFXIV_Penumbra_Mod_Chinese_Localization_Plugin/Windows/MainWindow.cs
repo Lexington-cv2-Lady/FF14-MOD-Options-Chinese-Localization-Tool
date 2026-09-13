@@ -28,8 +28,8 @@ public class MainWindow : Window, IDisposable
     private bool _autoRefresh = true;
     private bool _showMarked;   // 勾选「已翻译」：只看有标记的模组；默认只显示未翻译
 
-    // 多选集合（批量翻译 / 批量备份）
-    private readonly HashSet<int> _selectedSet = new();
+    // 多选集合（批量翻译 / 批量备份）：存模组目录名（抗 Penumbra 列表增删导致的下标漂移）
+    private readonly HashSet<string> _selectedSet = new(StringComparer.OrdinalIgnoreCase);
     // 列表鼠标框选（空白处拖动拉框多选）
     private readonly ListDragSelect _listDrag = new();
     // 框选期间锁定窗口位置：ImGui 默认把「在空白处按下拖动」当成移动窗口，需在框选时把它锁住
@@ -66,17 +66,12 @@ public class MainWindow : Window, IDisposable
     private Task? _restoreTask;
     private string _restoreStatus = "";
 
-    /// <summary> 翻译管线「仅提取勾选」用：当前勾选的模组列表。 </summary>
+    /// <summary> 翻译管线「仅提取勾选」用：当前勾选的模组列表（保持 Penumbra 列表顺序）。 </summary>
     public IReadOnlyList<ModEntry> SelectedMods
     {
         get
         {
-            var list = new List<ModEntry>();
-            foreach (var i in _selectedSet)
-            {
-                if (i >= 0 && i < penumbra.Mods.Count) list.Add(penumbra.Mods[i]);
-            }
-            return list;
+            return penumbra.Mods.Where(m => _selectedSet.Contains(m.Directory)).ToList();
         }
     }
 
@@ -86,7 +81,7 @@ public class MainWindow : Window, IDisposable
         get
         {
             var visible = BuildVisibleList();
-            return visible.Count > 0 && visible.All(i => _selectedSet.Contains(i));
+            return visible.Count > 0 && visible.All(i => _selectedSet.Contains(penumbra.Mods[i].Directory));
         }
     }
 
@@ -95,7 +90,7 @@ public class MainWindow : Window, IDisposable
     {
         _selectedSet.Clear();
         if (!selected) return;
-        foreach (var i in BuildVisibleList()) _selectedSet.Add(i);
+        foreach (var i in BuildVisibleList()) _selectedSet.Add(penumbra.Mods[i].Directory);
     }
 
     public MainWindow(Plugin plugin, PenumbraService penumbra, DictionaryService dict, HanhuaService hanhua)
@@ -124,12 +119,7 @@ public class MainWindow : Window, IDisposable
 
     private void OnModsChanged()
     {
-        _markCache.Clear();
-        // Penumbra 模组增删后下标会漂移：越界的勾选清空，防止误操作其它模组
-        if (_selectedSet.Count > 0 && _selectedSet.Any(i => i >= penumbra.Mods.Count))
-        {
-            _selectedSet.Clear();
-        }
+        _markCache.Clear(); // 勾选集存目录名，不受模组增删影响；仅详情聚焦下标需校正
         if (_selected >= penumbra.Mods.Count)
         {
             _selected = -1;
@@ -202,14 +192,29 @@ public class MainWindow : Window, IDisposable
                             {
                                 var i = visible[k];
                                 var mod = penumbra.Mods[i];
-                                var isChecked = _selectedSet.Contains(i);
+                                var isChecked = _selectedSet.Contains(mod.Directory);
                                 var rowTop = ImGui.GetCursorScreenPos().Y;
                                 // 紧凑行：小内边距 → 勾选框更小、行更矮，窗口缩小时一屏可见更多
                                 ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, new Vector2(3f, 2f) * ImGuiHelpers.GlobalScale);
                                 if (ImGui.Checkbox($"##sel{i}", ref isChecked) && interactive)
                                 {
-                                    if (isChecked) _selectedSet.Add(i);
-                                    else _selectedSet.Remove(i);
+                                    if (isChecked)
+                                    {
+                                        _selectedSet.Add(mod.Directory);
+                                        _selected = i; // 勾选即聚焦详情
+                                        _selectedFile = null;
+                                        _result = "";
+                                    }
+                                    else
+                                    {
+                                        _selectedSet.Remove(mod.Directory);
+                                        if (_selected == i)
+                                        {
+                                            _selected = -1; // 取消勾选 → 退回一键汉化（伪）视图
+                                            _selectedFile = null;
+                                            _result = "";
+                                        }
+                                    }
                                 }
                                 ImGui.SameLine();
                                 var name = mod.Name.Length > 0 ? mod.Name : mod.Directory;
@@ -219,7 +224,7 @@ public class MainWindow : Window, IDisposable
                                     _selectedFile = null;
                                     _result = "";
                                     // 点击模组名同时切换勾选（与备份管理一致）
-                                    if (!_selectedSet.Add(i)) _selectedSet.Remove(i);
+                                    if (!_selectedSet.Add(mod.Directory)) _selectedSet.Remove(mod.Directory);
                                 }
                                 ImGui.PopStyleVar();
                                 _listDrag.Row(i, rowTop, rowTop + ImGui.GetFrameHeight());
@@ -229,7 +234,7 @@ public class MainWindow : Window, IDisposable
                                 }
                             }
                             // 框选命中 → 勾选（只增不减）
-                            foreach (var i in _listDrag.End()) _selectedSet.Add(i);
+                            foreach (var i in _listDrag.End()) _selectedSet.Add(penumbra.Mods[i].Directory);
                         }
                     }
                 }
@@ -490,7 +495,10 @@ public class MainWindow : Window, IDisposable
 
     private void DrawDetail()
     {
-        if (_selected < 0 || _selected >= penumbra.Mods.Count)
+        // 详情区显示规则：勾选集中且点选了某模组 → 显示该模组详情；否则显示一键汉化（伪）批量区
+        var focusedDir = _selected >= 0 && _selected < penumbra.Mods.Count
+            ? penumbra.Mods[_selected].Directory : null;
+        if (focusedDir == null || !_selectedSet.Contains(focusedDir))
         {
             // 新用户引导：词典/翻译目录未设置时，详情区先引导配置，设置完后自动隐藏
             var cfg = plugin.Configuration;

@@ -18,10 +18,10 @@ public class BackupWindow : Window, IDisposable
     private readonly BackupManager _backup;
     private readonly MarkService _mark;
 
-    // 模组多选
-    private readonly HashSet<int> _modSet = new();
-    // 备份多选（勾选模组时自动同步全选其备份）
-    private readonly HashSet<int> _bakSet = new();
+    // 模组多选：存模组目录名（抗列表变化下标漂移）
+    private readonly HashSet<string> _modSet = new(StringComparer.OrdinalIgnoreCase);
+    // 备份多选（勾选模组时自动同步全选其备份）：存备份文件完整路径
+    private readonly HashSet<string> _bakSet = new(StringComparer.OrdinalIgnoreCase);
     private bool _syncBak;
     // 两个列表各自的鼠标框选状态
     private readonly ListDragSelect _modDrag = new();
@@ -60,14 +60,7 @@ public class BackupWindow : Window, IDisposable
 
     private void OnModsChanged()
     {
-        _backupsCache = null;
-        var mods = _plugin.Penumbra.Mods;
-        // 模组增删后下标漂移：越界勾选清空，防止误操作其它模组
-        if (_modSet.Count > 0 && _modSet.Any(i => i >= mods.Count))
-        {
-            _modSet.Clear();
-            _bakSet.Clear();
-        }
+        _backupsCache = null; // 勾选集存目录名/路径，不受模组列表变化影响
     }
 
     public void Dispose()
@@ -146,7 +139,7 @@ public class BackupWindow : Window, IDisposable
         {
             if (left.Success)
             {
-                var allSelected = mods.Count > 0 && _modSet.Count == mods.Count;
+                var allSelected = mods.Count > 0 && mods.All(m => _modSet.Contains(m.Directory));
                 ImGui.TextUnformatted($"模组（{mods.Count}）");
                 ImGui.SameLine();
                 if (ImGui.Checkbox("全选", ref allSelected))
@@ -154,7 +147,7 @@ public class BackupWindow : Window, IDisposable
                     _modSet.Clear();
                     if (allSelected)
                     {
-                        for (var i = 0; i < mods.Count; i++) _modSet.Add(i);
+                        foreach (var m in mods) _modSet.Add(m.Directory);
                     }
                     _syncBak = true;
                 }
@@ -169,15 +162,15 @@ public class BackupWindow : Window, IDisposable
                         var modInteractive = !_modDrag.Active; // 框选中屏蔽行点击
                         for (var i = 0; i < mods.Count; i++)
                         {
-                            var checkedItem = _modSet.Contains(i);
+                            var checkedItem = _modSet.Contains(mods[i].Directory);
                             var marked = _mark.HasMark(mods[i].Directory);
                             var rowTop = ImGui.GetCursorScreenPos().Y;
                             // 紧凑行：小内边距 → 勾选框更小、行更矮，窗口缩小时一屏可见更多选项
                             ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, new Vector2(3f, 2f) * ImGuiHelpers.GlobalScale);
                             if (ImGui.Checkbox($"##m{i}", ref checkedItem) && modInteractive)
                             {
-                                if (checkedItem) _modSet.Add(i);
-                                else _modSet.Remove(i);
+                                if (checkedItem) _modSet.Add(mods[i].Directory);
+                                else _modSet.Remove(mods[i].Directory);
                                 _syncBak = true;
                             }
                             ImGui.SameLine();
@@ -185,8 +178,8 @@ public class BackupWindow : Window, IDisposable
                             var label = (marked ? "[已翻译] " : "") + mods[i].Name;
                             if (ImGui.Selectable(Truncate(label, ImGui.GetContentRegionAvail().X) + $"##ms{i}", checkedItem) && modInteractive)
                             {
-                                if (checkedItem) { _modSet.Remove(i); }
-                                else { _modSet.Add(i); }
+                                if (checkedItem) { _modSet.Remove(mods[i].Directory); }
+                                else { _modSet.Add(mods[i].Directory); }
                                 _syncBak = true;
                             }
                             ImGui.PopStyleVar();
@@ -200,7 +193,7 @@ public class BackupWindow : Window, IDisposable
                         var hitMods = _modDrag.End();
                         if (hitMods.Count > 0)
                         {
-                            foreach (var i in hitMods) _modSet.Add(i);
+                            foreach (var i in hitMods) _modSet.Add(mods[i].Directory);
                             _syncBak = true;
                         }
                     }
@@ -238,7 +231,7 @@ public class BackupWindow : Window, IDisposable
             ImGui.GetColorU32(new Vector4(0.42f, 0.72f, 1f, _draggingSplit || hoverBar ? 0.9f : 0.45f)));
 
         // ── 右：备份列表（选中模组的备份，多选） ──
-        var selectedMods = _modSet.Select(i => mods[i].Directory).ToHashSet();
+        var selectedMods = _modSet;
         var relevant = allBackups.Where(b => selectedMods.Count == 0 || selectedMods.Contains(b.ModDir)).ToList();
 
         // 模组勾选变化 → 自动全选其备份（用户仍可手动取消个别备份）
@@ -246,7 +239,7 @@ public class BackupWindow : Window, IDisposable
         {
             _syncBak = false;
             _bakSet.Clear();
-            for (var i = 0; i < relevant.Count; i++) _bakSet.Add(i);
+            foreach (var b in relevant) _bakSet.Add(b.BakPath);
         }
 
         // 右 Child：显式钉死同一行位置（与主窗口一致，防止 InvisibleButton 后光标被推进导致换行）
@@ -265,7 +258,7 @@ public class BackupWindow : Window, IDisposable
                     _bakSet.Clear();
                     if (allBak)
                     {
-                        for (var i = 0; i < relevant.Count; i++) _bakSet.Add(i);
+                        foreach (var b in relevant) _bakSet.Add(b.BakPath);
                     }
                 }
                 ImGui.Spacing();
@@ -280,21 +273,21 @@ public class BackupWindow : Window, IDisposable
                         for (var i = 0; i < relevant.Count; i++)
                         {
                             var b = relevant[i];
-                            var checkedItem = _bakSet.Contains(i);
+                            var checkedItem = _bakSet.Contains(b.BakPath);
                             var rowTop = ImGui.GetCursorScreenPos().Y;
                             // 紧凑行：小内边距 → 勾选框更小、行更矮
                             ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, new Vector2(3f, 2f) * ImGuiHelpers.GlobalScale);
                             if (ImGui.Checkbox($"##b{i}", ref checkedItem) && bakInteractive)
                             {
-                                if (checkedItem) _bakSet.Add(i);
-                                else _bakSet.Remove(i);
+                                if (checkedItem) _bakSet.Add(b.BakPath);
+                                else _bakSet.Remove(b.BakPath);
                             }
                             ImGui.SameLine();
                             // 整行可点击：点击备份名同样切换勾选（超长自动截断省略号，防止溢出右栏边界）
                             if (ImGui.Selectable(Truncate($"{b.ModDir}  \\  {b.FileName}", ImGui.GetContentRegionAvail().X) + $"##bs{i}", checkedItem) && bakInteractive)
                             {
-                                if (checkedItem) _bakSet.Remove(i);
-                                else _bakSet.Add(i);
+                                if (checkedItem) _bakSet.Remove(b.BakPath);
+                                else _bakSet.Add(b.BakPath);
                             }
                             ImGui.PopStyleVar();
                             _bakDrag.Row(i, rowTop, rowTop + ImGui.GetFrameHeight());
@@ -304,7 +297,7 @@ public class BackupWindow : Window, IDisposable
                             }
                         }
                         // 框选命中 → 勾选（只增不减）
-                        foreach (var i in _bakDrag.End()) _bakSet.Add(i);
+                        foreach (var i in _bakDrag.End()) _bakSet.Add(relevant[i].BakPath);
                     }
                 }
             }
@@ -317,11 +310,9 @@ public class BackupWindow : Window, IDisposable
         if (ImGui.Button("创建选中备份"))
         {
             var m = 0;
-            foreach (var i in _modSet)
+            foreach (var dir in _modSet)
             {
-                if (i < 0 || i >= mods.Count) continue;
-                var dir = Path.Combine(modRoot, mods[i].Directory);
-                if (_backup.ManualBackup(dir, _plugin.Configuration.BackupCount) > 0) m++;
+                if (_backup.ManualBackup(Path.Combine(modRoot, dir), _plugin.Configuration.BackupCount) > 0) m++;
             }
             _result = _modSet.Count == 0
                 ? "未勾选模组（左侧勾选要备份的模组）"
@@ -339,9 +330,9 @@ public class BackupWindow : Window, IDisposable
         if (ImGui.Button("还原选中备份"))
         {
             var ok = 0;
-            foreach (var i in _bakSet)
+            foreach (var b in relevant)
             {
-                if (i >= 0 && i < relevant.Count && _backup.Restore(modRoot, relevant[i])) ok++;
+                if (_bakSet.Contains(b.BakPath) && _backup.Restore(modRoot, b)) ok++;
             }
             _result = _bakSet.Count == 0
                 ? "未勾选备份（右侧勾选要还原的备份）"
@@ -359,9 +350,9 @@ public class BackupWindow : Window, IDisposable
         if (ImGui.Button("删除选中备份"))
         {
             var ok = 0;
-            foreach (var i in _bakSet)
+            foreach (var b in relevant)
             {
-                if (i >= 0 && i < relevant.Count && _backup.Delete(modRoot, relevant[i])) ok++;
+                if (_bakSet.Contains(b.BakPath) && _backup.Delete(modRoot, b)) ok++;
             }
             _result = _bakSet.Count == 0
                 ? "未勾选备份（右侧勾选要删除的备份）"
