@@ -471,7 +471,9 @@ public class MainWindow : Window, IDisposable
                 ImGui.TextDisabled("目录设置完成后，本提示自动消失，可正常开始汉化。");
                 return;
             }
-            ImGui.TextDisabled("← 左侧选择一个模组查看详情");
+            ImGui.TextDisabled("← 左侧选择一个模组可单独编辑/精翻；或不选模组，直接一键汉化当前列表：");
+            ImGui.Spacing();
+            DrawOneClickAll();
             return;
         }
 
@@ -681,7 +683,7 @@ public class MainWindow : Window, IDisposable
             ImGui.SetTooltip("手动备份当前模组的全部文件为 zip（meta.json / group_*.json）");
         }
 
-        // ── 一键汉化（智能分流：有 Key 全自动；无 Key 停在词典预填，等外部 AI）──
+        // ── 一键汉化（单模组版：智能分流，有 Key 全自动；无 Key 停在词典预填，等外部 AI）──
         ImGui.Spacing();
         ImGui.Separator();
         ImGui.Spacing();
@@ -707,7 +709,7 @@ public class MainWindow : Window, IDisposable
         {
             if (ImGui.Button("一键汉化本模组", new Vector2(150 * ImGuiHelpers.GlobalScale, 0)))
             {
-                StartOneClick(mod);
+                StartOneClick(new List<ModEntry> { mod });
             }
             if (ImGui.IsItemHovered())
             {
@@ -716,7 +718,7 @@ public class MainWindow : Window, IDisposable
             ImGui.SameLine();
             if (ImGui.Button("汇总并写入"))
             {
-                SumupAndWrite(mod);
+                SumupAndWrite(new List<ModEntry> { mod });
             }
             if (ImGui.IsItemHovered())
             {
@@ -765,15 +767,21 @@ public class MainWindow : Window, IDisposable
     }
 
     /// <summary>
-    /// 一键汉化本模组（智能分流）：① 提取（默认汇总提取，可选按模组）→ ② 词典预填 →
-    /// 有 Key：③ AI 翻译 → ④ 汇总 → ⑤ 写回本模组；无 Key：停在 ②，引导走外部 AI 后用「汇总并写入」。
+    /// 一键汉化（智能分流）：① 提取（默认汇总提取，可选按模组）→ ② 词典预填 →
+    /// 有 Key：③ AI 翻译 → ④ 汇总 → ⑤ 写回；无 Key：停在 ②，引导走外部 AI 后用「汇总并写入」。
+    /// mods 可以是单个模组（详情区）也可以是当前列表全部（未选中时的“一键汉化（伪）”）。
     /// </summary>
-    private void StartOneClick(ModEntry mod)
+    private void StartOneClick(List<ModEntry> mods)
     {
-        var modRoot = penumbra.GetModRoot();
-        if (string.IsNullOrEmpty(modRoot) || !Directory.Exists(Path.Combine(modRoot, mod.Directory)))
+        if (mods.Count == 0)
         {
-            _result = "无法获取 Penumbra 模组根目录（或模组目录不存在）";
+            _result = "当前列表没有模组";
+            return;
+        }
+        var modRoot = penumbra.GetModRoot();
+        if (string.IsNullOrEmpty(modRoot))
+        {
+            _result = "无法获取 Penumbra 模组根目录";
             return;
         }
         var cfg = plugin.Configuration;
@@ -795,9 +803,8 @@ public class MainWindow : Window, IDisposable
 
         var hasKey = !string.IsNullOrWhiteSpace(AiTranslateService.GetApiKey(cfg));
         var summary = _ocSummary;
-        var mods = new List<ModEntry> { mod };
         _result = "";
-        _ocStatus = "① 提取英文…";
+        _ocStatus = $"① 提取英文（{mods.Count} 个模组）…";
         _ocCts = new CancellationTokenSource();
         var ct = _ocCts.Token;
 
@@ -806,7 +813,7 @@ public class MainWindow : Window, IDisposable
             var log = new StringBuilder();
             try
             {
-                // ① 提取（只针对本模组；用户显式点按钮，不受「已翻译」标记影响）
+                // ① 提取（用户显式点按钮，不受「已翻译」标记影响）
                 var n = summary
                     ? plugin.Extract.Extract(mods, skipMarked: false, transDir, modRoot)
                     : plugin.Extract.ExtractPerMod(mods, skipMarked: false, transDir, modRoot);
@@ -829,7 +836,7 @@ public class MainWindow : Window, IDisposable
                 {
                     _ocStatus = "未配置 API Key：已按词典预填完成 ✓";
                     _result = log +
-                              $"\n把翻译目录里的 {Path.GetFileName(outputs[0])} 交给外部 AI（连同 翻译规则.json），" +
+                              $"\n把翻译目录里的 {Path.GetFileName(outputs[0])} 等文件交给外部 AI（连同 翻译规则.json），" +
                               "翻好后改名为 _已翻译.json 放回翻译目录，再点「汇总并写入」。";
                     return;
                 }
@@ -850,7 +857,7 @@ public class MainWindow : Window, IDisposable
                     return;
                 }
 
-                // ④ 汇总 + 重载词典 → ⑤ 写回本模组
+                // ④ 汇总 + 重载词典 → ⑤ 写回
                 _ocStatus = "④ 汇总已翻译内容…";
                 SumupCore(transDir, log);
                 _ocStatus = "⑤ 翻译写入MOD…";
@@ -867,9 +874,14 @@ public class MainWindow : Window, IDisposable
         });
     }
 
-    /// <summary> 外部 AI 流程收尾：把翻译目录里的 _已翻译.json 汇总进词典，再写回本模组并重载。 </summary>
-    private void SumupAndWrite(ModEntry mod)
+    /// <summary> 外部 AI 流程收尾：把翻译目录里的 _已翻译.json 汇总进词典，再写回指定模组并重载。 </summary>
+    private void SumupAndWrite(List<ModEntry> mods)
     {
+        if (mods.Count == 0)
+        {
+            _result = "当前列表没有模组";
+            return;
+        }
         var modRoot = penumbra.GetModRoot();
         if (string.IsNullOrEmpty(modRoot))
         {
@@ -883,7 +895,7 @@ public class MainWindow : Window, IDisposable
             _result = "未找到 _已翻译.json：请先把外部 AI 翻好的文件改名为 <名称>_已翻译.json 放回翻译目录。";
             return;
         }
-        plugin.Import.ApplyDictionary(modRoot, plugin.Dict, new List<ModEntry> { mod });
+        plugin.Import.ApplyDictionary(modRoot, plugin.Dict, mods);
         log.Append('\n').Append(plugin.Import.LastResult);
         penumbra.Refresh();
         ReloadSelectedFile();
@@ -902,6 +914,62 @@ public class MainWindow : Window, IDisposable
         log.Append($"④ 汇总：{files.Count} 个文件，新增 {added} 条");
         if (added > 0) plugin.ReloadDictionary();
         return true;
+    }
+
+    /// <summary>
+    /// 未选中模组时的「一键汉化（伪）」：对当前列表（默认即全部未翻译模组）执行
+    /// ①提取 → ②词典预填 → ③AI翻译（无Key降级）→ ④汇总 → ⑤写入。
+    /// 称“伪”是因为走外部 AI 时中途需要人工把文件送去翻译再放回。
+    /// </summary>
+    private void DrawOneClickAll()
+    {
+        if (ImGui.RadioButton("汇总提取（默认）", _ocSummary)) _ocSummary = true;
+        ImGui.SameLine();
+        if (ImGui.RadioButton("按模组提取", !_ocSummary)) _ocSummary = false;
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip("汇总提取：全部条目合并进 全部模组_未翻译.json\n按模组提取：每个模组单独生成 <模组名>_未翻译.json\n两种写回效果相同，只影响文件组织方式");
+        }
+
+        if (_ocTask != null && !_ocTask.IsCompleted)
+        {
+            ImGui.TextWrapped(_ocStatus);
+            if (ImGui.Button("取消一键汉化"))
+            {
+                _ocCts?.Cancel();
+                _ocStatus += "\n正在取消…（AI 请求会被中断，已翻译部分写盘保留）";
+            }
+        }
+        else
+        {
+            if (ImGui.Button("一键汉化（伪）", new Vector2(150 * ImGuiHelpers.GlobalScale, 0)))
+            {
+                StartOneClick(BuildVisibleList().Select(i => penumbra.Mods[i]).ToList());
+            }
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("对当前列表（默认即全部未翻译模组）自动完成：提取 → 词典预填 → AI 翻译（已配 Key 时）→ 汇总 → 写回并重载。\n" +
+                                 "称「伪」：未配 Key 时会停在词典预填，需要人工把 _未翻译.json 交给外部 AI、翻好放回后点「汇总并写入」。");
+            }
+            ImGui.SameLine();
+            if (ImGui.Button("汇总并写入"))
+            {
+                SumupAndWrite(BuildVisibleList().Select(i => penumbra.Mods[i]).ToList());
+            }
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("外部 AI 翻完后点这个：把翻译目录里的 _已翻译.json 汇总进词典，再写回当前列表全部模组并重载。");
+            }
+            // 轮询任务完成：清任务状态 + UI 线程收尾
+            if (_ocTask != null && _ocTask.IsCompleted)
+            {
+                _ocTask = null;
+                _ocCts?.Dispose();
+                _ocCts = null;
+                penumbra.Refresh();
+                ReloadSelectedFile();
+            }
+        }
     }
 
     /// <summary> 「创建 / 删除已翻译标记」按钮（带缓存失效）。有选项与无选项模组共用。 </summary>
