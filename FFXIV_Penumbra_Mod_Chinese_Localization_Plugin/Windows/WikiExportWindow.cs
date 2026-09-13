@@ -24,7 +24,7 @@ public class WikiExportWindow : Window, IDisposable
 
     public WikiExportWindow(Plugin plugin) : base("Wiki 提取###HanhuaWiki")
     {
-        Size = new Vector2(640, 480);
+        Size = new Vector2(1280, 500); // 默认放宽：勾选行单行排到「种族（Race）」不被裁
         SizeCondition = ImGuiCond.FirstUseEver;
         SizeConstraints = new WindowSizeConstraints
         {
@@ -55,7 +55,7 @@ public class WikiExportWindow : Window, IDisposable
 
         // 提取模式
         if (ImGui.RadioButton("分类提取（每个分类一个 json，互不影响）", _perCat)) _perCat = true;
-        Ui.SameLineIfFits(Ui.ButtonWidth("汇总提取（全部合并到 汇总.json）") + ImGui.GetFrameHeight());
+        ImGui.SameLine();
         if (ImGui.RadioButton("汇总提取（全部合并到 汇总.json）", !_perCat)) _perCat = false;
         ImGui.Spacing();
 
@@ -64,13 +64,11 @@ public class WikiExportWindow : Window, IDisposable
         {
             ImGui.TextUnformatted("勾选要提取的分类（未勾选不抓取）：");
             ImGui.Spacing();
+            // 单行排列：窗口默认已放宽到能完整显示到「种族（Race）」
             for (var i = 0; i < WikiExportService.Categories.Count; i++)
             {
-                var label = WikiExportService.Categories[i].Display;
-                // 逐项测量：放不下自动换行（勾选框方块 + 文字 + 间距），不再按固定列宽估算
-                if (i > 0)
-                    Ui.SameLineIfFits(ImGui.GetFrameHeight() + ImGui.CalcTextSize(label).X + 24f * ImGuiHelpers.GlobalScale);
-                if (ImGui.Checkbox(label, ref _catChecked[i]))
+                if (i > 0) ImGui.SameLine();
+                if (ImGui.Checkbox(WikiExportService.Categories[i].Display, ref _catChecked[i]))
                 {
                     /* 直接改字段 */
                 }
