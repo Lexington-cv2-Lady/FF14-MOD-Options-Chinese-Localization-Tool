@@ -13,16 +13,22 @@
 > [!IMPORTANT]
 > **把下面的仓库地址添加进卫月，然后在插件安装器中搜索「模组汉化」安装。**
 
-**① 主地址**（推荐，点击代码块右上角图标即可复制）
+**① 插件清单库（推荐）**——作者的插件总库，以后新增插件会自动出现在列表里，无需改配置
+
+```
+https://raw.githubusercontent.com/Lexington-cv2-Lady/XIVCN-PluginRepo/main/plugin_repo.json
+```
+
+```
+https://cdn.jsdmirror.com/gh/Lexington-cv2-Lady/XIVCN-PluginRepo@main/plugin_repo.json
+```
+
+（第一个是主地址，第二个是镜像；两行任选其一即可）
+
+**② 兼容旧地址**——仅添加过旧地址的老用户继续使用，效果与 ① 相同
 
 ```
 https://raw.githubusercontent.com/Lexington-cv2-Lady/FFXIV_Penumbra_Mod_Chinese_Localization_Plugin/main/plugin_repo.json
-```
-
-**② 镜像地址**（主地址加载慢时改用这个）
-
-```
-https://cdn.jsdmirror.com/gh/Lexington-cv2-Lady/FFXIV_Penumbra_Mod_Chinese_Localization_Plugin@main/plugin_repo.json
 ```
 
 **添加步骤**
