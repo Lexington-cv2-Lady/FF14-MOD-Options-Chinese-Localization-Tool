@@ -553,6 +553,18 @@ public class MainWindow : Window, IDisposable
 
         // 选项编辑（可直接修改中英文）
         var file = _selectedFile!;
+
+        // 原文对照：优先取英文快照（写入/翻译后文件已是中文，快照保留英文原文），无快照回退当前值
+        var snapInfo = plugin.Snapshot.GetEnglish(mod.Directory, file.FileName);
+        string OriginalOf(int gIndex, int? oIndex, string current)
+        {
+            var g = snapInfo?.Groups.FirstOrDefault(x => x.Index == gIndex);
+            if (g == null) return current;
+            var en = oIndex == null
+                ? g.Name
+                : g.Options.FirstOrDefault(x => x.Index == oIndex)?.Name ?? current;
+            return string.IsNullOrWhiteSpace(en) ? current : en;
+        }
         ImGui.TextWrapped($"选项编辑（{CountOptions(file)} 项，直接改中英文，点保存写回）：");
         ImGui.Spacing();
 
@@ -590,7 +602,7 @@ public class MainWindow : Window, IDisposable
                 }
                 if (ImGui.IsItemHovered())
                 {
-                    ImGui.SetTooltip("组名（可直接改中英文）\n原文：" + g.Name + "\n「贴」= 读取剪贴板覆盖本框");
+                    ImGui.SetTooltip("组名（可直接改中英文）\n原文：" + OriginalOf(g.Index, null, g.Name) + "\n「贴」= 读取剪贴板覆盖本框");
                 }
                 shown++;
             }
@@ -599,12 +611,13 @@ public class MainWindow : Window, IDisposable
             {
                 if (shown >= limit) { truncated = true; break; }
                 var k = $"{file.Path}|{g.Index}|{o.Index}";
+                var origEn = OriginalOf(g.Index, o.Index, o.Name);
                 if (!_editBufs.TryGetValue(k, out var v)) _editBufs[k] = v = o.Name;
                 ImGui.SetNextItemWidth(inputW);
                 if (ImGui.InputText($"##e{shown}", ref v, 1024)) _editBufs[k] = v;
                 if (ImGui.IsItemHovered())
                 {
-                    ImGui.SetTooltip("输入框内可直接改中英文\n原文：" + o.Name + "\n「贴」= 读取剪贴板覆盖本框");
+                    ImGui.SetTooltip("输入框内可直接改中英文\n原文：" + origEn + "\n「贴」= 读取剪贴板覆盖本框");
                 }
                 ImGui.SameLine();
                 if (ImGui.Button($"贴##ep{shown}", new Vector2(pasteW, 0)))
@@ -613,7 +626,7 @@ public class MainWindow : Window, IDisposable
                     if (!string.IsNullOrWhiteSpace(clip)) _editBufs[k] = clip.Trim();
                 }
                 ImGui.SameLine();
-                var orig = o.Name.Length > 22 ? o.Name.Substring(0, 22) + "…" : o.Name;
+                var orig = origEn.Length > 22 ? origEn.Substring(0, 22) + "…" : origEn;
                 if (orig.Length > 0) ImGui.TextDisabled(orig);
                 shown++;
             }
