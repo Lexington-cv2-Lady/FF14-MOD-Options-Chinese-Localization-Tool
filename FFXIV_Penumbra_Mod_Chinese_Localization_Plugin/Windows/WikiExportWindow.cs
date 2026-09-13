@@ -55,7 +55,7 @@ public class WikiExportWindow : Window, IDisposable
 
         // 提取模式
         if (ImGui.RadioButton("分类提取（每个分类一个 json，互不影响）", _perCat)) _perCat = true;
-        ImGui.SameLine();
+        Ui.SameLineIfFits(Ui.ButtonWidth("汇总提取（全部合并到 汇总.json）") + ImGui.GetFrameHeight());
         if (ImGui.RadioButton("汇总提取（全部合并到 汇总.json）", !_perCat)) _perCat = false;
         ImGui.Spacing();
 
@@ -64,13 +64,13 @@ public class WikiExportWindow : Window, IDisposable
         {
             ImGui.TextUnformatted("勾选要提取的分类（未勾选不抓取）：");
             ImGui.Spacing();
-            var w = ImGui.GetContentRegionAvail().X;
-            var col = Math.Max(2, (int)(w / (210 * ImGuiHelpers.GlobalScale)));
             for (var i = 0; i < WikiExportService.Categories.Count; i++)
             {
-                if (i > 0) ImGui.SameLine(0, 24 * ImGuiHelpers.GlobalScale);
-                if (i % col != 0) ImGui.SameLine();
-                if (ImGui.Checkbox(WikiExportService.Categories[i].Display, ref _catChecked[i]))
+                var label = WikiExportService.Categories[i].Display;
+                // 逐项测量：放不下自动换行（勾选框方块 + 文字 + 间距），不再按固定列宽估算
+                if (i > 0)
+                    Ui.SameLineIfFits(ImGui.GetFrameHeight() + ImGui.CalcTextSize(label).X + 24f * ImGuiHelpers.GlobalScale);
+                if (ImGui.Checkbox(label, ref _catChecked[i]))
                 {
                     /* 直接改字段 */
                 }
@@ -135,8 +135,9 @@ public class WikiExportWindow : Window, IDisposable
 
         ImGui.Spacing();
 
-        // 日志结果区：带边框统一风格
-        Plugin.ResultBox("##WikiResult", _result, "提取日志将显示在这里（进度 / 新增 / 命中已有 / 拒绝数…）", 200f);
+        // 日志结果区：带边框统一风格；高度自适应（矮窗口收缩，最高 200）
+        var boxH = Math.Min(200f, Math.Max(100f, ImGui.GetContentRegionAvail().Y));
+        Plugin.ResultBox("##WikiResult", _result, "提取日志将显示在这里（进度 / 新增 / 命中已有 / 拒绝数…）", boxH);
 
         // 轮询任务完成
         if (_task != null && _task.IsCompleted)
