@@ -24,7 +24,7 @@ public sealed class ModRestoreService
 
     /// <summary> 选项树查询（imc 补了 originalIndex 用于对位）。 </summary>
     private const string VariantQuery = """
-        query DownloadTask($versionId: UUID!, $downloadKind: DownloadKind!) {
+        query DownloadTask($versionId: UUID!) {
             getVersion(id: $versionId) {
                 version
                 groups {
@@ -47,9 +47,10 @@ public sealed class ModRestoreService
     /// 从 Heliosphere 还原：按 heliosphere.json 的 VersionId 查询英文选项树，
     /// 对位重写 meta.json 的 Groups（只改 Name/Description，选择状态等字段原样保留）
     /// 及 group_&lt;penumbraId&gt;.json。数据文件不受翻译影响，不下载。
+    /// beforeWrite：全部查询/解析成功后、写第一个文件前回调（用于备份；抛异常即中止还原）。
     /// 返回结果描述。
     /// </summary>
-    public async Task<string> RestoreFromHeliosphereAsync(string modDir)
+    public async Task<string> RestoreFromHeliosphereAsync(string modDir, Action? beforeWrite = null)
     {
         var hsPath = Path.Combine(modDir, "heliosphere.json");
         if (!File.Exists(hsPath)) return "该模组无 heliosphere.json（非 HS 模组）";
@@ -63,7 +64,6 @@ public sealed class ModRestoreService
             ["variables"] = new JsonObject
             {
                 ["versionId"] = versionId,
-                ["downloadKind"] = "INSTALL",
             },
         };
         using var content = new StringContent(body.ToJsonString(), Encoding.UTF8, "application/json");
@@ -83,6 +83,9 @@ public sealed class ModRestoreService
         var mgroups = meta["Groups"] as JsonArray
                       ?? (meta["Mod"] as JsonObject)?["Groups"] as JsonArray;
         if (mgroups == null) return "meta.json 无 Groups（该模组可能没有选项）";
+
+        // 查询与解析全部成功，写文件前备份（查询失败不建备份，避免重复产生备份包）
+        beforeWrite?.Invoke();
 
         int pg = 0, po = 0;
         foreach (var key in new[] { "standard", "imc", "combining" })
@@ -178,9 +181,10 @@ public sealed class ModRestoreService
     /// <summary>
     /// 从原始 PMP 还原手动安装的模组：覆盖根级 json（meta 除外）为 PMP 原始内容，
     /// 并对位修补 meta 内嵌 Groups 的 Name/Description（其余字段保留）。
+    /// beforeWrite：解析全部成功后、写第一个文件前回调（用于备份；抛异常即中止还原）。
     /// 返回结果描述。
     /// </summary>
-    public string RestoreFromPmp(string modDir, string pmpPath)
+    public string RestoreFromPmp(string modDir, string pmpPath, Action? beforeWrite = null)
     {
         using var z = new ZipArchive(File.OpenRead(pmpPath));
 
@@ -257,6 +261,9 @@ public sealed class ModRestoreService
                 if (dd != null) mg["Description"] = dd;
             }
         }
+
+        // PMP 与当前 meta 解析全部成功，写文件前备份（匹配/解析失败不建备份）
+        beforeWrite?.Invoke();
 
         // 根级 json 整文件还原（含 default_mod.json）
         foreach (var e in rootJsons)

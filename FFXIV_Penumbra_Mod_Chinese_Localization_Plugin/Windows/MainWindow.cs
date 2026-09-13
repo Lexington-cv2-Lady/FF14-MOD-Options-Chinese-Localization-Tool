@@ -1110,16 +1110,11 @@ public class MainWindow : Window, IDisposable
 
     /// <summary>
     /// 重新下载（还原）：HS 模组走 Heliosphere API 取英文选项树；
-    /// 手动安装模组从 手动安装 目录匹配原始 PMP 还原自带文本。均先自动备份。
+    /// 手动安装模组从 手动安装 目录匹配原始 PMP 还原自带文本。
+    /// 备份在查询/匹配成功后、写文件前进行（查询失败不建备份，避免重复产生备份包）。
     /// </summary>
     private void StartRestore(ModEntry mod, string modFullPath)
     {
-        var zip = plugin.Backup.CreateModZip(modFullPath, plugin.Configuration.BackupCount);
-        if (zip == null)
-        {
-            _result = "还原前备份失败，已取消";
-            return;
-        }
         _result = "";
         _restoreStatus = "正在获取原始选项…";
         var isHs = ModRestoreService.HasHsMeta(modFullPath);
@@ -1132,7 +1127,7 @@ public class MainWindow : Window, IDisposable
                 _restoreStatus = isHs ? "正在从 Heliosphere 获取原始选项…" : "正在从原始 PMP 还原…";
                 string msg;
                 if (isHs)
-                    msg = await plugin.ModRestore.RestoreFromHeliosphereAsync(modFullPath);
+                    msg = await plugin.ModRestore.RestoreFromHeliosphereAsync(modFullPath, BackupNow);
                 else
                 {
                     var pmp = ModRestoreService.FindOriginalPmp(Path.GetFileName(modFullPath), mod.Name, manualDir);
@@ -1142,7 +1137,7 @@ public class MainWindow : Window, IDisposable
                         _result = _restoreStatus;
                         return;
                     }
-                    msg = plugin.ModRestore.RestoreFromPmp(modFullPath, pmp);
+                    msg = plugin.ModRestore.RestoreFromPmp(modFullPath, pmp, BackupNow);
                 }
                 plugin.Penumbra.Reload(mod.Directory, mod.Name);
                 _restoreStatus = msg + " ✓";
@@ -1154,6 +1149,14 @@ public class MainWindow : Window, IDisposable
                 _result = _restoreStatus;
             }
         });
+
+        // 写文件前回调：备份当前状态；失败抛异常中止还原（此时尚未改动任何文件）
+        void BackupNow()
+        {
+            _restoreStatus = "正在备份当前状态…";
+            var zip = plugin.Backup.CreateModZip(modFullPath, plugin.Configuration.BackupCount);
+            if (zip == null) throw new InvalidOperationException("还原前备份失败，未改动任何文件");
+        }
     }
 
     /// <summary> 查漏补缺：列出模组文件中仍为英文的选项/组名/描述。 </summary>
