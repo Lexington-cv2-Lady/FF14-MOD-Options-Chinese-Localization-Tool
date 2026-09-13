@@ -593,22 +593,6 @@ public class MainWindow : Window, IDisposable
             penumbra.Refresh();
             ReloadSelectedFile();
         }
-        if (isHsMod)
-        {
-            ImGui.SameLine();
-            ImGui.TextColored(new Vector4(1f, 0.75f, 0.3f, 1f), "打开"); // 文案提示：点模组名即打开文件夹
-        }
-        if (_restoreTask != null && !_restoreTask.IsCompleted)
-        {
-            Ui.Hint(_restoreStatus);
-        }
-        else if (_restoreTask != null && _restoreTask.IsCompleted)
-        {
-            _result = _restoreStatus;
-            _restoreTask = null;
-            penumbra.Refresh();
-            ReloadSelectedFile();
-        }
         Ui.Hint($"目录：{mod.Directory}");
         ImGui.Spacing();
 
