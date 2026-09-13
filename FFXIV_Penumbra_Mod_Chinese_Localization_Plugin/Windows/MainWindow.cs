@@ -61,6 +61,7 @@ public class MainWindow : Window, IDisposable
     private Task? _ocTask;
     private CancellationTokenSource? _ocCts;
     private string _ocStatus = "";
+    private bool _ocGuidePending; // 无 Key 完成第一段后弹指引窗
 
     /// <summary> 翻译管线「仅提取勾选」用：当前勾选的模组列表。 </summary>
     public IReadOnlyList<ModEntry> SelectedMods
@@ -142,6 +143,13 @@ public class MainWindow : Window, IDisposable
 
     public override void Draw()
     {
+        // 一键汉化（无 Key）第一段完成 → 打开指引弹窗（顶层作用域，详情区状态无关）
+        if (_ocGuidePending && (_ocTask == null || _ocTask.IsCompleted))
+        {
+            ImGui.OpenPopup("一键汉化：下一步");
+            _ocGuidePending = false;
+        }
+
         // 顶部功能导航
         DrawNavBar();
 
@@ -280,6 +288,34 @@ public class MainWindow : Window, IDisposable
         {
             if (!right.Success) return;
             DrawDetail();
+        }
+
+        // 一键汉化（无 Key）指引弹窗
+        var guideOpen = true;
+        if (ImGui.BeginPopupModal("一键汉化：下一步", ref guideOpen, ImGuiWindowFlags.AlwaysAutoResize))
+        {
+            Ui.Hint("已按词典预填完成（未配置 API Key，本轮未调用 AI）。接下来三步：");
+            ImGui.TextWrapped(
+                "1. 点「打开翻译目录」，把其中的 _未翻译.json（连同 翻译规则.json）交给外部 AI；" + "\n" +
+                "2. 翻好后改名为 _已翻译.json 放回翻译目录；" + "\n" +
+                "3. 回到本窗口点「汇总并写入」完成写回。");
+            if (ImGui.Button("打开翻译目录", new Vector2(150 * ImGuiHelpers.GlobalScale, 0)))
+            {
+                try
+                {
+                    var dir = plugin.Configuration.TranslationPath;
+                    if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
+                    Process.Start(new ProcessStartInfo { FileName = dir, UseShellExecute = true });
+                }
+                catch { }
+                ImGui.CloseCurrentPopup();
+            }
+            ImGui.SameLine();
+            if (ImGui.Button("知道了"))
+            {
+                ImGui.CloseCurrentPopup();
+            }
+            ImGui.EndPopup();
         }
     }
 
@@ -672,7 +708,7 @@ public class MainWindow : Window, IDisposable
         ImGui.Spacing();
 
         // 翻译按钮
-        if (ImGui.Button("翻译并写入", new Vector2(140 * ImGuiHelpers.GlobalScale, 0)))
+        if (ImGui.Button("词典翻译写入（覆写旧译法）"))
         {
             _result = "";
             var changed = hanhua.TranslateMod(mod.Directory, mod.Name);
@@ -682,20 +718,7 @@ public class MainWindow : Window, IDisposable
         }
         if (ImGui.IsItemHovered())
         {
-            ImGui.SetTooltip($"翻译并写入：{mod.Name}\n（先自动备份，再写回 meta.json / group_*.json，随后触发 Penumbra 重载）");
-        }
-        ImGui.SameLine();
-        if (ImGui.Button("备份全部文件"))
-        {
-            var modPath = Path.Combine(modRoot ?? "", mod.Directory);
-            var zip = plugin.Backup.CreateModZip(modPath, plugin.Configuration.BackupCount);
-            _result = zip != null
-                ? $"已备份模组全部文件：{Path.GetFileName(zip)}（zip 轮转保留 {plugin.Configuration.BackupCount} 份）"
-                : "备份失败（无 meta.json / group_*.json 或打包异常）";
-        }
-        if (ImGui.IsItemHovered())
-        {
-            ImGui.SetTooltip("手动备份当前模组的全部文件为 zip（meta.json / group_*.json）");
+            ImGui.SetTooltip($"词典翻译写入（离线·覆写旧译法）：{mod.Name}\n（先自动备份，再写回 meta.json / group_*.json，随后触发 Penumbra 重载）");
         }
 
         // ── 一键汉化（单模组版：智能分流，有 Key 全自动；无 Key 停在词典预填，等外部 AI）──
@@ -722,7 +745,10 @@ public class MainWindow : Window, IDisposable
         }
         else
         {
-            if (ImGui.Button("一键汉化本模组", new Vector2(150 * ImGuiHelpers.GlobalScale, 0)))
+            Ui.PushAccent();
+            var aiClicked = ImGui.Button("AI 一键汉化（提取→AI→汇总→写入）");
+            Ui.PopAccent();
+            if (aiClicked)
             {
                 StartOneClick(new List<ModEntry> { mod });
             }
@@ -764,16 +790,6 @@ public class MainWindow : Window, IDisposable
         if (ImGui.IsItemHovered())
         {
             ImGui.SetTooltip("扫描当前模组未翻译的选项/描述（不受「已翻译」标记影响）");
-        }
-        Ui.SameLineIfFits(Ui.ButtonWidth("并入我的翻译"));
-        if (ImGui.Button("并入我的翻译"))
-        {
-            plugin.Sumup.SumupFromMod(modRoot ?? "", mod.Directory, plugin.Configuration.DictionaryPath);
-            _result = plugin.Sumup.LastResult;
-        }
-        if (ImGui.IsItemHovered())
-        {
-            ImGui.SetTooltip("把当前模组中已改中文的条目（英文原文来自英文快照/双语格式）沉淀进 我的翻译.json，其他模组翻译时可直接命中");
         }
 
         // 详情区操作结果：带边框统一风格
@@ -850,6 +866,7 @@ public class MainWindow : Window, IDisposable
                 if (!hasKey)
                 {
                     _ocStatus = "未配置 API Key：已按词典预填完成 ✓";
+                    _ocGuidePending = true;
                     _result = log +
                               $"\n把翻译目录里的 {Path.GetFileName(outputs[0])} 等文件交给外部 AI（连同 翻译规则.json），" +
                               "翻好后改名为 _已翻译.json 放回翻译目录，再点「汇总并写入」。";
@@ -957,7 +974,10 @@ public class MainWindow : Window, IDisposable
         }
         else
         {
-            if (ImGui.Button("一键汉化（伪）", new Vector2(150 * ImGuiHelpers.GlobalScale, 0)))
+            Ui.PushAccent();
+            var fakeClicked = ImGui.Button("一键汉化（伪）");
+            Ui.PopAccent();
+            if (fakeClicked)
             {
                 StartOneClick(BuildVisibleList().Select(i => penumbra.Mods[i]).ToList());
             }
@@ -1112,6 +1132,8 @@ public class MainWindow : Window, IDisposable
             {
                 /* 快照失败不影响保存 */
             }
+            var snap = plugin.Snapshot.GetEnglish(modDirName, file.FileName);
+            var sediments = new List<(string ModDir, string FileName, string Field, string En, string Zh)>();
 
             var node = JsonNode.Parse(File.ReadAllText(file.Path)) as JsonObject;
             if (node == null)
@@ -1139,11 +1161,17 @@ public class MainWindow : Window, IDisposable
                     {
                         gObj["Name"] = kv.Value;
                         changed++;
+                        var enG = snap?.Groups.FirstOrDefault(x => x.Index == gi)?.Name;
+                        if (!string.IsNullOrWhiteSpace(enG) && dict.ContainsChinese(kv.Value) && kv.Value != enG)
+                            sediments.Add((modDirName, file.FileName, "Name", enG, kv.Value));
                     }
                     else if (!file.IsMeta && gi == 0)
                     {
                         node["Name"] = kv.Value;
                         changed++;
+                        var enG0 = snap?.Groups.FirstOrDefault(x => x.Index == 0)?.Name;
+                        if (!string.IsNullOrWhiteSpace(enG0) && dict.ContainsChinese(kv.Value) && kv.Value != enG0)
+                            sediments.Add((modDirName, file.FileName, "Name", enG0, kv.Value));
                     }
                 }
                 else if (parts.Length >= 3) // 选项名（key: 路径|组索引|选项索引）
@@ -1164,12 +1192,23 @@ public class MainWindow : Window, IDisposable
                     {
                         oObj["Name"] = kv.Value;
                         changed++;
+                        var enO = snap?.Groups.FirstOrDefault(x => x.Index == gi)?
+                            .Options.FirstOrDefault(x => x.Index == oi)?.Name;
+                        if (!string.IsNullOrWhiteSpace(enO) && dict.ContainsChinese(kv.Value) && kv.Value != enO)
+                            sediments.Add((modDirName, file.FileName, "Opt", enO, kv.Value));
                     }
                 }
             }
 
             File.WriteAllText(file.Path, node.ToJsonString(JsonFile.Indented));
             _result = $"已保存 {changed} 项修改（原文件已自动备份）";
+
+            if (sediments.Count > 0)
+            {
+                plugin.Sumup.Sediment(sediments, plugin.Configuration.DictionaryPath);
+                _result += "\n" + plugin.Sumup.LastResult;
+                plugin.ReloadDictionary();
+            }
 
             ReloadSelectedFile();
             penumbra.Reload(mod.Directory, mod.Name); // 触发 Penumbra 重新加载该模组（按目录+名称匹配），游戏内立即生效

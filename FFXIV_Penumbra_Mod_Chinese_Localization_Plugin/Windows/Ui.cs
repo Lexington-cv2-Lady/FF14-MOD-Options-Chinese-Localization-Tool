@@ -29,6 +29,18 @@ internal static class Ui
             ImGui.SameLine();
     }
 
+    /// <summary> 高亮按钮配色（橙金色，用于 AI 一键汉化等功能区分）。配对 PopAccent。 </summary>
+    public static void PushAccent()
+    {
+        ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.85f, 0.52f, 0.08f, 1f));
+        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.98f, 0.62f, 0.12f, 1f));
+        ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.72f, 0.42f, 0.06f, 1f));
+        ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1f, 1f, 1f, 1f));
+    }
+
+    /// <summary> 弹出高亮配色。 </summary>
+    public static void PopAccent() => ImGui.PopStyleColor(4);
+
     /// <summary> 估算文字按钮宽度（含左右内边距），供 SameLineIfFits 使用。 </summary>
     public static float ButtonWidth(string label)
         => ImGui.CalcTextSize(label).X + ImGui.GetStyle().FramePadding.X * 2f;

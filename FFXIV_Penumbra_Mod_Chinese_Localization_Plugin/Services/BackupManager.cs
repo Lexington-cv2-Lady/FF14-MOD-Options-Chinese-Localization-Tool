@@ -153,6 +153,50 @@ public sealed class BackupManager
         }
     }
 
+    /// <summary>
+    /// 自动备份（启动扫描）：为尚无任何备份 zip 的模组各建一个。返回新建数。
+    /// </summary>
+    public int BackupMissing(IReadOnlyList<ModEntry> mods, string modRoot, int maxBackups)
+    {
+        var n = 0;
+        if (string.IsNullOrEmpty(modRoot)) return 0;
+        foreach (var m in mods)
+        {
+            try
+            {
+                var dir = Path.Combine(modRoot, m.Directory);
+                if (!Directory.Exists(dir)) continue;
+                if (Directory.GetFiles(dir, "*备份.zip").Length > 0) continue;
+                if (CreateModZip(dir, maxBackups) != null) n++;
+            }
+            catch
+            {
+                /* 单个失败不中断 */
+            }
+        }
+        if (n > 0) _log.Info($"[自动备份] 已为 {n} 个尚无备份的模组创建备份");
+        return n;
+    }
+
+    /// <summary>
+    /// 自动备份（新增模组事件）：模组尚无备份时立即建一个。
+    /// </summary>
+    public void BackupNew(string modDirectory, string modRoot, int maxBackups)
+    {
+        try
+        {
+            var dir = Path.Combine(modRoot, modDirectory);
+            if (!Directory.Exists(dir)) return;
+            if (Directory.GetFiles(dir, "*备份.zip").Length > 0) return;
+            if (CreateModZip(dir, maxBackups) != null)
+                _log.Info($"[自动备份] 新模组 {modDirectory} 已自动备份");
+        }
+        catch
+        {
+            /* 失败静默，不影响 Penumbra */
+        }
+    }
+
     /// <summary> 手动备份模组全部文件为 zip（yyyy-MM-dd_HH-mm-ss备份.zip），轮转保留 maxBackups 份。返回备份数（0/1）。 </summary>
     public int ManualBackup(string modDirPath, int maxBackups)
     {

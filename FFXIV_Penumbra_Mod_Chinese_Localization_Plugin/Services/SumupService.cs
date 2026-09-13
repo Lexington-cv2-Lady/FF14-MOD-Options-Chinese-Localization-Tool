@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -92,128 +93,6 @@ public sealed class SumupService
         return written;
     }
 
-    /// <summary> 从模组文件汇总手改的中文到 我的翻译.json：英文原文来自英文快照，其次双语格式剥出。返回新增条数。 </summary>
-    public int SumupFromMod(string modRoot, string modDirName, string dictionaryDir)
-    {
-        if (string.IsNullOrWhiteSpace(dictionaryDir))
-        {
-            LastResult = "词典目录未配置";
-            return -1;
-        }
-        if (string.IsNullOrWhiteSpace(modRoot) || !Directory.Exists(Path.Combine(modRoot, modDirName)))
-        {
-            LastResult = $"模组目录不存在：{Path.Combine(modRoot, modDirName)}";
-            return -1;
-        }
-
-        var dict = LoadDict(dictionaryDir);
-        var written = 0;
-
-        foreach (var file in _files.ReadModFiles(Path.Combine(modRoot, modDirName)))
-        {
-            var snapInfo = _snapshot.GetEnglish(modDirName, file.FileName);
-            foreach (var g in file.Groups)
-            {
-                TryAdd(dict, modDirName, file, g.Index, null, TextKind.Group, snapInfo, ref written);
-                foreach (var o in g.Options)
-                {
-                    TryAdd(dict, modDirName, file, g.Index, o.Index, TextKind.Option, snapInfo, ref written);
-                    TryAdd(dict, modDirName, file, g.Index, o.Index, TextKind.Description, snapInfo, ref written);
-                }
-            }
-        }
-
-        var saveErr = SaveDict(Path.Combine(dictionaryDir, "我的翻译.json"), dict, dictionaryDir);
-        if (saveErr != null)
-        {
-            LastResult = "写入 我的翻译.json 失败：" + saveErr;
-            return -1;
-        }
-
-        LastResult = $"并入我的翻译完成：新增 {written} 条 → 我的翻译.json（英文原文来自快照/双语，已有译文未覆盖）";
-        _log.Info(LastResult);
-        return written;
-    }
-
-    private enum TextKind { Group, Option, Description }
-
-    /// <summary> 当前值含中文（已翻译/手改过）才沉淀；英文原文取快照，其次从双语格式剥出。 </summary>
-    private static void TryAdd(JsonObject dict, string modDir, ModFileInfo file, int gIndex, int? oIndex,
-        TextKind kind, ModFileInfo? snapInfo, ref int written)
-    {
-        var current = kind switch
-        {
-            TextKind.Group => file.Groups.FirstOrDefault(x => x.Index == gIndex)?.Name ?? "",
-            TextKind.Description => GetOption(file, gIndex, oIndex)?.Description ?? "",
-            _ => GetOption(file, gIndex, oIndex)?.Name ?? ""
-        };
-        if (current.Length == 0 || !ContainsChinese(current)) return;
-
-        var en = FindEnglish(snapInfo, gIndex, oIndex, kind);
-        if (string.IsNullOrEmpty(en))
-        {
-            en = ExtractEnglishFromBilingual(current);
-        }
-        if (string.IsNullOrEmpty(en) || en == current || ContainsChinese(en)) return;
-
-        var field = kind switch
-        {
-            TextKind.Group => "Name",
-            TextKind.Description => "Description",
-            _ => "Opt"
-        };
-        AddToDict(dict, modDir, file.FileName, field, en, current, ref written);
-    }
-
-    private static ModOption? GetOption(ModFileInfo file, int gIndex, int? oIndex)
-    {
-        if (oIndex == null) return null;
-        return file.Groups.FirstOrDefault(x => x.Index == gIndex)?.Options.FirstOrDefault(x => x.Index == oIndex);
-    }
-
-    private static string? FindEnglish(ModFileInfo? snapInfo, int gIndex, int? oIndex, TextKind kind)
-    {
-        if (snapInfo == null) return null;
-        var g = snapInfo.Groups.FirstOrDefault(x => x.Index == gIndex);
-        if (g == null) return null;
-        if (kind == TextKind.Group) return g.Name;
-        if (oIndex == null) return null;
-        var o = g.Options.FirstOrDefault(x => x.Index == oIndex);
-        if (o == null) return null;
-        return kind == TextKind.Description ? o.Description : o.Name;
-    }
-
-    /// <summary> 从双语格式剥出英文侧：中文（英文）/ 英文（中文）/ 英文/中文。 </summary>
-    private static string ExtractEnglishFromBilingual(string text)
-    {
-        var open = text.IndexOf('（');
-        if (open < 0) open = text.IndexOf('(');
-        if (open > 0)
-        {
-            var close = text.IndexOf('）', open);
-            if (close < 0) close = text.IndexOf(')', open);
-            if (close > open)
-            {
-                var zh = text[..open].Trim();
-                var en = text[(open + 1)..close].Trim();
-                if (zh.Length > 0 && en.Length > 0)
-                {
-                    if (ContainsChinese(zh) && !ContainsChinese(en)) return en;
-                    if (ContainsChinese(en) && !ContainsChinese(zh)) return zh;
-                }
-            }
-        }
-        var slash = text.IndexOf('/');
-        if (slash > 0)
-        {
-            var l = text[..slash].Trim();
-            var r = text[(slash + 1)..].Trim();
-            if (ContainsChinese(l) && !ContainsChinese(r)) return r;
-            if (ContainsChinese(r) && !ContainsChinese(l)) return l;
-        }
-        return "";
-    }
-
     private static JsonObject LoadDict(string dictionaryDir)
     {
         var dictPath = Path.Combine(dictionaryDir, "我的翻译.json");
@@ -229,6 +108,38 @@ public sealed class SumupService
             }
         }
         return NewDict();
+    }
+
+    /// <summary>
+    /// 保存修改时的自动沉淀：把（英文原文已知且新值为中文的）条目写入 我的翻译.json。返回新增条数。
+    /// </summary>
+    public int Sediment(IEnumerable<(string ModDir, string FileName, string Field, string En, string Zh)> entries,
+        string dictionaryDir)
+    {
+        if (entries == null) return 0;
+        if (string.IsNullOrWhiteSpace(dictionaryDir))
+        {
+            LastResult = "词典目录未配置";
+            return -1;
+        }
+        var dict = LoadDict(dictionaryDir);
+        var written = 0;
+        foreach (var e in entries)
+            AddToDict(dict, e.ModDir, e.FileName, e.Field, e.En, e.Zh, ref written);
+        if (written == 0)
+        {
+            LastResult = "无新增（相同原文不覆盖）";
+            return 0;
+        }
+        var saveErr = SaveDict(Path.Combine(dictionaryDir, "我的翻译.json"), dict, dictionaryDir);
+        if (saveErr != null)
+        {
+            LastResult = "写入 我的翻译.json 失败：" + saveErr;
+            return -1;
+        }
+        LastResult = $"已自动沉淀 {written} 条 → 我的翻译.json";
+        _log.Info(LastResult);
+        return written;
     }
 
     /// <summary> 写入词典文件。返回错误信息，成功返回 null。 </summary>

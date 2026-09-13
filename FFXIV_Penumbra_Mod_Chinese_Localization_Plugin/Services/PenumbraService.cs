@@ -20,6 +20,9 @@ public sealed class PenumbraService : IDisposable
     /// <summary> Penumbra 可用状态变化（含初始连接成功）。 </summary>
     public event Action? ModsChanged;
 
+    /// <summary> Penumbra 新增了模组（参数为模组目录名）。 </summary>
+    public event Action<string>? ModAddedEvent;
+
     /// <summary> Penumbra 已卸载/失效。 </summary>
     public event Action? PenumbraDisposed;
 
@@ -35,7 +38,7 @@ public sealed class PenumbraService : IDisposable
         _reloadMod = new ReloadMod(pi);
         _getModDirectory = new GetModDirectory(pi);
 
-        _modAddedSub = ModAdded.Subscriber(pi, _ => Refresh());
+        _modAddedSub = ModAdded.Subscriber(pi, name => { ModAddedEvent?.Invoke(name); Refresh(); });
         _modDeletedSub = ModDeleted.Subscriber(pi, _ => Refresh());
         _disposedSub = Disposed.Subscriber(pi, () => PenumbraDisposed?.Invoke());
     }

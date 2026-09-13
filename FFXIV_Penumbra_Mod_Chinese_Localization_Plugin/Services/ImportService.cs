@@ -13,22 +13,26 @@ public sealed class ImportService
     private readonly PenumbraService _penumbra;
     private readonly AppLog _log;
     private readonly MarkService _mark;
+    private readonly EnglishSnapshotService _snapshot;
 
     public string LastResult { get; private set; } = "";
 
-    public ImportService(ModFileService files, PenumbraService penumbra, AppLog log, MarkService mark)
+    public ImportService(ModFileService files, PenumbraService penumbra, AppLog log, MarkService mark,
+        EnglishSnapshotService snapshot)
     {
         _files = files;
         _penumbra = penumbra;
         _log = log;
         _mark = mark;
+        _snapshot = snapshot;
     }
 
     /// <summary>
     /// 词典直写回（翻译写入MOD）：直接读取已加载的词典译文（我的翻译/个性翻译/wiki/AI知识库），
-    /// 应用到指定模组的组名 / 选项名 / 描述，写回模组文件并重载。已含中文的原文不重复覆盖。
+    /// 应用到指定模组的组名 / 选项名 / 描述，写回模组文件并重载。
+    /// overwrite=false：已含中文的条目跳过；overwrite=true：已中文条目按英文快照重查词典，可覆写旧译法。
     /// </summary>
-    public int ApplyDictionary(string modRoot, DictionaryService dict, IReadOnlyList<ModEntry> mods)
+    public int ApplyDictionary(string modRoot, DictionaryService dict, IReadOnlyList<ModEntry> mods, bool overwrite = false)
     {
         if (string.IsNullOrEmpty(modRoot) || !Directory.Exists(modRoot))
         {
@@ -64,6 +68,7 @@ public sealed class ImportService
                 var optionNames = new Dictionary<(int, int), string>();
                 var optionDescs = new Dictionary<(int, int), string>();
                 var fileName = Path.GetFileName(fileInfo.Path);
+                var snapInfo = overwrite ? _snapshot.GetEnglish(mod.Directory, fileInfo.FileName) : null;
 
                 foreach (var g in fileInfo.Groups)
                 {
@@ -71,6 +76,18 @@ public sealed class ImportService
                     if (!IsDone(dict, fileName, "Name", g.Name)) allDone = false;
                     var gName = ApplyLookup(dict, fileName, "Name", g.Name);
                     if (gName != null) groupNames[g.Index] = gName;
+
+                    // 覆写旧译法：已中文组名按英文快照重查词典
+                    if (overwrite && snapInfo != null && dict.ContainsChinese(g.Name))
+                    {
+                        var enG = snapInfo.Groups.FirstOrDefault(x => x.Index == g.Index)?.Name;
+                        if (!string.IsNullOrWhiteSpace(enG) && !dict.ContainsChinese(enG))
+                        {
+                            var tG = Translator.Translate(enG, $"{fileName}||Name||{enG}", dict);
+                            if (!string.IsNullOrWhiteSpace(tG) && tG != g.Name)
+                                groupNames[g.Index] = tG;
+                        }
+                    }
 
                     foreach (var o in g.Options)
                     {
@@ -81,6 +98,29 @@ public sealed class ImportService
                         if (oName != null) optionNames[(g.Index, o.Index)] = oName;
                         var oDesc = ApplyLookup(dict, fileName, "Description", o.Description);
                         if (oDesc != null) optionDescs[(g.Index, o.Index)] = oDesc;
+
+                        // 覆写旧译法：已中文选项名/描述按英文快照重查词典
+                        if (overwrite && snapInfo != null && dict.ContainsChinese(o.Name))
+                        {
+                            var en = FindEn(snapInfo, g.Index, o.Index);
+                            if (!string.IsNullOrWhiteSpace(en) && !dict.ContainsChinese(en))
+                            {
+                                var t = Translator.Translate(en, $"{fileName}||Opt||{en}", dict);
+                                if (!string.IsNullOrWhiteSpace(t) && t != o.Name)
+                                    optionNames[(g.Index, o.Index)] = t;
+                            }
+                        }
+                        if (overwrite && snapInfo != null && !string.IsNullOrWhiteSpace(o.Description) && dict.ContainsChinese(o.Description))
+                        {
+                            var enD = snapInfo.Groups.FirstOrDefault(x => x.Index == g.Index)?
+                                .Options.FirstOrDefault(x => x.Index == o.Index)?.Description;
+                            if (!string.IsNullOrWhiteSpace(enD) && !dict.ContainsChinese(enD))
+                            {
+                                var tD = Translator.Translate(enD, $"{fileName}||Description||{enD}", dict);
+                                if (!string.IsNullOrWhiteSpace(tD) && tD != o.Description)
+                                    optionDescs[(g.Index, o.Index)] = tD;
+                            }
+                        }
                     }
                 }
 
@@ -158,6 +198,13 @@ public sealed class ImportService
         foreach (var c in s)
             if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) return true;
         return false;
+    }
+
+    /// <summary> 从英文快照取选项英文原文。 </summary>
+    private static string? FindEn(ModFileInfo? snap, int gIndex, int oIndex)
+    {
+        var g = snap?.Groups.FirstOrDefault(x => x.Index == gIndex);
+        return g?.Options.FirstOrDefault(x => x.Index == oIndex)?.Name;
     }
 
     /// <summary> 查词典译文：原文为空 / 已含中文（不重复覆盖）/ 黑名单 → 不写回。mods 层精确键优先，再 terms 层。 </summary>

@@ -79,7 +79,7 @@ public sealed class Plugin : IDalamudPlugin
         Mark = new MarkService(() => Penumbra.GetModRoot() ?? "");
         Extract = new ExtractService(Dict, ModFiles, AppLog);
         AiTranslate = new AiTranslateService(AppLog);
-        Import = new ImportService(ModFiles, Penumbra, AppLog, Mark);
+        Import = new ImportService(ModFiles, Penumbra, AppLog, Mark, Snapshot);
         Backup = new BackupManager(ModFiles, Penumbra, AppLog, Snapshot, Mark);
         Sumup = new SumupService(AppLog, ModFiles, Snapshot);
         Wiki = new WikiExportService(AppLog);
@@ -116,6 +116,10 @@ public sealed class Plugin : IDalamudPlugin
 
         // 插件加载即尝试连接 Penumbra 并加载词典；确保词典目录下的 .英文快照 目录存在
         Penumbra.Refresh();
+
+        // 自动备份：启动为无备份模组补备份；新增模组事件即时备份
+        try { Backup.BackupMissing(Penumbra.Mods, Penumbra.GetModRoot() ?? "", Configuration.BackupCount); } catch { }
+        Penumbra.ModAddedEvent += d => { try { Backup.BackupNew(d, Penumbra.GetModRoot() ?? "", Configuration.BackupCount); } catch { } };
         ReloadDictionary();
         Snapshot.EnsureRoot();
         // 启动清理：删除独立版遗留的旧 .json.bak 垃圾备份（时间戳格式按份数轮转保留）

@@ -254,7 +254,7 @@ public class TranslatePipelineWindow : Window, IDisposable
         // ── ⑤ 翻译写入MOD ──
         ImGui.TextWrapped("⑤ 翻译写入MOD（读取词典译文：我的翻译/个性翻译/wiki/AI知识库，写回勾选的模组文件并重载）");
         ImGui.Spacing();
-        if (ImGui.Button("翻译写入MOD"))
+        if (ImGui.Button("词典翻译写入MOD（覆写旧译法）"))
         {
             if (notFound)
             {
@@ -269,7 +269,7 @@ public class TranslatePipelineWindow : Window, IDisposable
                 }
                 else
                 {
-                    var n = _import.ApplyDictionary(modRoot ?? "", _dict, mods);
+                    var n = _import.ApplyDictionary(modRoot ?? "", _dict, mods, overwrite: true);
                     _result = _import.LastResult;
                 }
             }
@@ -278,7 +278,7 @@ public class TranslatePipelineWindow : Window, IDisposable
         {
             ImGui.SetTooltip("直接把词典里的译文应用到模组选项（组名/选项名/描述）并重载，无需 _已翻译.json。\n" +
                              "用外部 AI 翻译时：先执行 ④ 汇总（把译文编入 我的翻译.json）再点这里写回。\n" +
-                             "已含中文的选项不会重复覆盖；写回前自动备份（zip）");
+                             "已翻译条目将按英文快照重查词典，可覆写旧译法；写回前自动备份（zip）");
         }
         Ui.SameLineIfFits(Ui.ButtonWidth("全选") + ImGui.GetFrameHeight());
         // 全选：勾选主窗口列表中全部模组（按当前「已翻译」筛选），与写入按钮同行便于直接开工
