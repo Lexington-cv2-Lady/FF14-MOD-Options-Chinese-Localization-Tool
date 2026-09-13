@@ -351,13 +351,30 @@ public class MainWindow : Window, IDisposable
             : $"模组列表（未翻译 {visible.Count}/{total}）";
         var availW = ImGui.GetContentRegionAvail().X;
 
-        // 右侧「已翻译」勾选框宽度估算（勾选框 ≈ 帧高，加文字和间距）
+        // 右侧「全选」+「已翻译」勾选框宽度估算（勾选框 ≈ 帧高，加文字和间距）
         var frameH = ImGui.GetFrameHeight();
+        var checkAllW = frameH + ImGui.CalcTextSize("全选").X + 10f * ImGuiHelpers.GlobalScale;
         var checkMarkW = frameH + ImGui.CalcTextSize("已翻译").X + 10f * ImGuiHelpers.GlobalScale;
-        var rightBlock = checkMarkW + 8f * ImGuiHelpers.GlobalScale;
+        var rightBlock = checkAllW + checkMarkW + 8f * ImGuiHelpers.GlobalScale;
 
         // 标题占用剩余宽度（超长截断）；勾选框靠右缘，随分隔条拖动同步移动
         ImGui.TextUnformatted(FitTitle(title, Math.Max(40f, availW - rightBlock)));
+        ImGui.SameLine(Math.Max(40f, availW - rightBlock));
+        var allSel = AllVisibleSelected;
+        if (ImGui.Checkbox("全选", ref allSel))
+        {
+            SetAllVisibleSelection(allSel); // 第一次点=全选，再点=全部取消
+            if (!allSel)
+            {
+                _selected = -1;
+                _selectedFile = null;
+                _result = "";
+            }
+        }
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip("全选/取消当前列表（随「已翻译」筛选）。全取消后详情区回到一键汉化（伪）");
+        }
         ImGui.SameLine(Math.Max(40f, availW - checkMarkW));
         if (ImGui.Checkbox("已翻译", ref _showMarked))
         {
@@ -509,7 +526,7 @@ public class MainWindow : Window, IDisposable
                 Ui.Hint("目录设置完成后，本提示自动消失，可正常开始汉化。");
                 return;
             }
-            Ui.Hint("← 左侧选择一个模组可单独编辑/精翻；或不选模组，直接一键汉化当前列表：");
+            Ui.Hint("← 点击模组名称 = 勾选并查看/编辑详情；未勾选时可在下方一键汉化当前列表：");
             ImGui.Spacing();
             DrawOneClickAll();
             return;
