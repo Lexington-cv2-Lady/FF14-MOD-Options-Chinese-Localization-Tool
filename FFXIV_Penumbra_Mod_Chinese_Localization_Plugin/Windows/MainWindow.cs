@@ -725,6 +725,7 @@ public class MainWindow : Window, IDisposable
         ImGui.Spacing();
         ImGui.Separator();
         ImGui.Spacing();
+        ImGui.BeginGroup();
         ImGui.TextWrapped("一键汉化（提取 → 词典预填 → AI翻译 → 汇总 → 写入本模组）");
         if (ImGui.RadioButton("汇总提取（默认）", _ocSummary)) _ocSummary = true;
         Ui.SameLineIfFits(Ui.ButtonWidth("按模组提取") + ImGui.GetFrameHeight());
@@ -775,6 +776,8 @@ public class MainWindow : Window, IDisposable
                 ReloadSelectedFile();
             }
         }
+        ImGui.EndGroup();
+        FrameLastGroup();
 
         // 已翻译标记 + 查漏补缺
         ImGui.Spacing();
@@ -955,6 +958,7 @@ public class MainWindow : Window, IDisposable
     /// </summary>
     private void DrawOneClickAll()
     {
+        ImGui.BeginGroup();
         if (ImGui.RadioButton("汇总提取（默认）", _ocSummary)) _ocSummary = true;
         Ui.SameLineIfFits(Ui.ButtonWidth("按模组提取") + ImGui.GetFrameHeight());
         if (ImGui.RadioButton("按模组提取", !_ocSummary)) _ocSummary = false;
@@ -1005,6 +1009,17 @@ public class MainWindow : Window, IDisposable
                 ReloadSelectedFile();
             }
         }
+        ImGui.EndGroup();
+        FrameLastGroup();
+    }
+
+    /// <summary> 给刚用 BeginGroup/EndGroup 画好的内容区域外围加一个圆角框（自适应内容大小）。 </summary>
+    private static void FrameLastGroup()
+    {
+        var mn = ImGui.GetItemRectMin();
+        var mx = ImGui.GetItemRectMax();
+        ImGui.GetWindowDrawList().AddRect(mn - new Vector2(7f, 6f), mx + new Vector2(7f, 6f),
+            ImGui.GetColorU32(new Vector4(0.42f, 0.72f, 1f, 0.5f)), 8f);
     }
 
     /// <summary> 「创建 / 删除已翻译标记」按钮（带缓存失效）。有选项与无选项模组共用。 </summary>
